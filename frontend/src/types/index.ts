@@ -1,0 +1,65 @@
+export interface User {
+  id: string;
+  username: string;
+  display_name: string;
+  role: 'admin' | 'user';
+  is_online: boolean;
+  bio: string;
+  status: string;
+}
+
+export type ChannelRole = 'admin' | 'write' | 'read';
+
+export interface ChannelMemberInfo {
+  id: string;
+  username: string;
+  display_name: string;
+  is_online: boolean;
+  role: ChannelRole;
+}
+
+export interface Channel {
+  id: string;
+  name: string;
+  description: string;
+  is_direct: boolean;
+  is_public: boolean;
+  default_role: ChannelRole;
+  my_role: ChannelRole;
+  created_at: string;
+  members: ChannelMemberInfo[];
+}
+
+export interface Message {
+  id: string;
+  channel_id: string;
+  user_id: string;
+  username: string;
+  content: string;
+  created_at: string;
+  edited_at?: string;
+  is_deleted?: boolean;
+}
+
+export interface InviteToken {
+  id: string;
+  token: string;
+  created_by: string;
+  used: boolean;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface JoinRequest {
+  id: string;
+  username: string;
+  display_name: string;
+  status: 'pending' | 'approved' | 'denied';
+  created_at: string;
+}
+
+export interface DeviceKey {
+  id: string;
+  device_name: string;
+  created_at: string;
+}
