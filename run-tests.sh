@@ -182,11 +182,58 @@ if [ "$NEED_BACKEND" = true ]; then
             fi
 
             if [ "$RUN_BACKEND_INTEG" = true ]; then
-                if [ -z "${POSTGRES_HOST:-}" ]; then
-                    printf "\n${YELLOW}Warning: POSTGRES_HOST not set. Integration tests may fail.${NC}\n"
-                    printf "Start PostgreSQL with: docker compose up -d postgres\n\n"
+                # Spin up an isolated PostgreSQL container for integration tests
+                TEST_PG_CONTAINER="chatapp-test-postgres-$$"
+                TEST_PG_PORT=5433
+                TEST_PG_USER=chatapp_test
+                TEST_PG_PASS=testpassword
+                TEST_PG_DB=chatapp_test
+
+                cleanup_test_pg() {
+                    if docker inspect "$TEST_PG_CONTAINER" &>/dev/null; then
+                        printf "\n${BLUE}Stopping test PostgreSQL container...${NC}\n"
+                        docker rm -f "$TEST_PG_CONTAINER" &>/dev/null
+                    fi
+                }
+                trap cleanup_test_pg EXIT
+
+                printf "\n${BLUE}Starting test PostgreSQL container on port %s...${NC}\n" "$TEST_PG_PORT"
+                docker run -d --rm \
+                    --name "$TEST_PG_CONTAINER" \
+                    -e POSTGRES_USER="$TEST_PG_USER" \
+                    -e POSTGRES_PASSWORD="$TEST_PG_PASS" \
+                    -e POSTGRES_DB="$TEST_PG_DB" \
+                    -p "$TEST_PG_PORT:5432" \
+                    postgres:16-alpine >/dev/null
+
+                # Wait for PostgreSQL to be ready
+                printf "${BLUE}Waiting for PostgreSQL to be ready...${NC}\n"
+                PG_READY=false
+                for i in $(seq 1 30); do
+                    if docker exec "$TEST_PG_CONTAINER" pg_isready -U "$TEST_PG_USER" &>/dev/null; then
+                        PG_READY=true
+                        break
+                    fi
+                    sleep 1
+                done
+
+                if [ "$PG_READY" = false ]; then
+                    printf "${RED}Error: Test PostgreSQL container failed to start within 30s.${NC}\n"
+                    RESULTS["Backend Integration Tests"]="FAIL"
+                    FAILED=1
+                else
+                    run_check "Backend Integration Tests" bash -c "
+                        export POSTGRES_HOST=localhost
+                        export POSTGRES_PORT=$TEST_PG_PORT
+                        export POSTGRES_USER=$TEST_PG_USER
+                        export POSTGRES_PASSWORD=$TEST_PG_PASS
+                        export POSTGRES_DB=$TEST_PG_DB
+                        cd '$BUILD_DIR' && ctest --output-on-failure -L integration --timeout 60
+                    "
                 fi
-                run_check "Backend Integration Tests" bash -c "cd '$BUILD_DIR' && ctest --output-on-failure -L integration --timeout 60"
+
+                cleanup_test_pg
+                trap - EXIT
             fi
         else
             if [ "$RUN_BACKEND_UNIT" = true ]; then RESULTS["Backend Unit Tests"]="SKIP"; fi

@@ -32,6 +32,7 @@ set(JSON_DIR ${CMAKE_SOURCE_DIR}/libs/json/single_include)
 # Application library (shared between main executable and tests)
 set(LIB_SOURCES
     src/auth/pki.cpp
+    src/auth/webauthn.cpp
     src/db/database.cpp
 )
 

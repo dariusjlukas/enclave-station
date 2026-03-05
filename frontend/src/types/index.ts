@@ -61,9 +61,3 @@ export interface JoinRequest {
   status: 'pending' | 'approved' | 'denied';
   created_at: string;
 }
-
-export interface DeviceKey {
-  id: string;
-  device_name: string;
-  created_at: string;
-}

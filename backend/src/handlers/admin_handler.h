@@ -2,6 +2,7 @@
 #include <App.h>
 #include <nlohmann/json.hpp>
 #include "db/database.h"
+#include "auth/webauthn.h"
 #include "config.h"
 
 using json = nlohmann::json;
@@ -59,6 +60,7 @@ struct AdminHandler {
             for (const auto& r : requests) {
                 arr.push_back({{"id", r.id}, {"username", r.username},
                                {"display_name", r.display_name},
+                               {"auth_method", r.auth_method},
                                {"status", r.status}, {"created_at", r.created_at}});
             }
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
@@ -85,15 +87,7 @@ struct AdminHandler {
             auto user_id = get_admin_id(res, req);
             if (user_id.empty()) return;
 
-            auto max_file = db.get_setting("max_file_size");
-            auto max_storage = db.get_setting("max_storage_size");
-            int64_t storage_used = db.get_total_file_size();
-
-            json resp = {
-                {"max_file_size", max_file ? std::stoll(*max_file) : config.max_file_size},
-                {"max_storage_size", max_storage ? std::stoll(*max_storage) : 0},
-                {"storage_used", storage_used}
-            };
+            json resp = build_settings_response();
             res->writeHeader("Content-Type", "application/json")->end(resp.dump());
         });
 
@@ -105,20 +99,28 @@ struct AdminHandler {
                 body.append(data);
                 if (!last) return;
                 if (admin_id.empty()) return;
+                save_settings(res, body);
+            });
+            res->onAborted([]() {});
+        });
 
-                try {
-                    auto j = json::parse(body);
-                    if (j.contains("max_file_size")) {
-                        db.set_setting("max_file_size", std::to_string(j["max_file_size"].get<int64_t>()));
-                    }
-                    if (j.contains("max_storage_size")) {
-                        db.set_setting("max_storage_size", std::to_string(j["max_storage_size"].get<int64_t>()));
-                    }
-                    res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-                } catch (const std::exception& e) {
+        app.post("/api/admin/setup", [this](auto* res, auto* req) {
+            auto admin_id_copy = get_admin_id(res, req);
+            std::string body;
+            res->onData([this, res, admin_id = std::move(admin_id_copy), body = std::move(body)](
+                std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                if (admin_id.empty()) return;
+
+                auto completed = db.get_setting("setup_completed");
+                if (completed && *completed == "true") {
                     res->writeStatus("400")->writeHeader("Content-Type", "application/json")
-                        ->end(json{{"error", e.what()}}.dump());
+                        ->end(R"({"error":"Setup already completed"})");
+                    return;
                 }
+
+                save_settings(res, body, true);
             });
             res->onAborted([]() {});
         });
@@ -143,40 +145,155 @@ private:
         return *user_id;
     }
 
+    std::string get_setting_or(const std::string& key, const std::string& fallback) {
+        auto val = db.get_setting(key);
+        return val.value_or(fallback);
+    }
+
+    json build_settings_response() {
+        auto max_file = db.get_setting("max_file_size");
+        auto max_storage = db.get_setting("max_storage_size");
+        int64_t storage_used = db.get_total_file_size();
+
+        // Parse auth_methods
+        json auth_methods = json::array({"passkey", "pki"});
+        auto am = db.get_setting("auth_methods");
+        if (am) {
+            try { auth_methods = json::parse(*am); } catch (...) {}
+        }
+
+        return {
+            {"max_file_size", max_file ? std::stoll(*max_file) : config.max_file_size},
+            {"max_storage_size", max_storage ? std::stoll(*max_storage) : 0},
+            {"storage_used", storage_used},
+            {"auth_methods", auth_methods},
+            {"server_name", get_setting_or("server_name", "Isle Chat")},
+            {"registration_mode", get_setting_or("registration_mode", "invite")},
+            {"file_uploads_enabled", get_setting_or("file_uploads_enabled", "true") == "true"},
+            {"session_expiry_hours", std::stoi(get_setting_or("session_expiry_hours",
+                                     std::to_string(config.session_expiry_hours)))},
+            {"setup_completed", get_setting_or("setup_completed", "false") == "true"}
+        };
+    }
+
+    void save_settings(uWS::HttpResponse<SSL>* res, const std::string& body, bool mark_setup = false) {
+        try {
+            auto j = json::parse(body);
+
+            if (j.contains("max_file_size")) {
+                db.set_setting("max_file_size", std::to_string(j["max_file_size"].get<int64_t>()));
+            }
+            if (j.contains("max_storage_size")) {
+                db.set_setting("max_storage_size", std::to_string(j["max_storage_size"].get<int64_t>()));
+            }
+            if (j.contains("auth_methods")) {
+                auto& arr = j["auth_methods"];
+                if (!arr.is_array() || arr.empty()) {
+                    throw std::runtime_error("auth_methods must be a non-empty array");
+                }
+                for (const auto& m : arr) {
+                    auto s = m.get<std::string>();
+                    if (s != "passkey" && s != "pki") {
+                        throw std::runtime_error("Invalid auth method: " + s);
+                    }
+                }
+                db.set_setting("auth_methods", arr.dump());
+            }
+            if (j.contains("server_name")) {
+                db.set_setting("server_name", j["server_name"].get<std::string>());
+            }
+            if (j.contains("registration_mode")) {
+                auto mode = j["registration_mode"].get<std::string>();
+                if (mode != "invite" && mode != "approval" && mode != "open") {
+                    throw std::runtime_error("Invalid registration mode: " + mode);
+                }
+                db.set_setting("registration_mode", mode);
+            }
+            if (j.contains("file_uploads_enabled")) {
+                db.set_setting("file_uploads_enabled",
+                               j["file_uploads_enabled"].get<bool>() ? "true" : "false");
+            }
+            if (j.contains("session_expiry_hours")) {
+                int hours = j["session_expiry_hours"].get<int>();
+                if (hours <= 0) throw std::runtime_error("Session expiry must be positive");
+                db.set_setting("session_expiry_hours", std::to_string(hours));
+            }
+
+            if (mark_setup) {
+                db.set_setting("setup_completed", "true");
+            }
+
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json{{"error", e.what()}}.dump());
+        }
+    }
+
+    int get_session_expiry() {
+        auto setting = db.get_setting("session_expiry_hours");
+        if (setting) {
+            try { return std::stoi(*setting); } catch (...) {}
+        }
+        return config.session_expiry_hours;
+    }
+
     void handle_approve(uWS::HttpResponse<SSL>* res, const std::string& request_id,
                          const std::string& admin_id) {
-        auto request = db.get_join_request(request_id);
-        if (!request) {
-            res->writeStatus("404")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Request not found"})");
-            return;
-        }
-
-        if (request->status != "pending") {
-            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Request already processed"})");
-            return;
-        }
-
         try {
-            // Create the user
-            auto user = db.create_user(request->username, request->display_name,
-                                       request->public_key, "user");
-            db.update_join_request(request_id, "approved", admin_id);
+            auto request = db.get_join_request(request_id);
+            if (!request) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Request not found"})");
+                return;
+            }
 
-            // Add new user to general channel
+            if (request->status != "pending") {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Request already processed"})");
+                return;
+            }
+
+            // Create user account from join request
+            auto user = db.create_user(request->username, request->display_name, "", "user");
+
+            // Store credentials based on auth method
+            if (request->auth_method == "pki" && !request->credential_data.empty()) {
+                auto cred = json::parse(request->credential_data);
+                std::string public_key = cred.at("public_key");
+                db.store_pki_credential(user.id, public_key);
+
+                // Generate recovery keys for PKI users
+                auto [plaintext_keys, key_hashes] = webauthn::generate_recovery_keys();
+                db.store_recovery_keys(user.id, key_hashes);
+            } else if (request->auth_method == "passkey" && !request->credential_data.empty()) {
+                auto cred = json::parse(request->credential_data);
+                std::string credential_id = cred.at("credential_id");
+                auto pk_b64 = cred.at("public_key").get<std::string>();
+                auto pk_bytes = webauthn::base64url_decode(pk_b64);
+                uint32_t sign_count = cred.value("sign_count", 0);
+                std::string transports = cred.value("transports", "[]");
+                db.store_webauthn_credential(user.id, credential_id, pk_bytes, sign_count, "Passkey", transports);
+            }
+
+            // Add to general channel
             auto general = db.find_general_channel();
             if (general) {
                 db.add_channel_member(general->id, user.id, general->default_role);
             }
 
-            json resp = {{"ok", true}, {"user_id", user.id}};
+            // Create session token for polling pickup
+            std::string session_token = db.create_session(user.id, get_session_expiry());
+            db.set_join_request_session(request_id, session_token);
+            db.update_join_request(request_id, "approved", admin_id);
+
+            json resp = {{"ok", true}};
             res->writeHeader("Content-Type", "application/json")->end(resp.dump());
         } catch (const pqxx::unique_violation&) {
             res->writeStatus("409")->writeHeader("Content-Type", "application/json")
                 ->end(R"({"error":"Username already taken"})");
         } catch (const std::exception& e) {
-            res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                 ->end(json({{"error", e.what()}}).dump());
         }
     }

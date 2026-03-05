@@ -16,6 +16,7 @@ interface Props {
   onShowSettings: () => void;
   onToggleSidebar: () => void;
   onShowChannelSettings: () => void;
+  adminNotificationCount?: number;
 }
 
 export function Header({
@@ -23,6 +24,7 @@ export function Header({
   onShowSettings,
   onToggleSidebar,
   onShowChannelSettings,
+  adminNotificationCount = 0,
 }: Props) {
   const user = useChatStore((s) => s.user);
   const clearAuth = useChatStore((s) => s.clearAuth);
@@ -100,8 +102,18 @@ export function Header({
 
       <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
         {user?.role === 'admin' && (
-          <Button variant="light" size="sm" onPress={onShowAdmin}>
+          <Button
+            variant="light"
+            size="sm"
+            onPress={onShowAdmin}
+            className="relative overflow-visible"
+          >
             Admin
+            {adminNotificationCount > 0 && (
+              <span className="absolute -bottom-1 -right-1 bg-danger text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                {adminNotificationCount}
+              </span>
+            )}
           </Button>
         )}
         <Button variant="light" size="sm" onPress={onShowSettings}>

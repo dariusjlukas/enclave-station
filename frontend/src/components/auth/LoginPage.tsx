@@ -1,95 +1,101 @@
 import { useState, useEffect } from 'react';
-import {
-  Button,
-  Card,
-  CardBody,
-  Select,
-  SelectItem,
-  Alert,
-} from '@heroui/react';
+import { Button, Card, CardBody, Alert, Divider } from '@heroui/react';
 import { useChatStore } from '../../stores/chatStore';
-import {
-  getStoredKeys,
-  signChallenge,
-  listStoredUsers,
-} from '../../services/crypto';
+import { browserSupportsWebAuthn, authenticate } from '../../services/webauthn';
+import * as pki from '../../services/pki';
 import * as api from '../../services/api';
 import logoLarge from '../../assets/isle-chat-logo-large.png';
 import logoLargeDark from '../../assets/isle-chat-logo-large-dark.png';
 
 interface Props {
   onSwitchToRegister: () => void;
-  onSwitchToRequest: () => void;
-  onSwitchToAddDevice: () => void;
+  onSwitchToRecovery: () => void;
 }
 
-export function LoginPage({
-  onSwitchToRegister,
-  onSwitchToRequest,
-  onSwitchToAddDevice,
-}: Props) {
+export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
   const setAuth = useChatStore((s) => s.setAuth);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [storedUsers, setStoredUsers] = useState<string[]>([]);
-  const [selectedUser, setSelectedUser] = useState('');
+  const [loading, setLoading] = useState('');
+  const [authMethods, setAuthMethods] = useState<string[]>([]);
+  const [hasLocalKey, setHasLocalKey] = useState(false);
+  const [serverName, setServerName] = useState('Isle Chat');
+  const [configLoading, setConfigLoading] = useState(true);
 
   useEffect(() => {
-    listStoredUsers().then((users) => {
-      setStoredUsers(users);
-      if (users.length === 1) setSelectedUser(users[0]);
-    });
+    Promise.all([
+      api.getPublicConfig().then((config) => {
+        setAuthMethods(config.auth_methods);
+        setServerName(config.server_name);
+      }),
+      pki.hasStoredKey().then(setHasLocalKey),
+    ]).finally(() => setConfigLoading(false));
   }, []);
 
-  const handleLogin = async () => {
-    if (!selectedUser) {
-      setError('Please select a user to sign in as');
-      return;
-    }
-    setLoading(true);
+  const handlePasskeyLogin = async () => {
+    setLoading('passkey');
     setError('');
     try {
-      const keys = await getStoredKeys(selectedUser);
-      if (!keys) {
-        setError('Keys not found for this user.');
-        setLoading(false);
+      const options = await api.getLoginOptions();
+      const credential = await authenticate(options);
+      const result = await api.verifyLogin(credential);
+      setAuth(result.user, result.token);
+    } catch (e) {
+      if (e instanceof Error && e.name === 'NotAllowedError') {
+        setError('Authentication was cancelled');
+      } else {
+        setError(e instanceof Error ? e.message : 'Login failed');
+      }
+    } finally {
+      setLoading('');
+    }
+  };
+
+  const handlePkiLogin = async () => {
+    setLoading('pki');
+    setError('');
+    try {
+      const publicKey = await pki.getStoredPublicKey();
+      if (!publicKey) {
+        setError('No browser key found. You may need to use a recovery key.');
         return;
       }
-
-      const { challenge } = await api.requestChallenge(keys.publicKeyPem);
-      const signature = await signChallenge(keys.privateKey, challenge);
-      const result = await api.verifyChallenge(
-        keys.publicKeyPem,
+      const { challenge } = await api.getPkiChallenge(publicKey);
+      const signature = await pki.signChallenge(challenge);
+      const result = await api.pkiLogin({
+        public_key: publicKey,
         challenge,
         signature,
-      );
-
+      });
       setAuth(result.user, result.token);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Login failed');
     } finally {
-      setLoading(false);
+      setLoading('');
     }
   };
+
+  const passkeysEnabled = authMethods.includes('passkey');
+  const pkiEnabled = authMethods.includes('pki');
+  const webauthnSupported = browserSupportsWebAuthn();
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background">
       <img
         src={logoLarge}
-        alt="Isle Chat"
+        alt={serverName}
         className="w-24 h-24 mb-4 dark:hidden"
       />
       <img
         src={logoLargeDark}
-        alt="Isle Chat"
+        alt={serverName}
         className="w-24 h-24 mb-4 hidden dark:block"
       />
       <Card className="w-full max-w-md mx-4 sm:mx-auto shadow-2xl">
         <CardBody className="p-5 sm:p-8">
-          <h1 className="text-3xl font-bold text-foreground mb-2">Isle Chat</h1>
-          <p className="text-default-500 mb-6">
-            Sign in with your cryptographic key
-          </p>
+          <h1 className="text-3xl font-bold text-foreground mb-2">
+            {serverName}
+          </h1>
+          <p className="text-default-500 mb-6">Sign in to continue</p>
 
           {error && (
             <Alert color="danger" variant="flat" className="mb-4">
@@ -97,47 +103,59 @@ export function LoginPage({
             </Alert>
           )}
 
-          {storedUsers.length === 0 ? (
-            <div className="text-default-500 text-center py-4 mb-4">
-              No keys found on this device. Register a new account or link an
-              existing one.
-            </div>
-          ) : storedUsers.length === 1 ? (
-            <Button
-              color="primary"
-              fullWidth
-              isLoading={loading}
-              onPress={handleLogin}
-              size="lg"
-            >
-              {loading ? 'Authenticating...' : `Sign in as ${selectedUser}`}
-            </Button>
+          {configLoading ? (
+            <div className="text-center text-default-500 py-4">Loading...</div>
           ) : (
             <div className="space-y-3">
-              <Select
-                label="Select account"
-                variant="bordered"
-                selectedKeys={selectedUser ? [selectedUser] : []}
-                onChange={(e) => setSelectedUser(e.target.value)}
-              >
-                {storedUsers.map((u) => (
-                  <SelectItem key={u}>{u}</SelectItem>
-                ))}
-              </Select>
-              <Button
-                color="primary"
-                fullWidth
-                isLoading={loading}
-                isDisabled={!selectedUser}
-                onPress={handleLogin}
-                size="lg"
-              >
-                {loading ? 'Authenticating...' : 'Sign In'}
-              </Button>
+              {passkeysEnabled && (
+                <>
+                  {!webauthnSupported ? (
+                    <Alert color="warning" variant="flat">
+                      Your browser does not support passkeys.
+                    </Alert>
+                  ) : (
+                    <Button
+                      color="primary"
+                      fullWidth
+                      isLoading={loading === 'passkey'}
+                      isDisabled={!!loading}
+                      onPress={handlePasskeyLogin}
+                      size="lg"
+                    >
+                      {loading === 'passkey'
+                        ? 'Authenticating...'
+                        : 'Sign in with Passkey'}
+                    </Button>
+                  )}
+                </>
+              )}
+
+              {pkiEnabled && hasLocalKey && (
+                <Button
+                  color="secondary"
+                  fullWidth
+                  isLoading={loading === 'pki'}
+                  isDisabled={!!loading}
+                  onPress={handlePkiLogin}
+                  size="lg"
+                >
+                  {loading === 'pki'
+                    ? 'Authenticating...'
+                    : 'Sign in with Browser Key'}
+                </Button>
+              )}
+
+              {pkiEnabled && !hasLocalKey && (
+                <p className="text-sm text-default-400 text-center">
+                  No browser key on this device
+                </p>
+              )}
             </div>
           )}
 
-          <div className="mt-6 flex flex-col gap-2 text-center">
+          <Divider className="my-4" />
+
+          <div className="flex flex-col gap-2 text-center">
             <Button
               variant="light"
               color="primary"
@@ -145,25 +163,16 @@ export function LoginPage({
               onPress={onSwitchToRegister}
               size="sm"
             >
-              Have an invite? Register here
-            </Button>
-            <Button
-              variant="light"
-              color="primary"
-              fullWidth
-              onPress={onSwitchToAddDevice}
-              size="sm"
-            >
-              Link existing account to this device
+              Create an account
             </Button>
             <Button
               variant="light"
               color="default"
               fullWidth
-              onPress={onSwitchToRequest}
+              onPress={onSwitchToRecovery}
               size="sm"
             >
-              Request access
+              Use a recovery key
             </Button>
           </div>
         </CardBody>

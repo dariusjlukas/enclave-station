@@ -12,8 +12,7 @@ import { useAuth } from './hooks/useAuth';
 import { useChatStore } from './stores/chatStore';
 import { LoginPage } from './components/auth/LoginPage';
 import { RegisterPage } from './components/auth/RegisterPage';
-import { RequestAccess } from './components/auth/RequestAccess';
-import { AddDevice } from './components/auth/AddDevice';
+import { RecoveryLogin } from './components/auth/RecoveryLogin';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { ChatArea } from './components/layout/ChatArea';
@@ -23,28 +22,15 @@ import { ChannelSettings } from './components/channels/ChannelSettings';
 import { InviteManager } from './components/admin/InviteManager';
 import { JoinRequests } from './components/admin/JoinRequests';
 import { ServerSettings } from './components/admin/ServerSettings';
+import { SetupWizard } from './components/admin/SetupWizard';
 import { UserSettings } from './components/settings/UserSettings';
 import * as api from './services/api';
 
-type AuthPage = 'login' | 'register' | 'request' | 'add-device';
-
-function getDeviceTokenFromUrl(): string | null {
-  const params = new URLSearchParams(window.location.search);
-  const token = params.get('device_token');
-  if (token) {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('device_token');
-    window.history.replaceState({}, '', url.pathname + url.search);
-  }
-  return token;
-}
+type AuthPage = 'login' | 'register' | 'recovery';
 
 function App() {
   const { isAuthenticated, loading } = useAuth();
-  const [urlDeviceToken] = useState(() => getDeviceTokenFromUrl());
-  const [authPage, setAuthPage] = useState<AuthPage>(
-    urlDeviceToken ? 'add-device' : 'login',
-  );
+  const [authPage, setAuthPage] = useState<AuthPage>('login');
   const [showCreateModal, setShowCreateModal] = useState<
     'channel' | 'dm' | null
   >(null);
@@ -53,8 +39,11 @@ function App() {
   const [showChannelBrowser, setShowChannelBrowser] = useState(false);
   const [showChannelSettings, setShowChannelSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [pendingRequestCount, setPendingRequestCount] = useState(0);
   const setChannels = useChatStore((s) => s.setChannels);
   const setUsers = useChatStore((s) => s.setUsers);
+  const user = useChatStore((s) => s.user);
   const activeChannelId = useChatStore((s) => s.activeChannelId);
   const channels = useChatStore((s) => s.channels);
 
@@ -64,7 +53,36 @@ function App() {
     if (!isAuthenticated) return;
     api.listChannels().then(setChannels);
     api.listUsers().then(setUsers);
-  }, [isAuthenticated, setChannels, setUsers]);
+
+    // Check if admin needs to complete setup
+    if (user?.role === 'admin') {
+      api.getPublicConfig().then((config) => {
+        if (!config.setup_completed) {
+          setShowSetupWizard(true);
+        }
+      });
+    }
+  }, [isAuthenticated, setChannels, setUsers, user?.role]);
+
+  // Poll pending join requests for admin badge
+  useEffect(() => {
+    if (!isAuthenticated || user?.role !== 'admin') return;
+
+    const fetchCount = () => {
+      api
+        .listJoinRequests()
+        .then((reqs) => {
+          setPendingRequestCount(
+            reqs.filter((r) => r.status === 'pending').length,
+          );
+        })
+        .catch(() => {});
+    };
+
+    fetchCount();
+    const interval = setInterval(fetchCount, 15000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, user?.role]);
 
   if (loading) {
     return (
@@ -78,21 +96,13 @@ function App() {
     switch (authPage) {
       case 'register':
         return <RegisterPage onSwitchToLogin={() => setAuthPage('login')} />;
-      case 'request':
-        return <RequestAccess onSwitchToLogin={() => setAuthPage('login')} />;
-      case 'add-device':
-        return (
-          <AddDevice
-            onSwitchToLogin={() => setAuthPage('login')}
-            initialToken={urlDeviceToken ?? ''}
-          />
-        );
+      case 'recovery':
+        return <RecoveryLogin onSwitchToLogin={() => setAuthPage('login')} />;
       default:
         return (
           <LoginPage
             onSwitchToRegister={() => setAuthPage('register')}
-            onSwitchToRequest={() => setAuthPage('request')}
-            onSwitchToAddDevice={() => setAuthPage('add-device')}
+            onSwitchToRecovery={() => setAuthPage('recovery')}
           />
         );
     }
@@ -105,6 +115,7 @@ function App() {
         onShowSettings={() => setShowSettings(true)}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}
         onShowChannelSettings={() => setShowChannelSettings(true)}
+        adminNotificationCount={pendingRequestCount}
       />
       <div className="flex flex-1 overflow-hidden relative">
         <Sidebar
@@ -156,7 +167,19 @@ function App() {
               <AccordionItem key="invite-tokens" title="Invite Tokens">
                 <InviteManager />
               </AccordionItem>
-              <AccordionItem key="join-requests" title="Join Requests">
+              <AccordionItem
+                key="join-requests"
+                title={
+                  <div className="flex items-center justify-between w-full">
+                    <span>Join Requests</span>
+                    {pendingRequestCount > 0 && (
+                      <span className="bg-danger text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                        {pendingRequestCount}
+                      </span>
+                    )}
+                  </div>
+                }
+              >
                 <JoinRequests />
               </AccordionItem>
             </Accordion>
@@ -165,6 +188,10 @@ function App() {
       </Modal>
 
       {showSettings && <UserSettings onClose={() => setShowSettings(false)} />}
+
+      {showSetupWizard && (
+        <SetupWizard onComplete={() => setShowSetupWizard(false)} />
+      )}
     </div>
   );
 }

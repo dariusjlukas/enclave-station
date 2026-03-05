@@ -177,6 +177,62 @@ void Database::run_migrations() {
         );
     )SQL");
 
+    // WebAuthn tables
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS webauthn_credentials (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            credential_id TEXT NOT NULL UNIQUE,
+            public_key BYTEA NOT NULL,
+            sign_count INTEGER NOT NULL DEFAULT 0,
+            device_name VARCHAR(100) DEFAULT 'Passkey',
+            transports TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_webauthn_cred_id ON webauthn_credentials(credential_id);
+
+        CREATE TABLE IF NOT EXISTS webauthn_challenges (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            challenge TEXT NOT NULL UNIQUE,
+            extra_data TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        ALTER TABLE users ALTER COLUMN public_key DROP NOT NULL;
+        ALTER TABLE users ALTER COLUMN public_key SET DEFAULT '';
+        ALTER TABLE join_requests ALTER COLUMN public_key DROP NOT NULL;
+        ALTER TABLE join_requests ALTER COLUMN public_key SET DEFAULT '';
+    )SQL");
+
+    // PKI credentials and recovery keys
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS pki_credentials (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            public_key TEXT NOT NULL,
+            device_name VARCHAR(100) DEFAULT 'Browser Key',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_pki_user ON pki_credentials(user_id);
+        CREATE INDEX IF NOT EXISTS idx_pki_pubkey ON pki_credentials(public_key);
+
+        CREATE TABLE IF NOT EXISTS recovery_keys (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            key_hash TEXT NOT NULL,
+            used BOOLEAN NOT NULL DEFAULT false,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_recovery_user ON recovery_keys(user_id);
+    )SQL");
+
+    // Join request credential storage
+    txn.exec(R"SQL(
+        ALTER TABLE join_requests ADD COLUMN IF NOT EXISTS auth_method TEXT DEFAULT '';
+        ALTER TABLE join_requests ADD COLUMN IF NOT EXISTS credential_data TEXT DEFAULT '';
+        ALTER TABLE join_requests ADD COLUMN IF NOT EXISTS session_token TEXT DEFAULT '';
+    )SQL");
+
     txn.commit();
     std::cout << "[DB] Migrations complete" << std::endl;
 }
@@ -232,10 +288,12 @@ User Database::create_user(const std::string& username, const std::string& displ
         "last_seen::text, created_at::text, bio, status",
         username, display_name, public_key, role);
 
-    // Also register in user_keys table
-    txn.exec_params(
-        "INSERT INTO user_keys (user_id, public_key, device_name) VALUES ($1, $2, 'Primary Device')",
-        r[0][0].as<std::string>(), public_key);
+    // Also register in user_keys table (only if using legacy PKI auth)
+    if (!public_key.empty()) {
+        txn.exec_params(
+            "INSERT INTO user_keys (user_id, public_key, device_name) VALUES ($1, $2, 'Primary Device')",
+            r[0][0].as<std::string>(), public_key);
+    }
 
     txn.commit();
     return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -857,13 +915,15 @@ std::vector<Database::InviteInfo> Database::list_invites() {
 // --- Join Requests ---
 
 std::string Database::create_join_request(const std::string& username, const std::string& display_name,
-                                           const std::string& public_key) {
+                                           const std::string& public_key,
+                                           const std::string& auth_method,
+                                           const std::string& credential_data) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
-        "INSERT INTO join_requests (username, display_name, public_key) "
-        "VALUES ($1, $2, $3) RETURNING id",
-        username, display_name, public_key);
+        "INSERT INTO join_requests (username, display_name, public_key, auth_method, credential_data) "
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        username, display_name, public_key, auth_method, credential_data);
     txn.commit();
     return r[0][0].as<std::string>();
 }
@@ -872,14 +932,16 @@ std::vector<Database::JoinRequest> Database::list_pending_requests() {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec(
-        "SELECT id, username, display_name, public_key, status, created_at::text "
+        "SELECT id, username, display_name, public_key, status, "
+        "COALESCE(auth_method, ''), created_at::text "
         "FROM join_requests WHERE status = 'pending' ORDER BY created_at");
     txn.commit();
     std::vector<JoinRequest> requests;
     for (const auto& row : r) {
         requests.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
                             row[2].as<std::string>(), row[3].as<std::string>(),
-                            row[4].as<std::string>(), row[5].as<std::string>()});
+                            row[4].as<std::string>(), row[5].as<std::string>(),
+                            "", "", row[6].as<std::string>()});
     }
     return requests;
 }
@@ -888,13 +950,26 @@ std::optional<Database::JoinRequest> Database::get_join_request(const std::strin
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
-        "SELECT id, username, display_name, public_key, status, created_at::text "
+        "SELECT id, username, display_name, public_key, status, "
+        "COALESCE(auth_method, ''), COALESCE(credential_data, ''), "
+        "COALESCE(session_token, ''), created_at::text "
         "FROM join_requests WHERE id = $1", id);
     txn.commit();
     if (r.empty()) return std::nullopt;
     return JoinRequest{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
                        r[0][2].as<std::string>(), r[0][3].as<std::string>(),
-                       r[0][4].as<std::string>(), r[0][5].as<std::string>()};
+                       r[0][4].as<std::string>(), r[0][5].as<std::string>(),
+                       r[0][6].as<std::string>(), r[0][7].as<std::string>(),
+                       r[0][8].as<std::string>()};
+}
+
+void Database::set_join_request_session(const std::string& id, const std::string& session_token) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "UPDATE join_requests SET session_token = $2 WHERE id = $1",
+        id, session_token);
+    txn.commit();
 }
 
 void Database::update_join_request(const std::string& id, const std::string& status,
@@ -1011,4 +1086,283 @@ int64_t Database::get_total_file_size() {
         "SELECT COALESCE(SUM(file_size), 0) FROM messages WHERE file_id IS NOT NULL");
     txn.commit();
     return r[0][0].as<int64_t>();
+}
+
+// --- WebAuthn Credentials ---
+
+void Database::store_webauthn_credential(const std::string& user_id, const std::string& credential_id,
+                                          const std::vector<unsigned char>& public_key, int sign_count,
+                                          const std::string& device_name, const std::string& transports) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO webauthn_credentials (user_id, credential_id, public_key, sign_count, device_name, transports) "
+        "VALUES ($1, $2, $3, $4, $5, $6)",
+        user_id, credential_id,
+        pqxx::binarystring(public_key.data(), public_key.size()),
+        sign_count, device_name, transports);
+    txn.commit();
+}
+
+std::optional<Database::WebAuthnCredential> Database::find_webauthn_credential(const std::string& credential_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, user_id, credential_id, public_key, sign_count, device_name, transports, created_at::text "
+        "FROM webauthn_credentials WHERE credential_id = $1",
+        credential_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    auto pk_view = r[0][3].as<pqxx::binarystring>();
+    WebAuthnCredential cred;
+    cred.id = r[0][0].as<std::string>();
+    cred.user_id = r[0][1].as<std::string>();
+    cred.credential_id = r[0][2].as<std::string>();
+    cred.public_key.assign(pk_view.begin(), pk_view.end());
+    cred.sign_count = r[0][4].as<int>();
+    cred.device_name = r[0][5].is_null() ? "Passkey" : r[0][5].as<std::string>();
+    cred.transports = r[0][6].is_null() ? "" : r[0][6].as<std::string>();
+    cred.created_at = r[0][7].as<std::string>();
+    return cred;
+}
+
+std::vector<Database::WebAuthnCredential> Database::list_webauthn_credentials(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, user_id, credential_id, public_key, sign_count, device_name, transports, created_at::text "
+        "FROM webauthn_credentials WHERE user_id = $1 ORDER BY created_at",
+        user_id);
+    txn.commit();
+    std::vector<WebAuthnCredential> creds;
+    for (const auto& row : r) {
+        auto pk_view = row[3].as<pqxx::binarystring>();
+        WebAuthnCredential cred;
+        cred.id = row[0].as<std::string>();
+        cred.user_id = row[1].as<std::string>();
+        cred.credential_id = row[2].as<std::string>();
+        cred.public_key.assign(pk_view.begin(), pk_view.end());
+        cred.sign_count = row[4].as<int>();
+        cred.device_name = row[5].is_null() ? "Passkey" : row[5].as<std::string>();
+        cred.transports = row[6].is_null() ? "" : row[6].as<std::string>();
+        cred.created_at = row[7].as<std::string>();
+        creds.push_back(cred);
+    }
+    return creds;
+}
+
+void Database::update_webauthn_sign_count(const std::string& credential_id, int new_count) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "UPDATE webauthn_credentials SET sign_count = $2 WHERE credential_id = $1",
+        credential_id, new_count);
+    txn.commit();
+}
+
+void Database::remove_webauthn_credential(const std::string& credential_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto count_r = txn.exec_params(
+        "SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1", user_id);
+    if (count_r[0][0].as<int>() <= 1) {
+        txn.abort();
+        throw std::runtime_error("Cannot remove the last passkey");
+    }
+    txn.exec_params(
+        "DELETE FROM webauthn_credentials WHERE credential_id = $1 AND user_id = $2",
+        credential_id, user_id);
+    txn.commit();
+}
+
+std::optional<User> Database::find_user_by_credential_id(const std::string& credential_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status "
+        "FROM users u JOIN webauthn_credentials wc ON u.id = wc.user_id "
+        "WHERE wc.credential_id = $1",
+        credential_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
+                r[0][2].as<std::string>(),
+                r[0][3].is_null() ? "" : r[0][3].as<std::string>(),
+                r[0][4].as<std::string>(), r[0][5].as<bool>(),
+                r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
+                r[0][7].as<std::string>(),
+                r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+}
+
+// --- WebAuthn Challenges ---
+
+void Database::store_webauthn_challenge(const std::string& challenge, const std::string& extra_data_json) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO webauthn_challenges (challenge, extra_data) VALUES ($1, $2) "
+        "ON CONFLICT (challenge) DO UPDATE SET extra_data = $2, created_at = NOW()",
+        challenge, extra_data_json);
+    txn.commit();
+}
+
+std::optional<Database::WebAuthnChallenge> Database::get_webauthn_challenge(const std::string& challenge) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT challenge, extra_data FROM webauthn_challenges "
+        "WHERE challenge = $1 AND created_at > NOW() - INTERVAL '5 minutes'",
+        challenge);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    return WebAuthnChallenge{r[0][0].as<std::string>(),
+                             r[0][1].is_null() ? "" : r[0][1].as<std::string>()};
+}
+
+void Database::delete_webauthn_challenge(const std::string& challenge) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM webauthn_challenges WHERE challenge = $1", challenge);
+    txn.commit();
+}
+
+bool Database::has_approved_join_request(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT 1 FROM join_requests WHERE username = $1 AND status = 'approved' LIMIT 1",
+        username);
+    txn.commit();
+    return !r.empty();
+}
+
+// --- PKI Credentials ---
+
+void Database::store_pki_credential(const std::string& user_id, const std::string& public_key_spki,
+                                      const std::string& device_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO pki_credentials (user_id, public_key, device_name) VALUES ($1, $2, $3)",
+        user_id, public_key_spki, device_name);
+    txn.commit();
+}
+
+std::vector<Database::PkiCredential> Database::list_pki_credentials(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, user_id, public_key, device_name, created_at::text "
+        "FROM pki_credentials WHERE user_id = $1 ORDER BY created_at",
+        user_id);
+    txn.commit();
+    std::vector<PkiCredential> creds;
+    for (const auto& row : r) {
+        creds.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
+                         row[2].as<std::string>(), row[3].as<std::string>(),
+                         row[4].as<std::string>()});
+    }
+    return creds;
+}
+
+std::optional<Database::PkiCredential> Database::find_pki_credential_by_key(const std::string& public_key_spki) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, user_id, public_key, device_name, created_at::text "
+        "FROM pki_credentials WHERE public_key = $1",
+        public_key_spki);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    return PkiCredential{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
+                         r[0][2].as<std::string>(), r[0][3].as<std::string>(),
+                         r[0][4].as<std::string>()};
+}
+
+void Database::remove_pki_credential(const std::string& id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM pki_credentials WHERE id = $1 AND user_id = $2", id, user_id);
+    txn.commit();
+}
+
+std::optional<User> Database::find_user_by_pki_key(const std::string& public_key_spki) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status "
+        "FROM users u JOIN pki_credentials pc ON u.id = pc.user_id "
+        "WHERE pc.public_key = $1",
+        public_key_spki);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
+                r[0][2].as<std::string>(),
+                r[0][3].is_null() ? "" : r[0][3].as<std::string>(),
+                r[0][4].as<std::string>(), r[0][5].as<bool>(),
+                r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
+                r[0][7].as<std::string>(),
+                r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+}
+
+// --- Recovery Keys ---
+
+void Database::store_recovery_keys(const std::string& user_id, const std::vector<std::string>& key_hashes) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    for (const auto& hash : key_hashes) {
+        txn.exec_params(
+            "INSERT INTO recovery_keys (user_id, key_hash) VALUES ($1, $2)",
+            user_id, hash);
+    }
+    txn.commit();
+}
+
+std::optional<std::string> Database::verify_and_consume_recovery_key(const std::string& key_hash) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, user_id FROM recovery_keys WHERE key_hash = $1 AND used = false LIMIT 1",
+        key_hash);
+    if (r.empty()) {
+        txn.commit();
+        return std::nullopt;
+    }
+    std::string id = r[0][0].as<std::string>();
+    std::string user_id = r[0][1].as<std::string>();
+    txn.exec_params("UPDATE recovery_keys SET used = true WHERE id = $1", id);
+    txn.commit();
+    return user_id;
+}
+
+int Database::count_remaining_recovery_keys(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT COUNT(*) FROM recovery_keys WHERE user_id = $1 AND used = false",
+        user_id);
+    txn.commit();
+    return r[0][0].as<int>();
+}
+
+void Database::delete_recovery_keys(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM recovery_keys WHERE user_id = $1", user_id);
+    txn.commit();
+}
+
+int Database::count_user_credentials(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT (SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1) + "
+        "(SELECT COUNT(*) FROM pki_credentials WHERE user_id = $1)",
+        user_id);
+    txn.commit();
+    return r[0][0].as<int>();
 }

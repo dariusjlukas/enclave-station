@@ -118,6 +118,15 @@ public:
         });
     }
 
+    void close_all() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& [uid, sockets] : user_sockets_) {
+            for (auto* ws : sockets) {
+                ws->close();
+            }
+        }
+    }
+
     void send_to_user(const std::string& user_id, const std::string& message) {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = user_sockets_.find(user_id);

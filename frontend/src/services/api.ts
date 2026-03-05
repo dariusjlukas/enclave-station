@@ -1,4 +1,10 @@
 import type { User, Channel, Message } from '../types';
+import type {
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+  AuthenticationResponseJSON,
+} from '@simplewebauthn/browser';
 
 const API_BASE = '/api';
 
@@ -26,45 +32,67 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return res.json();
 }
 
-// Auth
-export function requestChallenge(publicKey: string) {
-  return request<{ challenge: string }>('/auth/challenge', {
-    method: 'POST',
-    body: JSON.stringify({ public_key: publicKey }),
-  });
-}
-
-export function verifyChallenge(
-  publicKey: string,
-  challenge: string,
-  signature: string,
-) {
-  return request<{ token: string; user: User }>('/auth/verify', {
-    method: 'POST',
-    body: JSON.stringify({ public_key: publicKey, challenge, signature }),
-  });
-}
-
-export function register(data: {
+// Auth — WebAuthn
+export function getRegistrationOptions(data: {
   username: string;
   display_name: string;
-  public_key: string;
   token?: string;
 }) {
-  return request<{ token: string; user: User }>('/auth/register', {
+  return request<PublicKeyCredentialCreationOptionsJSON>(
+    '/auth/register/options',
+    { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function verifyRegistration(credential: RegistrationResponseJSON) {
+  return request<{ token: string; user: User }>('/auth/register/verify', {
     method: 'POST',
-    body: JSON.stringify(data),
+    body: JSON.stringify(credential),
   });
+}
+
+export function getLoginOptions() {
+  return request<PublicKeyCredentialRequestOptionsJSON>('/auth/login/options', {
+    method: 'POST',
+    body: '{}',
+  });
+}
+
+export function verifyLogin(credential: AuthenticationResponseJSON) {
+  return request<{ token: string; user: User }>('/auth/login/verify', {
+    method: 'POST',
+    body: JSON.stringify(credential),
+  });
+}
+
+export function requestAccessOptions(data: {
+  username: string;
+  display_name: string;
+}) {
+  return request<PublicKeyCredentialCreationOptionsJSON>(
+    '/auth/request-access/options',
+    { method: 'POST', body: JSON.stringify(data) },
+  );
 }
 
 export function requestAccess(data: {
   username: string;
   display_name: string;
-  public_key: string;
+  auth_method: string;
+  public_key?: string;
+  challenge?: string;
+  signature?: string;
+  credential?: RegistrationResponseJSON;
 }) {
-  return request<{ request_id: string; status: string; message: string }>(
+  return request<{ request_id: string; status: string }>(
     '/auth/request-access',
     { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function getRequestStatus(requestId: string) {
+  return request<{ status: string; token?: string; user?: User }>(
+    `/auth/request-status/${encodeURIComponent(requestId)}`,
   );
 }
 
@@ -229,6 +257,7 @@ export function listJoinRequests() {
       id: string;
       username: string;
       display_name: string;
+      auth_method: string;
       status: string;
       created_at: string;
     }>
@@ -236,10 +265,9 @@ export function listJoinRequests() {
 }
 
 export function approveRequest(requestId: string) {
-  return request<{ ok: boolean; user_id: string }>(
-    `/admin/requests/${requestId}/approve`,
-    { method: 'POST' },
-  );
+  return request<{ ok: boolean }>(`/admin/requests/${requestId}/approve`, {
+    method: 'POST',
+  });
 }
 
 export function denyRequest(requestId: string) {
@@ -369,58 +397,163 @@ function triggerDownload(blob: Blob, fileName: string) {
 }
 
 // Admin settings
-export function getAdminSettings() {
-  return request<{
-    max_file_size: number;
-    max_storage_size: number;
-    storage_used: number;
-  }>('/admin/settings');
+export interface AdminSettings {
+  max_file_size: number;
+  max_storage_size: number;
+  storage_used: number;
+  auth_methods: string[];
+  server_name: string;
+  registration_mode: string;
+  file_uploads_enabled: boolean;
+  session_expiry_hours: number;
+  setup_completed: boolean;
 }
 
-export function updateAdminSettings(data: {
-  max_file_size?: number;
-  max_storage_size?: number;
-}) {
+export function getAdminSettings() {
+  return request<AdminSettings>('/admin/settings');
+}
+
+export function updateAdminSettings(
+  data: Partial<Omit<AdminSettings, 'storage_used' | 'setup_completed'>>,
+) {
   return request<{ ok: boolean }>('/admin/settings', {
     method: 'PUT',
     body: JSON.stringify(data),
   });
 }
 
-// Config
-export function getPublicConfig() {
-  return request<{ public_url: string }>('/config');
-}
-
-// Devices
-export function createDeviceToken() {
-  return request<{ token: string; expires_in_minutes: number }>(
-    '/users/me/device-tokens',
-    {
-      method: 'POST',
-    },
-  );
-}
-
-export function addDevice(data: {
-  device_token: string;
-  public_key: string;
-  device_name: string;
-}) {
-  return request<{ token: string; user: User }>('/auth/add-device', {
+export function completeSetup(
+  data: Partial<Omit<AdminSettings, 'storage_used' | 'setup_completed'>>,
+) {
+  return request<{ ok: boolean }>('/admin/setup', {
     method: 'POST',
     body: JSON.stringify(data),
   });
 }
 
-export function listDevices() {
-  return request<
-    Array<{ id: string; device_name: string; created_at: string }>
-  >('/users/me/devices');
+// Config
+export interface PublicConfig {
+  public_url: string;
+  auth_methods: string[];
+  server_name: string;
+  registration_mode: string;
+  setup_completed: boolean;
+  file_uploads_enabled: boolean;
 }
 
-export function removeDevice(deviceId: string) {
-  return request<{ ok: boolean }>(`/users/me/devices/${deviceId}`, {
+export function getPublicConfig() {
+  return request<PublicConfig>('/config');
+}
+
+// PKI auth
+export function getPkiChallenge(publicKey?: string) {
+  return request<{ challenge: string }>('/auth/pki/challenge', {
+    method: 'POST',
+    body: JSON.stringify({ public_key: publicKey }),
+  });
+}
+
+export function pkiRegister(data: {
+  username: string;
+  display_name: string;
+  token?: string;
+  public_key: string;
+  challenge: string;
+  signature: string;
+}) {
+  return request<{ token: string; user: User; recovery_keys: string[] }>(
+    '/auth/pki/register',
+    { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function pkiLogin(data: {
+  public_key: string;
+  challenge: string;
+  signature: string;
+}) {
+  return request<{ token: string; user: User }>('/auth/pki/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function recoveryLogin(recoveryKey: string) {
+  return request<{ token: string; user: User; must_setup_key: boolean }>(
+    '/auth/recovery',
+    { method: 'POST', body: JSON.stringify({ recovery_key: recoveryKey }) },
+  );
+}
+
+// PKI key management
+export function getPkiKeyChallenge() {
+  return request<{ challenge: string }>('/users/me/keys/challenge', {
+    method: 'POST',
+  });
+}
+
+export function addPkiKey(data: {
+  public_key: string;
+  challenge: string;
+  signature: string;
+  device_name?: string;
+}) {
+  return request<{ ok: boolean; recovery_keys?: string[] }>('/users/me/keys', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function listPkiKeys() {
+  return request<
+    Array<{ id: string; device_name: string; created_at: string }>
+  >('/users/me/keys');
+}
+
+export function removePkiKey(id: string) {
+  return request<{ ok: boolean }>(`/users/me/keys/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
+}
+
+// Recovery key management
+export function getRecoveryKeyCount() {
+  return request<{ remaining: number }>('/users/me/recovery-keys/count');
+}
+
+export function regenerateRecoveryKeys() {
+  return request<{ recovery_keys: string[] }>(
+    '/users/me/recovery-keys/regenerate',
+    { method: 'POST' },
+  );
+}
+
+// Passkeys
+export function getPasskeyRegistrationOptions() {
+  return request<
+    import('@simplewebauthn/browser').PublicKeyCredentialCreationOptionsJSON
+  >('/users/me/passkeys/options', { method: 'POST' });
+}
+
+export function verifyPasskeyRegistration(
+  credential: RegistrationResponseJSON,
+  deviceName?: string,
+) {
+  return request<{ ok: boolean }>('/users/me/passkeys/verify', {
+    method: 'POST',
+    body: JSON.stringify({ ...credential, device_name: deviceName }),
+  });
+}
+
+export function listPasskeys() {
+  return request<
+    Array<{ id: string; device_name: string; created_at: string }>
+  >('/users/me/passkeys');
+}
+
+export function removePasskey(credentialId: string) {
+  return request<{ ok: boolean }>(
+    `/users/me/passkeys/${encodeURIComponent(credentialId)}`,
+    { method: 'DELETE' },
+  );
 }

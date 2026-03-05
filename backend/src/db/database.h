@@ -96,16 +96,20 @@ public:
 
     // Join requests
     std::string create_join_request(const std::string& username, const std::string& display_name,
-                                     const std::string& public_key);
+                                     const std::string& public_key,
+                                     const std::string& auth_method = "",
+                                     const std::string& credential_data = "");
     struct JoinRequest {
-        std::string id, username, display_name, public_key, status, created_at;
+        std::string id, username, display_name, public_key, status,
+                    auth_method, credential_data, session_token, created_at;
     };
     std::vector<JoinRequest> list_pending_requests();
     std::optional<JoinRequest> get_join_request(const std::string& id);
     void update_join_request(const std::string& id, const std::string& status,
                               const std::string& reviewed_by);
+    void set_join_request_session(const std::string& id, const std::string& session_token);
 
-    // Device / multi-key management
+    // Device / multi-key management (legacy)
     struct UserKey {
         std::string id, user_id, public_key, device_name, created_at;
     };
@@ -116,6 +120,51 @@ public:
                        const std::string& device_name);
     std::vector<UserKey> list_user_keys(const std::string& user_id);
     void remove_user_key(const std::string& key_id, const std::string& user_id);
+
+    // WebAuthn credentials
+    struct WebAuthnCredential {
+        std::string id, user_id, credential_id;
+        std::vector<unsigned char> public_key;
+        int sign_count;
+        std::string device_name, transports, created_at;
+    };
+    void store_webauthn_credential(const std::string& user_id, const std::string& credential_id,
+                                    const std::vector<unsigned char>& public_key, int sign_count,
+                                    const std::string& device_name, const std::string& transports);
+    std::optional<WebAuthnCredential> find_webauthn_credential(const std::string& credential_id);
+    std::vector<WebAuthnCredential> list_webauthn_credentials(const std::string& user_id);
+    void update_webauthn_sign_count(const std::string& credential_id, int new_count);
+    void remove_webauthn_credential(const std::string& credential_id, const std::string& user_id);
+    std::optional<User> find_user_by_credential_id(const std::string& credential_id);
+
+    // WebAuthn challenges
+    void store_webauthn_challenge(const std::string& challenge, const std::string& extra_data_json);
+    struct WebAuthnChallenge { std::string challenge, extra_data; };
+    std::optional<WebAuthnChallenge> get_webauthn_challenge(const std::string& challenge);
+    void delete_webauthn_challenge(const std::string& challenge);
+
+    // Check for approved join request by username
+    bool has_approved_join_request(const std::string& username);
+
+    // PKI credentials
+    struct PkiCredential {
+        std::string id, user_id, public_key, device_name, created_at;
+    };
+    void store_pki_credential(const std::string& user_id, const std::string& public_key_spki,
+                               const std::string& device_name = "Browser Key");
+    std::vector<PkiCredential> list_pki_credentials(const std::string& user_id);
+    std::optional<PkiCredential> find_pki_credential_by_key(const std::string& public_key_spki);
+    void remove_pki_credential(const std::string& id, const std::string& user_id);
+    std::optional<User> find_user_by_pki_key(const std::string& public_key_spki);
+
+    // Recovery keys
+    void store_recovery_keys(const std::string& user_id, const std::vector<std::string>& key_hashes);
+    std::optional<std::string> verify_and_consume_recovery_key(const std::string& key_hash);
+    int count_remaining_recovery_keys(const std::string& user_id);
+    void delete_recovery_keys(const std::string& user_id);
+
+    // Count total auth credentials for a user (passkeys + PKI keys)
+    int count_user_credentials(const std::string& user_id);
 
 private:
     pqxx::connection& get_conn();

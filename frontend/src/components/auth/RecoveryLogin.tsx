@@ -1,55 +1,39 @@
 import { useState } from 'react';
 import { Button, Card, CardBody, Input, Alert } from '@heroui/react';
 import { useChatStore } from '../../stores/chatStore';
-import { generateKeyPair, storeKeysAs, clearKeys } from '../../services/crypto';
 import * as api from '../../services/api';
 import logoLarge from '../../assets/isle-chat-logo-large.png';
 import logoLargeDark from '../../assets/isle-chat-logo-large-dark.png';
 
 interface Props {
   onSwitchToLogin: () => void;
-  initialToken?: string;
 }
 
-export function AddDevice({ onSwitchToLogin, initialToken = '' }: Props) {
+export function RecoveryLogin({ onSwitchToLogin }: Props) {
   const setAuth = useChatStore((s) => s.setAuth);
-  const [deviceToken, setDeviceToken] = useState(initialToken);
-  const [deviceName, setDeviceName] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleAddDevice = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!deviceToken.trim()) {
-      setError('Device token is required');
+    if (!recoveryKey.trim()) {
+      setError('Please enter a recovery key');
       return;
     }
+
     setLoading(true);
     setError('');
     try {
-      const { publicKeyPem } = await generateKeyPair('__pending_device__');
-
-      const result = await api.addDevice({
-        device_token: deviceToken.trim(),
-        public_key: publicKeyPem,
-        device_name: deviceName.trim() || 'New Device',
-      });
-
-      const { getStoredKeys } = await import('../../services/crypto');
-      const keys = await getStoredKeys('__pending_device__');
-      if (keys) {
-        await storeKeysAs(
-          result.user.username,
-          keys.privateKey,
-          keys.publicKeyPem,
-        );
-        await clearKeys('__pending_device__');
-      }
-
+      const result = await api.recoveryLogin(recoveryKey.trim());
       setAuth(result.user, result.token);
+      if (result.must_setup_key) {
+        alert(
+          'You are logged in with a recovery key. Please add a new authentication method in Settings.',
+        );
+      }
     } catch (e) {
-      await clearKeys('__pending_device__');
-      setError(e instanceof Error ? e.message : 'Failed to link device');
+      setError(e instanceof Error ? e.message : 'Recovery failed');
     } finally {
       setLoading(false);
     }
@@ -70,11 +54,10 @@ export function AddDevice({ onSwitchToLogin, initialToken = '' }: Props) {
       <Card className="w-full max-w-md mx-4 sm:mx-auto shadow-2xl">
         <CardBody className="p-5 sm:p-8">
           <h1 className="text-3xl font-bold text-foreground mb-2">
-            Link Device
+            Account Recovery
           </h1>
           <p className="text-default-500 mb-6">
-            Enter the device token from your existing device to link this
-            browser to your account
+            Enter one of your recovery keys to regain access
           </p>
 
           {error && (
@@ -83,22 +66,14 @@ export function AddDevice({ onSwitchToLogin, initialToken = '' }: Props) {
             </Alert>
           )}
 
-          <form onSubmit={handleAddDevice} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <Input
-              label="Device Token"
+              label="Recovery Key"
               variant="bordered"
-              value={deviceToken}
-              onChange={(e) => setDeviceToken(e.target.value)}
-              placeholder="Paste token here"
+              value={recoveryKey}
+              onChange={(e) => setRecoveryKey(e.target.value)}
+              placeholder="XXXX-XXXX-XXXX-XXXX-XXXX"
               classNames={{ input: 'font-mono' }}
-            />
-            <Input
-              label="Device Name"
-              description="Optional"
-              variant="bordered"
-              value={deviceName}
-              onChange={(e) => setDeviceName(e.target.value)}
-              placeholder="e.g. Phone, Laptop, Work PC"
             />
             <Button
               type="submit"
@@ -107,7 +82,7 @@ export function AddDevice({ onSwitchToLogin, initialToken = '' }: Props) {
               isLoading={loading}
               size="lg"
             >
-              {loading ? 'Linking...' : 'Link Device'}
+              {loading ? 'Recovering...' : 'Recover Account'}
             </Button>
           </form>
 
@@ -119,7 +94,7 @@ export function AddDevice({ onSwitchToLogin, initialToken = '' }: Props) {
             className="mt-4"
             size="sm"
           >
-            Back to login
+            Back to sign in
           </Button>
         </CardBody>
       </Card>

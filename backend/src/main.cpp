@@ -1,6 +1,8 @@
 #include <App.h>
 #include <iostream>
 #include <filesystem>
+#include <csignal>
+#include <functional>
 #include "config.h"
 #include "db/database.h"
 #include "handlers/auth_handler.h"
@@ -10,12 +12,31 @@
 #include "handlers/file_handler.h"
 #include "ws/ws_handler.h"
 
+us_listen_socket_t* global_listen_socket = nullptr;
+uWS::Loop* global_loop = nullptr;
+std::function<void()> global_close_connections;
+
+void shutdown_handler(int signum) {
+    std::cout << "\n[Server] Received signal " << signum << ", shutting down..." << std::endl;
+    if (global_loop) {
+        global_loop->defer([]() {
+            if (global_listen_socket) {
+                us_listen_socket_close(0, global_listen_socket);
+                global_listen_socket = nullptr;
+            }
+            if (global_close_connections) {
+                global_close_connections();
+            }
+        });
+    }
+}
+
 template <bool SSL>
 void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
     WsHandler<SSL> ws_handler(db);
     AuthHandler<SSL> auth_handler{db, config};
     ChannelHandler<SSL> channel_handler{db, ws_handler};
-    UserHandler<SSL> user_handler{db};
+    UserHandler<SSL> user_handler{db, config};
     AdminHandler<SSL> admin_handler{db, config};
     FileHandler<SSL> file_handler{db, config};
 
@@ -36,9 +57,30 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
     ws_handler.register_routes(app);
 
     // Public config (non-sensitive settings for the frontend)
-    app.get("/api/config", [&config](auto* res, auto* req) {
+    app.get("/api/config", [&config, &db](auto* res, auto* req) {
         json resp;
         resp["public_url"] = config.public_url;
+
+        // Auth methods
+        json auth_methods = json::array({"passkey", "pki"});
+        auto am = db.get_setting("auth_methods");
+        if (am) {
+            try { auth_methods = json::parse(*am); } catch (...) {}
+        }
+        resp["auth_methods"] = auth_methods;
+
+        auto server_name = db.get_setting("server_name");
+        resp["server_name"] = server_name.value_or("Isle Chat");
+
+        auto reg_mode = db.get_setting("registration_mode");
+        resp["registration_mode"] = reg_mode.value_or("invite");
+
+        auto setup = db.get_setting("setup_completed");
+        resp["setup_completed"] = (setup && *setup == "true");
+
+        auto uploads = db.get_setting("file_uploads_enabled");
+        resp["file_uploads_enabled"] = (!uploads || *uploads == "true");
+
         res->writeHeader("Content-Type", "application/json")
             ->writeHeader("Access-Control-Allow-Origin", "*")
             ->end(resp.dump());
@@ -52,8 +94,11 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
     });
 
     // Start listening
+    global_loop = uWS::Loop::get();
+    global_close_connections = [&ws_handler]() { ws_handler.close_all(); };
     app.listen(config.server_port, [&config](auto* listen_socket) {
         if (listen_socket) {
+            global_listen_socket = listen_socket;
             std::cout << "[Server] Listening on port " << config.server_port
                       << (config.has_ssl() ? " (HTTPS)" : " (HTTP)") << std::endl;
         } else {
@@ -61,6 +106,8 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
             exit(1);
         }
     }).run();
+
+    std::cout << "[Server] Shut down cleanly." << std::endl;
 }
 
 int main() {
@@ -76,6 +123,9 @@ int main() {
     // Connect to database
     Database db(config.pg_connection_string());
     db.run_migrations();
+
+    std::signal(SIGTERM, shutdown_handler);
+    std::signal(SIGINT, shutdown_handler);
 
     if (config.has_ssl()) {
         std::cout << "[Config] SSL enabled (cert: " << config.ssl_cert_path

@@ -14,9 +14,9 @@ import {
   AccordionItem,
 } from '@heroui/react';
 import { useChatStore } from '../../stores/chatStore';
-import { clearKeys } from '../../services/crypto';
 import * as api from '../../services/api';
-import { DeviceManager } from './DeviceManager';
+import { PasskeyManager } from './PasskeyManager';
+import { PkiKeyManager } from './PkiKeyManager';
 import {
   useTheme,
   COLOR_THEMES,
@@ -69,24 +69,12 @@ export function UserSettings({ onClose }: Props) {
     }
   };
 
-  const handleClearKeys = async () => {
-    if (
-      confirm(
-        'This will delete your keys from this browser. You will need a new invite to re-register. Continue?',
-      )
-    ) {
-      await clearKeys(user?.username);
-      clearAuth();
-    }
-  };
-
   const handleDeleteAccount = async () => {
     if (deleteConfirm !== user?.username) return;
     setDeleting(true);
     setDeleteError('');
     try {
       await api.deleteAccount();
-      await clearKeys(user?.username);
       clearAuth();
     } catch (e) {
       setDeleteError(
@@ -191,8 +179,12 @@ export function UserSettings({ onClose }: Props) {
               </div>
             </AccordionItem>
 
-            <AccordionItem key="devices" title="Devices">
-              <DeviceManager />
+            <AccordionItem key="passkeys" title="Passkeys">
+              <PasskeyManager />
+            </AccordionItem>
+
+            <AccordionItem key="browser-keys" title="Browser Keys">
+              <PkiKeyManager />
             </AccordionItem>
 
             <AccordionItem
@@ -201,20 +193,6 @@ export function UserSettings({ onClose }: Props) {
               classNames={{ title: 'text-danger' }}
             >
               <div className="space-y-4">
-                <div>
-                  <p className="text-sm text-default-500 mb-2">
-                    Remove your encryption keys from this browser. You will be
-                    logged out and need a device token to sign in again.
-                  </p>
-                  <Button
-                    color="danger"
-                    variant="bordered"
-                    size="sm"
-                    onPress={handleClearKeys}
-                  >
-                    Clear Keys
-                  </Button>
-                </div>
                 <div>
                   <p className="text-sm text-default-500 mb-2">
                     Permanently delete your account and all associated data.
