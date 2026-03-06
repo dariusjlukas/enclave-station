@@ -4,6 +4,7 @@ import type {
   Channel,
   Message,
   Space,
+  SpaceInvite,
   SidebarView,
   ReadReceiptInfo,
 } from '../types';
@@ -25,6 +26,11 @@ interface ChatState {
   // Spaces
   spaces: Space[];
   activeView: SidebarView | null;
+
+  // Server state
+  serverArchived: boolean;
+  pendingRequestCount: number;
+  spaceInvites: SpaceInvite[];
 
   // Search
   jumpToMessageId: string | null;
@@ -72,6 +78,11 @@ interface ChatState {
     channelId: string,
     receipts: Record<string, ReadReceiptInfo>,
   ) => void;
+  setServerArchived: (archived: boolean) => void;
+  setPendingRequestCount: (count: number) => void;
+  setSpaceInvites: (invites: SpaceInvite[]) => void;
+  addSpaceInvite: (invite: SpaceInvite) => void;
+  removeSpaceInvite: (inviteId: string) => void;
   setJumpToMessage: (channelId: string, messageId: string) => void;
   clearJumpToMessage: () => void;
 }
@@ -88,6 +99,9 @@ export const useChatStore = create<ChatState>((set) => ({
   uploadProgress: null,
   spaces: [],
   activeView: null,
+  serverArchived: false,
+  pendingRequestCount: 0,
+  spaceInvites: [],
   jumpToMessageId: null,
   jumpToChannelId: null,
   unreadCounts: {},
@@ -113,6 +127,7 @@ export const useChatStore = create<ChatState>((set) => ({
       unreadCounts: {},
       mentionCounts: {},
       readReceipts: {},
+      spaceInvites: [],
     });
   },
 
@@ -302,6 +317,17 @@ export const useChatStore = create<ChatState>((set) => ({
         ...state.readReceipts,
         [channelId]: receipts,
       },
+    })),
+
+  setServerArchived: (archived) => set({ serverArchived: archived }),
+  setPendingRequestCount: (count) => set({ pendingRequestCount: count }),
+
+  setSpaceInvites: (invites) => set({ spaceInvites: invites }),
+  addSpaceInvite: (invite) =>
+    set((state) => ({ spaceInvites: [...state.spaceInvites, invite] })),
+  removeSpaceInvite: (inviteId) =>
+    set((state) => ({
+      spaceInvites: state.spaceInvites.filter((i) => i.id !== inviteId),
     })),
 
   setJumpToMessage: (channelId, messageId) =>

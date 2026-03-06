@@ -5,6 +5,7 @@
 #include "db/database.h"
 #include "auth/webauthn.h"
 #include "config.h"
+#include "ws/ws_handler.h"
 
 using json = nlohmann::json;
 
@@ -12,6 +13,7 @@ template <bool SSL>
 struct AuthHandler {
     Database& db;
     const Config& config;
+    WsHandler<SSL>& ws;
 
     void register_routes(uWS::TemplatedApp<SSL>& app) {
         // WebAuthn (passkey) routes
@@ -846,6 +848,15 @@ private:
             }
 
             auto id = db.create_join_request(username, display_name, "", auth_method, credential_data);
+
+            // Notify admin/owner users via WebSocket
+            json notify = {{"type", "join_request_created"}, {"request_id", id}};
+            auto all_users = db.list_users();
+            for (const auto& u : all_users) {
+                if (u.role == "admin" || u.role == "owner") {
+                    ws.send_to_user(u.id, notify.dump());
+                }
+            }
 
             json resp = {{"request_id", id}, {"status", "pending"}};
             res->writeHeader("Content-Type", "application/json")->end(resp.dump());

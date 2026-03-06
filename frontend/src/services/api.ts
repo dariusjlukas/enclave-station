@@ -1,4 +1,11 @@
-import type { User, Channel, Message, Space, ReadReceiptInfo } from '../types';
+import type {
+  User,
+  Channel,
+  Message,
+  Space,
+  SpaceInvite,
+  ReadReceiptInfo,
+} from '../types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
@@ -177,9 +184,10 @@ export function joinChannel(channelId: string) {
   });
 }
 
-export function listPublicChannels(search?: string) {
+export function listPublicChannels(search?: string, spaceId?: string) {
   const params = new URLSearchParams();
   if (search) params.set('search', search);
+  if (spaceId) params.set('space_id', spaceId);
   const qs = params.toString();
   return request<
     Array<{
@@ -188,6 +196,7 @@ export function listPublicChannels(search?: string) {
       description: string;
       is_public: boolean;
       default_role: string;
+      is_archived: boolean;
       created_at: string;
     }>
   >(`/channels/public${qs ? '?' + qs : ''}`);
@@ -444,6 +453,7 @@ export interface AdminSettings {
   file_uploads_enabled: boolean;
   session_expiry_hours: number;
   setup_completed: boolean;
+  server_archived: boolean;
 }
 
 export function getAdminSettings() {
@@ -546,6 +556,22 @@ export function inviteToSpace(spaceId: string, userId: string, role?: string) {
   });
 }
 
+export function listSpaceInvites() {
+  return request<SpaceInvite[]>('/space-invites');
+}
+
+export function acceptSpaceInvite(inviteId: string) {
+  return request<{ ok: boolean }>(`/space-invites/${inviteId}/accept`, {
+    method: 'POST',
+  });
+}
+
+export function declineSpaceInvite(inviteId: string) {
+  return request<{ ok: boolean }>(`/space-invites/${inviteId}/decline`, {
+    method: 'POST',
+  });
+}
+
 export function kickFromSpace(spaceId: string, userId: string) {
   return request<{ ok: boolean }>(`/spaces/${spaceId}/members/${userId}`, {
     method: 'DELETE',
@@ -558,6 +584,60 @@ export function changeSpaceMemberRole(
   role: string,
 ) {
   return request<{ ok: boolean }>(`/spaces/${spaceId}/members/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ role }),
+  });
+}
+
+// Leave / Archive
+export function leaveChannel(channelId: string) {
+  return request<{ ok: boolean }>(`/channels/${channelId}/leave`, {
+    method: 'POST',
+  });
+}
+
+export function archiveChannel(channelId: string) {
+  return request<{ ok: boolean }>(`/channels/${channelId}/archive`, {
+    method: 'POST',
+  });
+}
+
+export function unarchiveChannel(channelId: string) {
+  return request<{ ok: boolean }>(`/channels/${channelId}/unarchive`, {
+    method: 'POST',
+  });
+}
+
+export function leaveSpace(spaceId: string) {
+  return request<{ ok: boolean }>(`/spaces/${spaceId}/leave`, {
+    method: 'POST',
+  });
+}
+
+export function archiveSpace(spaceId: string) {
+  return request<{ ok: boolean }>(`/spaces/${spaceId}/archive`, {
+    method: 'POST',
+  });
+}
+
+export function unarchiveSpace(spaceId: string) {
+  return request<{ ok: boolean }>(`/spaces/${spaceId}/unarchive`, {
+    method: 'POST',
+  });
+}
+
+export function archiveServer() {
+  return request<{ ok: boolean }>('/admin/archive-server', { method: 'POST' });
+}
+
+export function unarchiveServer() {
+  return request<{ ok: boolean }>('/admin/unarchive-server', {
+    method: 'POST',
+  });
+}
+
+export function changeUserRole(userId: string, role: string) {
+  return request<{ ok: boolean }>(`/admin/users/${userId}/role`, {
     method: 'PUT',
     body: JSON.stringify({ role }),
   });

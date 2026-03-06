@@ -15,11 +15,10 @@ function Badge({ count }: { count: number }) {
 }
 
 interface Props {
-  onCreateSpace: () => void;
   onBrowseSpaces: () => void;
 }
 
-export function IconRail({ onCreateSpace, onBrowseSpaces }: Props) {
+export function IconRail({ onBrowseSpaces }: Props) {
   const spaces = useChatStore((s) => s.spaces);
   const activeView = useChatStore((s) => s.activeView);
   const setActiveView = useChatStore((s) => s.setActiveView);
@@ -91,7 +90,7 @@ export function IconRail({ onCreateSpace, onBrowseSpaces }: Props) {
 
       <Tooltip content="Add or browse spaces" placement="right">
         <button
-          onClick={spaces.length === 0 ? onCreateSpace : onBrowseSpaces}
+          onClick={onBrowseSpaces}
           className="w-11 h-11 rounded-xl flex items-center justify-center bg-content2/50 text-default-400 hover:bg-content3 hover:text-foreground transition-all border-2 border-dashed border-default-200"
         >
           <FontAwesomeIcon icon={faPlus} />

@@ -4,6 +4,7 @@
 #include "db/database.h"
 #include "auth/webauthn.h"
 #include "config.h"
+#include "ws/ws_handler.h"
 
 using json = nlohmann::json;
 
@@ -11,6 +12,7 @@ template <bool SSL>
 struct AdminHandler {
     Database& db;
     const Config& config;
+    WsHandler<SSL>& ws;
 
     void register_routes(uWS::TemplatedApp<SSL>& app) {
         app.post("/api/admin/invites", [this](auto* res, auto* req) {
@@ -174,6 +176,67 @@ struct AdminHandler {
             }
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
         });
+
+        // Archive server (owner only)
+        app.post("/api/admin/archive-server", [this](auto* res, auto* req) {
+            auto user_id = get_owner_id(res, req);
+            if (user_id.empty()) return;
+            db.set_server_archived(true);
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+
+        app.post("/api/admin/unarchive-server", [this](auto* res, auto* req) {
+            auto user_id = get_owner_id(res, req);
+            if (user_id.empty()) return;
+            db.set_server_archived(false);
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+
+        // Change user role (owner only)
+        app.put("/api/admin/users/:userId/role", [this](auto* res, auto* req) {
+            auto owner_id_copy = get_owner_id(res, req);
+            std::string target_user_id(req->getParameter("userId"));
+            std::string body;
+            res->onData([this, res, owner_id = std::move(owner_id_copy),
+                         target_user_id = std::move(target_user_id), body = std::move(body)](
+                std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                if (owner_id.empty()) return;
+
+                try {
+                    auto j = json::parse(body);
+                    std::string new_role = j.at("role");
+                    if (new_role != "owner" && new_role != "admin" && new_role != "user") {
+                        res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"Invalid role. Must be owner, admin, or user"})");
+                        return;
+                    }
+
+                    // Check if demoting from owner would leave no owners
+                    auto target = db.find_user_by_id(target_user_id);
+                    if (target && target->role == "owner" && new_role != "owner") {
+                        int owner_count = db.count_users_with_role("owner");
+                        if (owner_count <= 1) {
+                            // Auto-archive server
+                            db.set_server_archived(true);
+                        }
+                    }
+
+                    db.update_user_role(target_user_id, new_role);
+
+                    // Notify the target user of their new server role
+                    json notify = {{"type", "server_role_changed"}, {"role", new_role}};
+                    ws.send_to_user(target_user_id, notify.dump());
+
+                    res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+                } catch (const std::exception& e) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(json({{"error", e.what()}}).dump());
+                }
+            });
+            res->onAborted([]() {});
+        });
     }
 
 private:
@@ -187,9 +250,27 @@ private:
             return "";
         }
         auto user = db.find_user_by_id(*user_id);
-        if (!user || user->role != "admin") {
+        if (!user || (user->role != "admin" && user->role != "owner")) {
             res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                 ->end(R"({"error":"Admin access required"})");
+            return "";
+        }
+        return *user_id;
+    }
+
+    std::string get_owner_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
+        std::string token(req->getHeader("authorization"));
+        if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Unauthorized"})");
+            return "";
+        }
+        auto user = db.find_user_by_id(*user_id);
+        if (!user || user->role != "owner") {
+            res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Owner access required"})");
             return "";
         }
         return *user_id;
@@ -222,7 +303,8 @@ private:
             {"file_uploads_enabled", get_setting_or("file_uploads_enabled", "true") == "true"},
             {"session_expiry_hours", std::stoi(get_setting_or("session_expiry_hours",
                                      std::to_string(config.session_expiry_hours)))},
-            {"setup_completed", get_setting_or("setup_completed", "false") == "true"}
+            {"setup_completed", get_setting_or("setup_completed", "false") == "true"},
+            {"server_archived", db.is_server_archived()}
         };
     }
 

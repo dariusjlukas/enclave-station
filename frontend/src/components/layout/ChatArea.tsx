@@ -15,9 +15,14 @@ export function ChatArea() {
   const { sendMessage, sendTyping, editMessage, deleteMessage, markRead } =
     useWebSocket();
 
+  const serverArchived = useChatStore((s) => s.serverArchived);
   const activeChannel = channels.find((c) => c.id === activeChannelId);
+  const isArchived = activeChannel?.is_archived || serverArchived;
   const canWrite =
-    activeChannel?.my_role === 'admin' || activeChannel?.my_role === 'write';
+    !isArchived &&
+    (activeChannel?.my_role === 'admin' ||
+      activeChannel?.my_role === 'owner' ||
+      activeChannel?.my_role === 'write');
 
   const handleUpload = async (file: File, message: string) => {
     if (!activeChannelId) return;
@@ -66,7 +71,9 @@ export function ChatArea() {
         />
       ) : (
         <div className="border-t border-default-100 p-4 text-center text-default-400 text-sm">
-          You have read-only access to this channel
+          {isArchived
+            ? 'This channel is archived — no new messages can be sent'
+            : 'You have read-only access to this channel'}
         </div>
       )}
     </div>

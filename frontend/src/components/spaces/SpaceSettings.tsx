@@ -36,9 +36,20 @@ export function SpaceSettings({ space, onClose }: Props) {
   const [inviteUserId, setInviteUserId] = useState<string[]>([]);
   const [inviteRole, setInviteRole] = useState('write');
   const [inviting, setInviting] = useState(false);
+  const [inviteSent, setInviteSent] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
+  const [leaveError, setLeaveError] = useState<string | null>(null);
+  const user = useChatStore((s) => s.user);
   const setSpaces = useChatStore((s) => s.setSpaces);
   const updateSpace = useChatStore((s) => s.updateSpace);
+  const removeSpace = useChatStore((s) => s.removeSpace);
+
+  const canManage =
+    space.my_role === 'admin' ||
+    space.my_role === 'owner' ||
+    user?.role === 'admin' ||
+    user?.role === 'owner';
 
   const memberIds = useMemo(
     () => space.members.map((m) => m.id),
@@ -86,13 +97,16 @@ export function SpaceSettings({ space, onClose }: Props) {
   const handleInvite = async () => {
     if (inviteUserId.length === 0) return;
     setInviting(true);
+    setInviteSent(false);
+    setInviteError(null);
     try {
       await api.inviteToSpace(space.id, inviteUserId[0], inviteRole);
-      const spaces = await api.listSpaces();
-      setSpaces(spaces);
       setInviteUserId([]);
-    } catch {
-      /* ignored */
+      setInviteSent(true);
+      setTimeout(() => setInviteSent(false), 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Failed to send invite';
+      setInviteError(msg);
     }
     setInviting(false);
   };
@@ -115,59 +129,69 @@ export function SpaceSettings({ space, onClose }: Props) {
         </ModalHeader>
         <ModalBody className="pb-6">
           <Tabs color="primary" classNames={{ tabList: 'bg-content2' }}>
-            <Tab key="settings" title="Settings">
-              <div className="space-y-4 pt-2">
-                <Input
-                  label="Space Name"
-                  variant="bordered"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-                <Input
-                  label="Description"
-                  variant="bordered"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-                <Input
-                  label="Icon"
-                  description="Emoji or short text"
-                  variant="bordered"
-                  value={icon}
-                  onChange={(e) => setIcon(e.target.value)}
-                  maxLength={10}
-                />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      Public Space
-                    </p>
-                    <p className="text-xs text-default-400">
-                      {isPublic ? 'Anyone can find and join' : 'Invite only'}
-                    </p>
-                  </div>
-                  <Switch
-                    isSelected={isPublic}
-                    onValueChange={setIsPublic}
-                    size="sm"
+            {canManage && (
+              <Tab key="settings" title="Settings">
+                <div className="space-y-4 pt-2">
+                  <Input
+                    label="Space Name"
+                    variant="bordered"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                   />
+                  <Input
+                    label="Description"
+                    variant="bordered"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                  <Input
+                    label="Icon"
+                    description="Emoji or short text"
+                    variant="bordered"
+                    value={icon}
+                    onChange={(e) => setIcon(e.target.value)}
+                    maxLength={10}
+                  />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Public Space
+                      </p>
+                      <p className="text-xs text-default-400">
+                        {isPublic ? 'Anyone can find and join' : 'Invite only'}
+                      </p>
+                    </div>
+                    <Switch
+                      isSelected={isPublic}
+                      onValueChange={setIsPublic}
+                      size="sm"
+                    />
+                  </div>
+                  <Select
+                    label="Default Role for New Members"
+                    variant="bordered"
+                    selectedKeys={[defaultRole]}
+                    onChange={(e) =>
+                      setDefaultRole(e.target.value as ChannelRole)
+                    }
+                  >
+                    <SelectItem key="write">
+                      Write (can send messages)
+                    </SelectItem>
+                    <SelectItem key="read">
+                      Read Only (can view only)
+                    </SelectItem>
+                  </Select>
+                  <Button
+                    color="primary"
+                    onPress={handleSave}
+                    isLoading={saving}
+                  >
+                    Save Settings
+                  </Button>
                 </div>
-                <Select
-                  label="Default Role for New Members"
-                  variant="bordered"
-                  selectedKeys={[defaultRole]}
-                  onChange={(e) =>
-                    setDefaultRole(e.target.value as ChannelRole)
-                  }
-                >
-                  <SelectItem key="write">Write (can send messages)</SelectItem>
-                  <SelectItem key="read">Read Only (can view only)</SelectItem>
-                </Select>
-                <Button color="primary" onPress={handleSave} isLoading={saving}>
-                  Save Settings
-                </Button>
-              </div>
-            </Tab>
+              </Tab>
+            )}
 
             <Tab key="members" title={`Members (${space.members.length})`}>
               <div className="space-y-2 pt-2">
@@ -190,64 +214,159 @@ export function SpaceSettings({ space, onClose }: Props) {
                         </span>
                       </div>
                     </UserPopoverCard>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <Select
-                        size="sm"
-                        variant="bordered"
-                        className="w-28"
-                        selectedKeys={[m.role]}
-                        onChange={(e) => handleChangeRole(m.id, e.target.value)}
-                        aria-label="Role"
-                      >
-                        <SelectItem key="admin">Admin</SelectItem>
-                        <SelectItem key="write">Write</SelectItem>
-                        <SelectItem key="read">Read</SelectItem>
-                      </Select>
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="danger"
-                        onPress={() => handleKick(m)}
-                      >
-                        Kick
-                      </Button>
-                    </div>
+                    {canManage ? (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Select
+                          size="sm"
+                          variant="bordered"
+                          className="w-28"
+                          selectedKeys={[m.role]}
+                          onChange={(e) =>
+                            handleChangeRole(m.id, e.target.value)
+                          }
+                          aria-label="Role"
+                          items={[
+                            ...(space.my_role === 'owner' ||
+                            user?.role === 'owner'
+                              ? [{ key: 'owner', label: 'Owner' }]
+                              : []),
+                            { key: 'admin', label: 'Admin' },
+                            { key: 'write', label: 'Write' },
+                            { key: 'read', label: 'Read' },
+                          ]}
+                        >
+                          {(item) => (
+                            <SelectItem key={item.key}>{item.label}</SelectItem>
+                          )}
+                        </Select>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="danger"
+                          onPress={() => handleKick(m)}
+                        >
+                          Kick
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-default-400 flex-shrink-0">
+                        {m.role}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
             </Tab>
 
-            <Tab key="invite" title="Invite">
-              <div className="space-y-4 pt-2">
-                <UserPicker
-                  mode="single"
-                  selected={inviteUserId}
-                  onChange={setInviteUserId}
-                  excludeIds={memberIds}
-                  label="Select user"
-                  placeholder="Search users..."
-                />
-                <Select
-                  label="Role"
-                  variant="bordered"
-                  selectedKeys={[inviteRole]}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                >
-                  <SelectItem key="admin">Admin</SelectItem>
-                  <SelectItem key="write">Write</SelectItem>
-                  <SelectItem key="read">Read Only</SelectItem>
-                </Select>
-                <Button
-                  color="primary"
-                  onPress={handleInvite}
-                  isLoading={inviting}
-                  isDisabled={inviteUserId.length === 0}
-                >
-                  Invite User
-                </Button>
-              </div>
-            </Tab>
+            {canManage && (
+              <Tab key="invite" title="Invite">
+                <div className="space-y-4 pt-2">
+                  <UserPicker
+                    mode="single"
+                    selected={inviteUserId}
+                    onChange={setInviteUserId}
+                    excludeIds={memberIds}
+                    label="Select user"
+                    placeholder="Search users..."
+                  />
+                  <Select
+                    label="Role"
+                    variant="bordered"
+                    selectedKeys={[inviteRole]}
+                    onChange={(e) => setInviteRole(e.target.value)}
+                  >
+                    <SelectItem key="admin">Admin</SelectItem>
+                    <SelectItem key="write">Write</SelectItem>
+                    <SelectItem key="read">Read Only</SelectItem>
+                  </Select>
+                  <Button
+                    color="primary"
+                    onPress={handleInvite}
+                    isLoading={inviting}
+                    isDisabled={inviteUserId.length === 0}
+                  >
+                    Send Invite
+                  </Button>
+                  {inviteSent && (
+                    <p className="text-xs text-success">
+                      Invite sent successfully!
+                    </p>
+                  )}
+                  {inviteError && (
+                    <p className="text-xs text-danger">{inviteError}</p>
+                  )}
+                </div>
+              </Tab>
+            )}
           </Tabs>
+
+          <div className="border-t border-divider pt-4 mt-2 space-y-3">
+            {leaveError && <p className="text-xs text-danger">{leaveError}</p>}
+            <div className="flex gap-2">
+              <Button
+                variant="flat"
+                color="warning"
+                onPress={async () => {
+                  try {
+                    setLeaveError(null);
+                    await api.leaveSpace(space.id);
+                    removeSpace(space.id);
+                    onClose();
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : 'Failed';
+                    setLeaveError(msg);
+                  }
+                }}
+              >
+                Leave Space
+              </Button>
+              {canManage && !space.is_archived && (
+                <Button
+                  variant="flat"
+                  color="danger"
+                  onPress={async () => {
+                    if (
+                      !confirm(
+                        `Archive ${space.name}? All channels will be archived.`,
+                      )
+                    )
+                      return;
+                    try {
+                      await api.archiveSpace(space.id);
+                      updateSpace({
+                        id: space.id,
+                        is_archived: true,
+                      });
+                    } catch {
+                      /* ignored */
+                    }
+                  }}
+                >
+                  Archive Space
+                </Button>
+              )}
+              {canManage && space.is_archived && (
+                <Button
+                  variant="flat"
+                  color="success"
+                  onPress={async () => {
+                    try {
+                      await api.unarchiveSpace(space.id);
+                      updateSpace({
+                        id: space.id,
+                        is_archived: false,
+                      });
+                    } catch (e) {
+                      const msg = e instanceof Error ? e.message : 'Failed';
+                      setLeaveError(msg);
+                    }
+                  }}
+                >
+                  Unarchive Space
+                </Button>
+              )}
+            </div>
+          </div>
         </ModalBody>
       </ModalContent>
     </Modal>

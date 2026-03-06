@@ -18,7 +18,7 @@ struct SpaceHandler {
             if (user_id.empty()) return;
 
             auto user = db.find_user_by_id(user_id);
-            bool is_server_admin = user && user->role == "admin";
+            bool is_server_admin = user && (user->role == "admin" || user->role == "owner");
 
             auto spaces = db.list_user_spaces(user_id);
 
@@ -51,6 +51,7 @@ struct SpaceHandler {
                                {"is_public", sp.is_public},
                                {"default_role", sp.default_role},
                                {"created_at", sp.created_at},
+                               {"is_archived", sp.is_archived},
                                {"my_role", my_role},
                                {"members", members_arr}});
             }
@@ -71,6 +72,7 @@ struct SpaceHandler {
                                {"description", sp.description}, {"icon", sp.icon},
                                {"is_public", sp.is_public},
                                {"default_role", sp.default_role},
+                               {"is_archived", sp.is_archived},
                                {"created_at", sp.created_at}});
             }
             res->writeHeader("Content-Type", "application/json")
@@ -110,7 +112,8 @@ struct SpaceHandler {
                                  {"is_public", sp.is_public},
                                  {"default_role", sp.default_role},
                                  {"created_at", sp.created_at},
-                                 {"my_role", "admin"},
+                                 {"is_archived", sp.is_archived},
+                                 {"my_role", "owner"},
                                  {"members", members_arr}};
 
                     // Notify admins about new space
@@ -151,13 +154,14 @@ struct SpaceHandler {
             }
             std::string my_role = db.get_space_member_role(space_id, user_id);
             auto user = db.find_user_by_id(user_id);
-            if (my_role.empty() && user && user->role == "admin") my_role = "admin";
+            if (my_role.empty() && user && (user->role == "admin" || user->role == "owner")) my_role = "admin";
 
             json resp = {{"id", sp->id}, {"name", sp->name},
                          {"description", sp->description}, {"icon", sp->icon},
                          {"is_public", sp->is_public},
                          {"default_role", sp->default_role},
                          {"created_at", sp->created_at},
+                         {"is_archived", sp->is_archived},
                          {"my_role", my_role},
                          {"members", members_arr}};
 
@@ -180,7 +184,7 @@ struct SpaceHandler {
 
                 std::string role = db.get_space_member_role(space_id, user_id);
                 auto user = db.find_user_by_id(user_id);
-                if (role != "admin" && !(user && user->role == "admin")) {
+                if (role != "admin" && role != "owner" && !(user && (user->role == "admin" || user->role == "owner"))) {
                     res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                         ->writeHeader("Access-Control-Allow-Origin", "*")
                         ->end(R"({"error":"Admin permission required"})");
@@ -268,7 +272,7 @@ struct SpaceHandler {
 
                 std::string role = db.get_space_member_role(space_id, user_id);
                 auto user = db.find_user_by_id(user_id);
-                if (role != "admin" && !(user && user->role == "admin")) {
+                if (role != "admin" && role != "owner" && !(user && (user->role == "admin" || user->role == "owner"))) {
                     res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                         ->writeHeader("Access-Control-Allow-Origin", "*")
                         ->end(R"({"error":"Admin permission required"})");
@@ -281,28 +285,31 @@ struct SpaceHandler {
                     auto sp = db.find_space_by_id(space_id);
                     std::string member_role = j.value("role", sp ? sp->default_role : "write");
 
-                    db.add_space_member(space_id, target_user_id, member_role);
-                    ws.subscribe_user_to_space(target_user_id, space_id);
-
-                    // Notify the added user
-                    if (sp) {
-                        auto members = db.get_space_members_with_roles(space_id);
-                        json members_arr = json::array();
-                        for (const auto& m : members) {
-                            members_arr.push_back({{"id", m.user_id}, {"username", m.username},
-                                                   {"display_name", m.display_name},
-                                                   {"is_online", m.is_online}, {"last_seen", m.last_seen}, {"role", m.role}});
-                        }
-                        json space_data = {{"id", sp->id}, {"name", sp->name},
-                                           {"description", sp->description}, {"icon", sp->icon},
-                                           {"is_public", sp->is_public},
-                                           {"default_role", sp->default_role},
-                                           {"created_at", sp->created_at},
-                                           {"my_role", member_role},
-                                           {"members", members_arr}};
-                        json notify = {{"type", "space_added"}, {"space", space_data}};
-                        ws.send_to_user(target_user_id, notify.dump());
+                    if (db.is_space_member(space_id, target_user_id)) {
+                        res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                            ->writeHeader("Access-Control-Allow-Origin", "*")
+                            ->end(R"({"error":"User is already a member of this space"})");
+                        return;
                     }
+                    if (db.has_pending_space_invite(space_id, target_user_id)) {
+                        res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                            ->writeHeader("Access-Control-Allow-Origin", "*")
+                            ->end(R"({"error":"An invite is already pending for this user"})");
+                        return;
+                    }
+
+                    auto invite_id = db.create_space_invite(space_id, target_user_id, user_id, member_role);
+                    auto inviter = db.find_user_by_id(user_id);
+
+                    // Send invite notification to target user
+                    json invite_data = {{"id", invite_id}, {"space_id", space_id},
+                                        {"space_name", sp ? sp->name : ""},
+                                        {"space_icon", sp ? sp->icon : ""},
+                                        {"invited_by_username", inviter ? inviter->username : ""},
+                                        {"role", member_role},
+                                        {"created_at", ""}};
+                    json notify = {{"type", "space_invite"}, {"invite", invite_data}};
+                    ws.send_to_user(target_user_id, notify.dump());
 
                     res->writeHeader("Content-Type", "application/json")
                         ->writeHeader("Access-Control-Allow-Origin", "*")
@@ -360,7 +367,7 @@ struct SpaceHandler {
 
                 std::string role = db.get_space_member_role(space_id, user_id);
                 auto user = db.find_user_by_id(user_id);
-                if (role != "admin" && !(user && user->role == "admin")) {
+                if (role != "admin" && role != "owner" && !(user && (user->role == "admin" || user->role == "owner"))) {
                     res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                         ->writeHeader("Access-Control-Allow-Origin", "*")
                         ->end(R"({"error":"Admin permission required"})");
@@ -370,13 +377,43 @@ struct SpaceHandler {
                 try {
                     auto j = json::parse(body);
                     std::string new_role = j.at("role");
-                    if (new_role != "admin" && new_role != "write" && new_role != "read") {
+                    if (new_role != "owner" && new_role != "admin" && new_role != "write" && new_role != "read") {
                         res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                             ->writeHeader("Access-Control-Allow-Origin", "*")
                             ->end(R"({"error":"Invalid role"})");
                         return;
                     }
+
+                    // Only space/server owners can promote to owner
+                    if (new_role == "owner") {
+                        auto user = db.find_user_by_id(user_id);
+                        bool is_server_owner = user && user->role == "owner";
+                        if (role != "owner" && !is_server_owner) {
+                            res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                                ->writeHeader("Access-Control-Allow-Origin", "*")
+                                ->end(R"({"error":"Only owners can promote to owner"})");
+                            return;
+                        }
+                    }
+
+                    // Check if demoting last owner
+                    std::string current_role = db.get_space_member_role(space_id, target_user_id);
+                    if (current_role == "owner" && new_role != "owner") {
+                        int owner_count = db.count_space_members_with_role(space_id, "owner");
+                        if (owner_count <= 1) {
+                            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                                ->writeHeader("Access-Control-Allow-Origin", "*")
+                                ->end(R"({"error":"Cannot demote last owner","last_owner":true})");
+                            return;
+                        }
+                    }
+
                     db.update_space_member_role(space_id, target_user_id, new_role);
+
+                    // Notify the target user of their new space role
+                    json notify = {{"type", "space_role_changed"}, {"space_id", space_id}, {"role", new_role}};
+                    ws.send_to_user(target_user_id, notify.dump());
+
                     res->writeHeader("Content-Type", "application/json")
                         ->writeHeader("Access-Control-Allow-Origin", "*")
                         ->end(R"({"ok":true})");
@@ -413,6 +450,7 @@ struct SpaceHandler {
                                {"is_public", ch.is_public},
                                {"default_role", ch.default_role},
                                {"space_id", ch.space_id},
+                               {"is_archived", ch.is_archived},
                                {"created_at", ch.created_at},
                                {"my_role", my_role},
                                {"members", members}});
@@ -436,7 +474,7 @@ struct SpaceHandler {
 
                 // Must be a space member with write+ permissions
                 auto u = db.find_user_by_id(user_id);
-                bool is_server_admin = u && u->role == "admin";
+                bool is_server_admin = u && (u->role == "admin" || u->role == "owner");
                 if (!is_server_admin) {
                     std::string space_role = db.get_space_member_role(space_id, user_id);
                     if (space_role.empty()) {
@@ -485,6 +523,7 @@ struct SpaceHandler {
                                          {"is_public", ch.is_public},
                                          {"default_role", ch.default_role},
                                          {"space_id", ch.space_id},
+                                         {"is_archived", ch.is_archived},
                                          {"created_at", ch.created_at},
                                          {"members", members}};
 
@@ -536,6 +575,122 @@ struct SpaceHandler {
             res->onAborted([]() {});
         });
 
+        // Leave space
+        app.post("/api/spaces/:id/leave", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string space_id(req->getParameter("id"));
+
+            if (!db.is_space_member(space_id, user_id)) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Not a member"})");
+                return;
+            }
+
+            std::string role = db.get_space_member_role(space_id, user_id);
+            auto sp = db.find_space_by_id(space_id);
+            if (role == "owner" && sp && !sp->is_archived) {
+                int owner_count = db.count_space_members_with_role(space_id, "owner");
+                if (owner_count <= 1) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->writeHeader("Access-Control-Allow-Origin", "*")
+                        ->end(R"({"error":"You are the last owner. Assign a new owner or archive the space.","last_owner":true})");
+                    return;
+                }
+            }
+
+            // Remove from all space channels
+            auto channels = db.list_user_channels(user_id);
+            for (const auto& ch : channels) {
+                if (ch.space_id == space_id) {
+                    db.remove_channel_member(ch.id, user_id);
+                    ws.unsubscribe_user_from_channel(user_id, ch.id);
+                    json left_notify = {{"type", "member_left"},
+                                        {"channel_id", ch.id}, {"user_id", user_id}};
+                    ws.broadcast_to_channel(ch.id, left_notify.dump());
+                }
+            }
+
+            db.remove_space_member(space_id, user_id);
+            ws.unsubscribe_user_from_space(user_id, space_id);
+
+            json left_notify = {{"type", "space_member_left"},
+                                {"space_id", space_id}, {"user_id", user_id}};
+            ws.broadcast_to_space(space_id, left_notify.dump());
+
+            json removed = {{"type", "space_removed"}, {"space_id", space_id}};
+            ws.send_to_user(user_id, removed.dump());
+
+            res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"ok":true})");
+        });
+
+        // Archive space
+        app.post("/api/spaces/:id/archive", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string space_id(req->getParameter("id"));
+
+            std::string role = db.get_space_member_role(space_id, user_id);
+            auto user = db.find_user_by_id(user_id);
+            bool is_server_privileged = user && (user->role == "admin" || user->role == "owner");
+
+            if (role != "owner" && !is_server_privileged) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Space owner or server admin required"})");
+                return;
+            }
+
+            db.archive_space(space_id);
+
+            json notify = {{"type", "space_updated"},
+                           {"space", {{"id", space_id}, {"is_archived", true}}}};
+            ws.broadcast_to_space(space_id, notify.dump());
+
+            res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"ok":true})");
+        });
+
+        // Unarchive space
+        app.post("/api/spaces/:id/unarchive", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string space_id(req->getParameter("id"));
+
+            std::string role = db.get_space_member_role(space_id, user_id);
+            auto user = db.find_user_by_id(user_id);
+            bool is_server_privileged = user && (user->role == "admin" || user->role == "owner");
+
+            if (role != "owner" && !is_server_privileged) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Space owner or server admin required"})");
+                return;
+            }
+
+            // Reject if server is archived
+            if (db.is_server_archived()) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Cannot unarchive: server is archived"})");
+                return;
+            }
+
+            db.unarchive_space(space_id);
+
+            json notify = {{"type", "space_updated"},
+                           {"space", {{"id", space_id}, {"is_archived", false}}}};
+            ws.broadcast_to_space(space_id, notify.dump());
+
+            res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"ok":true})");
+        });
+
         // --- Conversation routes ---
 
         // List conversations
@@ -554,6 +709,7 @@ struct SpaceHandler {
                 }
                 arr.push_back({{"id", ch.id}, {"name", ch.conversation_name},
                                {"is_direct", true},
+                               {"is_archived", ch.is_archived},
                                {"created_at", ch.created_at},
                                {"my_role", "write"},
                                {"members", members}});
@@ -746,6 +902,105 @@ struct SpaceHandler {
                 }
             });
             res->onAborted([]() {});
+        });
+
+        // List pending space invites for the authenticated user
+        app.get("/api/space-invites", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+
+            auto invites = db.list_pending_space_invites(user_id);
+            json arr = json::array();
+            for (const auto& inv : invites) {
+                arr.push_back({{"id", inv.id}, {"space_id", inv.space_id},
+                               {"space_name", inv.space_name}, {"space_icon", inv.space_icon},
+                               {"invited_by_username", inv.invited_by_username},
+                               {"role", inv.role}, {"created_at", inv.created_at}});
+            }
+            res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(arr.dump());
+        });
+
+        // Accept space invite
+        app.post("/api/space-invites/:id/accept", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string invite_id(req->getParameter("id"));
+
+            auto invite = db.get_space_invite(invite_id);
+            if (!invite || invite->invited_user_id != user_id) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Invite not found"})");
+                return;
+            }
+            if (invite->status != "pending") {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Invite is no longer pending"})");
+                return;
+            }
+
+            db.update_space_invite_status(invite_id, "accepted");
+            db.add_space_member(invite->space_id, user_id, invite->role);
+            ws.subscribe_user_to_space(user_id, invite->space_id);
+
+            // Send space_added to the accepting user
+            auto sp = db.find_space_by_id(invite->space_id);
+            if (sp) {
+                auto members = db.get_space_members_with_roles(invite->space_id);
+                json members_arr = json::array();
+                for (const auto& m : members) {
+                    members_arr.push_back({{"id", m.user_id}, {"username", m.username},
+                                           {"display_name", m.display_name},
+                                           {"is_online", m.is_online}, {"last_seen", m.last_seen}, {"role", m.role}});
+                }
+                json space_data = {{"id", sp->id}, {"name", sp->name},
+                                   {"description", sp->description}, {"icon", sp->icon},
+                                   {"is_public", sp->is_public},
+                                   {"default_role", sp->default_role},
+                                   {"created_at", sp->created_at},
+                                   {"is_archived", sp->is_archived},
+                                   {"my_role", invite->role},
+                                   {"members", members_arr}};
+                json notify = {{"type", "space_added"}, {"space", space_data}};
+                ws.send_to_user(user_id, notify.dump());
+
+                // Notify existing space members about the new member
+                json update = {{"type", "space_updated"}, {"space", {{"id", sp->id}, {"members", members_arr}}}};
+                ws.broadcast_to_space(invite->space_id, update.dump());
+            }
+
+            res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"ok":true})");
+        });
+
+        // Decline space invite
+        app.post("/api/space-invites/:id/decline", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string invite_id(req->getParameter("id"));
+
+            auto invite = db.get_space_invite(invite_id);
+            if (!invite || invite->invited_user_id != user_id) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Invite not found"})");
+                return;
+            }
+            if (invite->status != "pending") {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Invite is no longer pending"})");
+                return;
+            }
+
+            db.update_space_invite_status(invite_id, "declined");
+            res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"ok":true})");
         });
     }
 

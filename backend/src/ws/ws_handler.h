@@ -76,7 +76,7 @@ public:
 
                 // Server admins subscribe to all non-DM channels and all spaces
                 auto user = db.find_user_by_id(data->user_id);
-                if (user && user->role == "admin") {
+                if (user && (user->role == "admin" || user->role == "owner")) {
                     auto all_channels = db.list_all_channels();
                     for (const auto& ch : all_channels) {
                         ws->subscribe("channel:" + ch.id);
@@ -223,7 +223,7 @@ public:
         auto users = database.list_users();
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& u : users) {
-            if (u.role == "admin") {
+            if (u.role == "admin" || u.role == "owner") {
                 auto it = user_sockets_.find(u.id);
                 if (it != user_sockets_.end()) {
                     for (auto* ws : it->second) {
@@ -277,7 +277,7 @@ public:
         auto users = database.list_users();
         std::lock_guard<std::mutex> lock(mutex_);
         for (const auto& u : users) {
-            if (u.role == "admin") {
+            if (u.role == "admin" || u.role == "owner") {
                 auto it = user_sockets_.find(u.id);
                 if (it != user_sockets_.end()) {
                     for (auto* ws : it->second) {
@@ -325,6 +325,21 @@ private:
 
         if (content.empty()) return;
 
+        // Check if server is archived
+        if (db.is_server_archived()) {
+            json err = {{"type", "error"}, {"message", "Server is archived. No new content can be created."}};
+            ws->send(err.dump(), uWS::OpCode::TEXT);
+            return;
+        }
+
+        // Check if channel is archived
+        auto ch = db.find_channel_by_id(channel_id);
+        if (ch && ch->is_archived) {
+            json err = {{"type", "error"}, {"message", "This channel is archived"}};
+            ws->send(err.dump(), uWS::OpCode::TEXT);
+            return;
+        }
+
         std::string role = db.get_effective_role(channel_id, data->user_id);
         if (role.empty()) {
             json err = {{"type", "error"}, {"message", "Not a member of this channel"}};
@@ -343,7 +358,7 @@ private:
         auto members = db.get_channel_member_usernames(channel_id);
         auto mentioned = parse_mentions(content, members);
         if (!mentioned.empty()) {
-            db.store_mentions(msg.id, channel_id, content, members);
+            db.store_mentions(msg.id, channel_id, content, members, data->user_id);
         }
 
         json broadcast = {

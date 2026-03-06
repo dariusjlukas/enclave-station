@@ -23,6 +23,7 @@ import { CreateConversation } from './components/conversations/CreateConversatio
 import { CreateSpace } from './components/spaces/CreateSpace';
 import { SpaceBrowser } from './components/spaces/SpaceBrowser';
 import { SpaceSettings } from './components/spaces/SpaceSettings';
+import { SpaceInviteNotification } from './components/spaces/SpaceInviteNotification';
 import { InviteManager } from './components/admin/InviteManager';
 import { JoinRequests } from './components/admin/JoinRequests';
 import { ServerSettings } from './components/admin/ServerSettings';
@@ -50,7 +51,8 @@ function App() {
   const [showChannelSettings, setShowChannelSettings] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
-  const [pendingRequestCount, setPendingRequestCount] = useState(0);
+  const pendingRequestCount = useChatStore((s) => s.pendingRequestCount);
+  const setPendingRequestCount = useChatStore((s) => s.setPendingRequestCount);
   const [showBuildTime, setShowBuildTime] = useState(false);
   const [showConnectionCard, setShowConnectionCard] = useState(false);
   const [heartbeatInfo, setHeartbeatInfo] = useState<{
@@ -62,6 +64,7 @@ function App() {
   const setChannels = useChatStore((s) => s.setChannels);
   const setUsers = useChatStore((s) => s.setUsers);
   const setSpaces = useChatStore((s) => s.setSpaces);
+  const setSpaceInvites = useChatStore((s) => s.setSpaceInvites);
   const setActiveView = useChatStore((s) => s.setActiveView);
   const user = useChatStore((s) => s.user);
   const activeChannelId = useChatStore((s) => s.activeChannelId);
@@ -80,6 +83,10 @@ function App() {
     Promise.all([
       api.listChannels().then(setChannels),
       api.listUsers().then(setUsers),
+      api
+        .listSpaceInvites()
+        .then(setSpaceInvites)
+        .catch(() => {}),
       api.listSpaces().then((loadedSpaces) => {
         setSpaces(loadedSpaces);
         // Auto-select first space or messages view
@@ -95,7 +102,7 @@ function App() {
     ]);
 
     // Check if admin needs to complete setup
-    if (user?.role === 'admin') {
+    if (user?.role === 'admin' || user?.role === 'owner') {
       api.getPublicConfig().then((config) => {
         if (!config.setup_completed) {
           setShowSetupWizard(true);
@@ -108,12 +115,14 @@ function App() {
     setUsers,
     setSpaces,
     setActiveView,
+    setSpaceInvites,
     user?.role,
   ]);
 
   // Poll pending join requests for admin badge
   useEffect(() => {
-    if (!isAuthenticated || user?.role !== 'admin') return;
+    if (!isAuthenticated || (user?.role !== 'admin' && user?.role !== 'owner'))
+      return;
 
     const fetchCount = () => {
       api
@@ -129,7 +138,7 @@ function App() {
     fetchCount();
     const interval = setInterval(fetchCount, 15000);
     return () => clearInterval(interval);
-  }, [isAuthenticated, user?.role]);
+  }, [isAuthenticated, user?.role, setPendingRequestCount]);
 
   // Live-update heartbeat info while card is open
   useEffect(() => {
@@ -193,7 +202,6 @@ function App() {
           onCreateConversation={() => setShowCreateConversation(true)}
           onCreateChannel={() => setShowCreateChannel(true)}
           onBrowseChannels={() => setShowChannelBrowser(true)}
-          onCreateSpace={() => setShowCreateSpace(true)}
           onBrowseSpaces={() => setShowSpaceBrowser(true)}
           onShowSpaceSettings={() => setShowSpaceSettings(true)}
           open={sidebarOpen}
@@ -235,7 +243,12 @@ function App() {
       )}
 
       {showChannelBrowser && (
-        <ChannelBrowser onClose={() => setShowChannelBrowser(false)} />
+        <ChannelBrowser
+          onClose={() => setShowChannelBrowser(false)}
+          spaceId={
+            activeView?.type === 'space' ? activeView.spaceId : undefined
+          }
+        />
       )}
 
       {showChannelSettings && activeChannel && !activeChannel.is_direct && (
@@ -295,6 +308,7 @@ function App() {
         <SetupWizard onComplete={() => setShowSetupWizard(false)} />
       )}
 
+      <SpaceInviteNotification />
       <ConnectionLostModal />
       <div className="shrink-0 flex items-center justify-between px-3 py-0.5 text-[10px] text-default-400 bg-content1 border-t border-divider">
         <div className="flex items-center gap-2">

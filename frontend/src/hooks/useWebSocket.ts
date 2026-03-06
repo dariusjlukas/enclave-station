@@ -1,12 +1,14 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { wsService } from '../services/websocket';
 import { useChatStore } from '../stores/chatStore';
+import * as api from '../services/api';
 import type {
   Message,
   User,
   Channel,
   ChannelRole,
   Space,
+  SpaceInvite,
   ChannelMemberInfo,
 } from '../types';
 
@@ -66,7 +68,14 @@ export function useWebSocket() {
 
       wsService.on('user_online', (data: unknown) => {
         const { user_id } = data as { user_id: string };
-        useChatStore.getState().setUserOnline(user_id, true);
+        const store = useChatStore.getState();
+        store.setUserOnline(user_id, true);
+        // If this user isn't in the store yet (e.g. just joined), fetch the user list
+        if (!store.users.some((u) => u.id === user_id)) {
+          api
+            .listUsers()
+            .then((users) => useChatStore.getState().setUsers(users));
+        }
       }),
 
       wsService.on('user_offline', (data: unknown) => {
@@ -114,9 +123,64 @@ export function useWebSocket() {
         useChatStore.getState().updateSpace(space);
       }),
 
+      wsService.on('space_role_changed', (data: unknown) => {
+        const { space_id, role } = data as {
+          space_id: string;
+          role: ChannelRole;
+        };
+        useChatStore.getState().updateSpace({ id: space_id, my_role: role });
+      }),
+
+      wsService.on('server_role_changed', (data: unknown) => {
+        const { role } = data as { role: string };
+        useChatStore
+          .getState()
+          .updateUser({ role: role as 'owner' | 'admin' | 'user' });
+      }),
+
       wsService.on('space_removed', (data: unknown) => {
         const { space_id } = data as { space_id: string };
         useChatStore.getState().removeSpace(space_id);
+      }),
+
+      wsService.on('member_left', (data: unknown) => {
+        const { channel_id, user_id } = data as {
+          channel_id: string;
+          user_id: string;
+        };
+        const store = useChatStore.getState();
+        const ch = store.channels.find((c) => c.id === channel_id);
+        if (ch) {
+          store.updateChannel({
+            id: channel_id,
+            members: ch.members.filter((m) => m.id !== user_id),
+          });
+        }
+      }),
+
+      wsService.on('space_member_left', (data: unknown) => {
+        const { space_id, user_id } = data as {
+          space_id: string;
+          user_id: string;
+        };
+        const store = useChatStore.getState();
+        const sp = store.spaces.find((s) => s.id === space_id);
+        if (sp) {
+          store.updateSpace({
+            id: space_id,
+            members: sp.members.filter((m) => m.id !== user_id),
+          });
+        }
+      }),
+
+      wsService.on('join_request_created', () => {
+        const store = useChatStore.getState();
+        store.setPendingRequestCount(store.pendingRequestCount + 1);
+      }),
+
+      wsService.on('space_invite', (data: unknown) => {
+        const { invite } = data as { invite: SpaceInvite };
+        useChatStore.getState().addSpaceInvite(invite);
       }),
 
       wsService.on('conversation_member_added', (data: unknown) => {

@@ -220,7 +220,8 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
   }
 
   const passkeysAvailable = authMethods.includes('passkey');
-  const pkiAvailable = authMethods.includes('pki');
+  const pkiAvailable =
+    authMethods.includes('pki') && pki.isWebCryptoAvailable();
   const showTabs = passkeysAvailable && pkiAvailable;
 
   // Can user register directly? (with invite token in invite mode, or always in open mode)

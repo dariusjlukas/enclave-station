@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Button } from '@heroui/react';
 import { useChatStore } from '../../stores/chatStore';
 import { OnlineStatusDot } from '../common/OnlineStatusDot';
@@ -17,7 +17,12 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
   const unreadCounts = useChatStore((s) => s.unreadCounts);
 
   const conversations = useMemo(
-    () => allChannels.filter((c) => c.is_direct),
+    () => allChannels.filter((c) => c.is_direct && !c.is_archived),
+    [allChannels],
+  );
+
+  const archivedConversations = useMemo(
+    () => allChannels.filter((c) => c.is_direct && c.is_archived),
     [allChannels],
   );
 
@@ -69,6 +74,8 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
         )[0]?.last_seen,
     };
   };
+
+  const [showArchived, setShowArchived] = useState(false);
 
   return (
     <div className="flex flex-col h-full">
@@ -128,10 +135,44 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
             )}
           </button>
         ))}
-        {conversations.length === 0 && (
+        {conversations.length === 0 && archivedConversations.length === 0 && (
           <p className="text-center text-default-400 text-sm py-8">
             No conversations yet
           </p>
+        )}
+        {archivedConversations.length > 0 && (
+          <div className="mt-2">
+            <button
+              className="w-full text-left px-3 py-1.5 text-xs font-semibold text-default-400 uppercase tracking-wider hover:text-default-500"
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              Archived ({archivedConversations.length}){' '}
+              {showArchived ? '▾' : '▸'}
+            </button>
+            {showArchived &&
+              archivedConversations.map((ch) => (
+                <button
+                  key={ch.id}
+                  onClick={() => {
+                    setActiveChannel(ch.id);
+                    onSelect?.();
+                  }}
+                  className={`w-full text-left px-3 py-2.5 text-sm rounded-md flex items-center gap-2 transition-colors opacity-60 ${
+                    activeChannelId === ch.id
+                      ? 'bg-primary/20 text-primary'
+                      : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
+                  }`}
+                >
+                  <OnlineStatusDot {...getOnlineInfo(ch)} />
+                  <span className="truncate">{getConversationName(ch)}</span>
+                  {isGroupChat(ch) && (
+                    <span className="text-xs text-default-400 flex-shrink-0">
+                      ({ch.members?.length})
+                    </span>
+                  )}
+                </button>
+              ))}
+          </div>
         )}
       </div>
     </div>

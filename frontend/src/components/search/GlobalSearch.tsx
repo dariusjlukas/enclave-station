@@ -344,6 +344,8 @@ export function GlobalSearch() {
   const handleStartDM = async (userId: string) => {
     try {
       const dm = await api.createDM(userId);
+      const channels = await api.listChannels();
+      useChatStore.getState().setChannels(channels);
       useChatStore.getState().setActiveView({ type: 'messages' });
       setActiveChannel(dm.id);
       clearSearch();

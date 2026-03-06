@@ -104,8 +104,6 @@ export function MessageList({
     messages.length > 0 ? messages[messages.length - 1] : null;
   useEffect(() => {
     if (!onMarkRead || !lastMessage) return;
-    const userId = useChatStore.getState().user?.id;
-    if (lastMessage.user_id === userId) return; // skip if last message is own
 
     clearTimeout(markReadTimer.current);
     markReadTimer.current = setTimeout(() => {

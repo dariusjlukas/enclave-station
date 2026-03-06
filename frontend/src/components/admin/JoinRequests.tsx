@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Button, Card, CardBody } from '@heroui/react';
 import * as api from '../../services/api';
+import { useChatStore } from '../../stores/chatStore';
 
 export function JoinRequests() {
+  const setPendingRequestCount = useChatStore((s) => s.setPendingRequestCount);
   const [requests, setRequests] = useState<
     Array<{
       id: string;
@@ -17,18 +19,17 @@ export function JoinRequests() {
     try {
       const data = await api.listJoinRequests();
       setRequests(data);
+      setPendingRequestCount(data.filter((r) => r.status === 'pending').length);
     } catch {
       /* ignored */
     }
   };
 
   useEffect(() => {
-    api
-      .listJoinRequests()
-      .then(setRequests)
-      .catch(() => {});
+    loadRequests();
     const interval = setInterval(loadRequests, 10000);
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleApprove = async (id: string) => {

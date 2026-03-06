@@ -36,8 +36,17 @@ export function ChannelSettings({ channel, onClose }: Props) {
   const [inviteRole, setInviteRole] = useState('write');
   const [inviting, setInviting] = useState(false);
 
+  const [leaveError, setLeaveError] = useState<string | null>(null);
+  const user = useChatStore((s) => s.user);
   const setChannels = useChatStore((s) => s.setChannels);
   const updateChannel = useChatStore((s) => s.updateChannel);
+  const removeChannel = useChatStore((s) => s.removeChannel);
+
+  const canManage =
+    channel.my_role === 'admin' ||
+    channel.my_role === 'owner' ||
+    user?.role === 'admin' ||
+    user?.role === 'owner';
 
   const memberIds = useMemo(
     () => channel.members.map((m) => m.id),
@@ -110,51 +119,61 @@ export function ChannelSettings({ channel, onClose }: Props) {
         <ModalHeader>Channel Settings — #{channel.name}</ModalHeader>
         <ModalBody className="pb-6">
           <Tabs color="primary" classNames={{ tabList: 'bg-content2' }}>
-            <Tab key="settings" title="Settings">
-              <div className="space-y-4 pt-2">
-                <Input
-                  label="Channel Name"
-                  variant="bordered"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-                <Input
-                  label="Description"
-                  variant="bordered"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      Public Channel
-                    </p>
-                    <p className="text-xs text-default-400">
-                      {isPublic ? 'Anyone can find and join' : 'Invite only'}
-                    </p>
-                  </div>
-                  <Switch
-                    isSelected={isPublic}
-                    onValueChange={setIsPublic}
-                    size="sm"
+            {canManage && (
+              <Tab key="settings" title="Settings">
+                <div className="space-y-4 pt-2">
+                  <Input
+                    label="Channel Name"
+                    variant="bordered"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
                   />
+                  <Input
+                    label="Description"
+                    variant="bordered"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                  />
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">
+                        Public Channel
+                      </p>
+                      <p className="text-xs text-default-400">
+                        {isPublic ? 'Anyone can find and join' : 'Invite only'}
+                      </p>
+                    </div>
+                    <Switch
+                      isSelected={isPublic}
+                      onValueChange={setIsPublic}
+                      size="sm"
+                    />
+                  </div>
+                  <Select
+                    label="Default Role for New Members"
+                    variant="bordered"
+                    selectedKeys={[defaultRole]}
+                    onChange={(e) =>
+                      setDefaultRole(e.target.value as ChannelRole)
+                    }
+                  >
+                    <SelectItem key="write">
+                      Write (can send messages)
+                    </SelectItem>
+                    <SelectItem key="read">
+                      Read Only (can view only)
+                    </SelectItem>
+                  </Select>
+                  <Button
+                    color="primary"
+                    onPress={handleSave}
+                    isLoading={saving}
+                  >
+                    Save Settings
+                  </Button>
                 </div>
-                <Select
-                  label="Default Role for New Members"
-                  variant="bordered"
-                  selectedKeys={[defaultRole]}
-                  onChange={(e) =>
-                    setDefaultRole(e.target.value as ChannelRole)
-                  }
-                >
-                  <SelectItem key="write">Write (can send messages)</SelectItem>
-                  <SelectItem key="read">Read Only (can view only)</SelectItem>
-                </Select>
-                <Button color="primary" onPress={handleSave} isLoading={saving}>
-                  Save Settings
-                </Button>
-              </div>
-            </Tab>
+              </Tab>
+            )}
 
             <Tab key="members" title={`Members (${channel.members.length})`}>
               <div className="space-y-2 pt-2">
@@ -177,64 +196,142 @@ export function ChannelSettings({ channel, onClose }: Props) {
                         </span>
                       </div>
                     </UserPopoverCard>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <Select
-                        size="sm"
-                        variant="bordered"
-                        className="w-28"
-                        selectedKeys={[m.role]}
-                        onChange={(e) => handleChangeRole(m.id, e.target.value)}
-                        aria-label="Role"
-                      >
-                        <SelectItem key="admin">Admin</SelectItem>
-                        <SelectItem key="write">Write</SelectItem>
-                        <SelectItem key="read">Read</SelectItem>
-                      </Select>
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="danger"
-                        onPress={() => handleKick(m)}
-                      >
-                        Kick
-                      </Button>
-                    </div>
+                    {canManage ? (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <Select
+                          size="sm"
+                          variant="bordered"
+                          className="w-28"
+                          selectedKeys={[m.role]}
+                          onChange={(e) =>
+                            handleChangeRole(m.id, e.target.value)
+                          }
+                          aria-label="Role"
+                        >
+                          <SelectItem key="admin">Admin</SelectItem>
+                          <SelectItem key="write">Write</SelectItem>
+                          <SelectItem key="read">Read</SelectItem>
+                        </Select>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="danger"
+                          onPress={() => handleKick(m)}
+                        >
+                          Kick
+                        </Button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-default-400 flex-shrink-0">
+                        {m.role}
+                      </span>
+                    )}
                   </div>
                 ))}
               </div>
             </Tab>
 
-            <Tab key="invite" title="Invite">
-              <div className="space-y-4 pt-2">
-                <UserPicker
-                  mode="single"
-                  selected={inviteUserId}
-                  onChange={setInviteUserId}
-                  excludeIds={memberIds}
-                  label="Select user"
-                  placeholder="Search users..."
-                />
-                <Select
-                  label="Role"
-                  variant="bordered"
-                  selectedKeys={[inviteRole]}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                >
-                  <SelectItem key="admin">Admin</SelectItem>
-                  <SelectItem key="write">Write</SelectItem>
-                  <SelectItem key="read">Read Only</SelectItem>
-                </Select>
-                <Button
-                  color="primary"
-                  onPress={handleInvite}
-                  isLoading={inviting}
-                  isDisabled={inviteUserId.length === 0}
-                >
-                  Invite User
-                </Button>
-              </div>
-            </Tab>
+            {canManage && (
+              <Tab key="invite" title="Add Member">
+                <div className="space-y-4 pt-2">
+                  <UserPicker
+                    mode="single"
+                    selected={inviteUserId}
+                    onChange={setInviteUserId}
+                    excludeIds={memberIds}
+                    label="Select user"
+                    placeholder="Search users..."
+                  />
+                  <Select
+                    label="Role"
+                    variant="bordered"
+                    selectedKeys={[inviteRole]}
+                    onChange={(e) => setInviteRole(e.target.value)}
+                  >
+                    <SelectItem key="admin">Admin</SelectItem>
+                    <SelectItem key="write">Write</SelectItem>
+                    <SelectItem key="read">Read Only</SelectItem>
+                  </Select>
+                  <Button
+                    color="primary"
+                    onPress={handleInvite}
+                    isLoading={inviting}
+                    isDisabled={inviteUserId.length === 0}
+                  >
+                    Add User
+                  </Button>
+                </div>
+              </Tab>
+            )}
           </Tabs>
+
+          <div className="border-t border-divider pt-4 mt-2 space-y-3">
+            {leaveError && <p className="text-xs text-danger">{leaveError}</p>}
+            <div className="flex gap-2">
+              <Button
+                variant="flat"
+                color="warning"
+                onPress={async () => {
+                  try {
+                    setLeaveError(null);
+                    await api.leaveChannel(channel.id);
+                    removeChannel(channel.id);
+                    onClose();
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : 'Failed';
+                    setLeaveError(msg);
+                  }
+                }}
+              >
+                Leave Channel
+              </Button>
+              {canManage && !channel.is_archived && (
+                <Button
+                  variant="flat"
+                  color="danger"
+                  onPress={async () => {
+                    if (
+                      !confirm(
+                        `Archive #${channel.name}? No new messages can be sent.`,
+                      )
+                    )
+                      return;
+                    try {
+                      await api.archiveChannel(channel.id);
+                      updateChannel({
+                        id: channel.id,
+                        is_archived: true,
+                      });
+                    } catch {
+                      /* ignored */
+                    }
+                  }}
+                >
+                  Archive Channel
+                </Button>
+              )}
+              {canManage && channel.is_archived && (
+                <Button
+                  variant="flat"
+                  color="success"
+                  onPress={async () => {
+                    try {
+                      await api.unarchiveChannel(channel.id);
+                      updateChannel({
+                        id: channel.id,
+                        is_archived: false,
+                      });
+                    } catch (e) {
+                      const msg = e instanceof Error ? e.message : 'Failed';
+                      setLeaveError(msg);
+                    }
+                  }}
+                >
+                  Unarchive Channel
+                </Button>
+              )}
+            </div>
+          </div>
         </ModalBody>
       </ModalContent>
     </Modal>

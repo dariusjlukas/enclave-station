@@ -38,10 +38,7 @@ export function Header({
     ? spaces.find((s) => s.id === activeChannel.space_id)
     : null;
 
-  const canManageChannel =
-    activeChannel &&
-    !activeChannel.is_direct &&
-    (activeChannel.my_role === 'admin' || user?.role === 'admin');
+  const showChannelSettings = activeChannel && !activeChannel.is_direct;
 
   const getChannelDisplayName = () => {
     if (!activeChannel) return null;
@@ -115,7 +112,7 @@ export function Header({
             | {activeChannel.description}
           </span>
         )}
-        {canManageChannel && (
+        {showChannelSettings && (
           <Button
             isIconOnly
             variant="light"
@@ -131,7 +128,7 @@ export function Header({
       <GlobalSearch />
 
       <div className="flex items-center gap-1 sm:gap-2 justify-end">
-        {user?.role === 'admin' && (
+        {(user?.role === 'admin' || user?.role === 'owner') && (
           <Button
             variant="light"
             size="sm"

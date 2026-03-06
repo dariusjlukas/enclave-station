@@ -36,11 +36,11 @@ void shutdown_handler(int signum) {
 template <bool SSL>
 void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
     WsHandler<SSL> ws_handler(db);
-    AuthHandler<SSL> auth_handler{db, config};
+    AuthHandler<SSL> auth_handler{db, config, ws_handler};
     ChannelHandler<SSL> channel_handler{db, ws_handler};
     SpaceHandler<SSL> space_handler{db, ws_handler};
     UserHandler<SSL> user_handler{db, ws_handler, config};
-    AdminHandler<SSL> admin_handler{db, config};
+    AdminHandler<SSL> admin_handler{db, config, ws_handler};
     FileHandler<SSL> file_handler{db, config};
     SearchHandler<SSL> search_handler{db};
 

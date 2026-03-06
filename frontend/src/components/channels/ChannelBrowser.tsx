@@ -8,17 +8,23 @@ import {
   Button,
   Card,
   CardBody,
+  Chip,
 } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faHashtag } from '@fortawesome/free-solid-svg-icons';
+import {
+  faHashtag,
+  faLock,
+  faBoxArchive,
+} from '@fortawesome/free-solid-svg-icons';
 import * as api from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 
 interface Props {
   onClose: () => void;
+  spaceId?: string;
 }
 
-export function ChannelBrowser({ onClose }: Props) {
+export function ChannelBrowser({ onClose, spaceId }: Props) {
   const [search, setSearch] = useState('');
   const [channels, setChannels] = useState<
     Array<{
@@ -26,6 +32,7 @@ export function ChannelBrowser({ onClose }: Props) {
       name: string;
       description: string;
       is_public: boolean;
+      is_archived: boolean;
       default_role: string;
       created_at: string;
     }>
@@ -36,7 +43,7 @@ export function ChannelBrowser({ onClose }: Props) {
   useEffect(() => {
     let cancelled = false;
     api
-      .listPublicChannels(search || undefined)
+      .listPublicChannels(search || undefined, spaceId)
       .then((result) => {
         if (!cancelled) setChannels(result);
       })
@@ -47,7 +54,7 @@ export function ChannelBrowser({ onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [search]);
+  }, [search, spaceId]);
 
   const handleJoin = async (channelId: string) => {
     try {
@@ -72,7 +79,9 @@ export function ChannelBrowser({ onClose }: Props) {
       backdrop="opaque"
     >
       <ModalContent>
-        <ModalHeader>Browse Public Channels</ModalHeader>
+        <ModalHeader>
+          {spaceId ? 'Browse Channels' : 'Browse Public Channels'}
+        </ModalHeader>
         <ModalBody className="pb-6">
           <Input
             placeholder="Search channels..."
@@ -85,12 +94,27 @@ export function ChannelBrowser({ onClose }: Props) {
               <Card key={ch.id} shadow="sm">
                 <CardBody className="flex flex-row items-center justify-between gap-4">
                   <div className="min-w-0">
-                    <p className="font-semibold text-foreground">
+                    <p className="font-semibold text-foreground flex items-center gap-1.5">
                       <FontAwesomeIcon
-                        icon={faHashtag}
-                        className="text-xs mr-1"
+                        icon={ch.is_public ? faHashtag : faLock}
+                        className="text-xs"
                       />
                       {ch.name}
+                      {ch.is_archived && (
+                        <Chip
+                          size="sm"
+                          variant="flat"
+                          color="warning"
+                          startContent={
+                            <FontAwesomeIcon
+                              icon={faBoxArchive}
+                              className="text-[10px]"
+                            />
+                          }
+                        >
+                          Archived
+                        </Chip>
+                      )}
                     </p>
                     {ch.description && (
                       <p className="text-sm text-default-400 truncate">
@@ -115,7 +139,7 @@ export function ChannelBrowser({ onClose }: Props) {
           </div>
           {channels.length === 0 && !loading && (
             <p className="text-center text-default-400 py-4">
-              No public channels available to join
+              No channels available to join
             </p>
           )}
         </ModalBody>

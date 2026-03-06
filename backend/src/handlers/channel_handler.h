@@ -18,7 +18,7 @@ struct ChannelHandler {
             if (user_id.empty()) return;
 
             auto user = db.find_user_by_id(user_id);
-            bool is_server_admin = user && user->role == "admin";
+            bool is_server_admin = user && (user->role == "admin" || user->role == "owner");
 
             auto channels = db.list_user_channels(user_id);
 
@@ -53,6 +53,7 @@ struct ChannelHandler {
                                {"default_role", ch.default_role},
                                {"created_at", ch.created_at},
                                {"my_role", my_role},
+                               {"is_archived", ch.is_archived},
                                {"members", members}};
                 if (!ch.space_id.empty()) ch_json["space_id"] = ch.space_id;
                 if (!ch.conversation_name.empty()) ch_json["conversation_name"] = ch.conversation_name;
@@ -80,13 +81,39 @@ struct ChannelHandler {
             if (user_id.empty()) return;
 
             std::string search(req->getQuery("search"));
-            auto channels = db.list_public_channels(user_id, search);
+            std::string space_id(req->getQuery("space_id"));
+
+            std::vector<Channel> channels;
+
+            if (!space_id.empty()) {
+                // Check if user is space admin/owner or server admin/owner
+                std::string space_role = db.get_space_member_role(space_id, user_id);
+                auto requester = db.find_user_by_id(user_id);
+                bool is_space_admin = (space_role == "admin" || space_role == "owner") ||
+                    (requester && (requester->role == "admin" || requester->role == "owner"));
+
+                if (is_space_admin) {
+                    // Show ALL non-member channels in this space (including private/archived)
+                    channels = db.list_browsable_space_channels(space_id, user_id, search);
+                } else {
+                    // Show only public non-member channels in this space
+                    auto all_public = db.list_public_channels(user_id, search);
+                    for (auto& ch : all_public) {
+                        if (ch.space_id == space_id) channels.push_back(std::move(ch));
+                    }
+                }
+            } else {
+                channels = db.list_public_channels(user_id, search);
+            }
+
             json arr = json::array();
             for (const auto& ch : channels) {
                 arr.push_back({{"id", ch.id}, {"name", ch.name},
                                {"description", ch.description},
                                {"is_public", ch.is_public},
                                {"default_role", ch.default_role},
+                               {"is_archived", ch.is_archived},
+                               {"space_id", ch.space_id},
                                {"created_at", ch.created_at}});
             }
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
@@ -180,13 +207,29 @@ struct ChannelHandler {
                     ->end(R"({"error":"Cannot join a DM channel"})");
                 return;
             }
-            if (!ch->is_public) {
+
+            // Space admins/owners can join any channel in their space
+            bool is_space_admin = false;
+            if (!ch->space_id.empty()) {
+                std::string space_role = db.get_space_member_role(ch->space_id, user_id);
+                if (space_role == "admin" || space_role == "owner") {
+                    is_space_admin = true;
+                }
+            }
+            // Server admins/owners can also bypass
+            auto requester = db.find_user_by_id(user_id);
+            if (requester && (requester->role == "admin" || requester->role == "owner")) {
+                is_space_admin = true;
+            }
+
+            if (!ch->is_public && !is_space_admin) {
                 res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                     ->end(R"({"error":"This is a private channel. You need an invite."})");
                 return;
             }
 
-            db.add_channel_member(channel_id, user_id, ch->default_role);
+            std::string join_role = is_space_admin ? "admin" : ch->default_role;
+            db.add_channel_member(channel_id, user_id, join_role);
             ws.subscribe_user_to_channel(user_id, channel_id);
             res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
         });
@@ -316,6 +359,17 @@ struct ChannelHandler {
                         return;
                     }
 
+                    // Check if demoting last admin
+                    std::string current_role = db.get_member_role(channel_id, target_user_id);
+                    if (current_role == "admin" && new_role != "admin") {
+                        int admin_count = db.count_channel_members_with_role(channel_id, "admin");
+                        if (admin_count <= 1) {
+                            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                                ->end(R"({"error":"Cannot demote last admin","last_admin":true})");
+                            return;
+                        }
+                    }
+
                     db.update_member_role(channel_id, target_user_id, new_role);
 
                     json notify = {{"type", "role_changed"}, {"channel_id", channel_id}, {"role", new_role}};
@@ -381,6 +435,141 @@ struct ChannelHandler {
                 }
             });
             res->onAborted([]() {});
+        });
+
+        // Leave channel
+        app.post("/api/channels/:id/leave", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string channel_id(req->getParameter("id"));
+
+            if (!db.is_channel_member(channel_id, user_id)) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Not a member"})");
+                return;
+            }
+
+            auto ch = db.find_channel_by_id(channel_id);
+            if (!ch) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Channel not found"})");
+                return;
+            }
+
+            if (ch->is_direct) {
+                // DM/conversation: remove member, auto-archive if <=1 remains
+                db.remove_channel_member(channel_id, user_id);
+                ws.unsubscribe_user_from_channel(user_id, channel_id);
+
+                int remaining = db.count_channel_members(channel_id);
+                if (remaining <= 1) {
+                    db.archive_channel(channel_id);
+                    json archived_notify = {{"type", "channel_updated"},
+                                            {"channel", {{"id", channel_id}, {"is_archived", true}}}};
+                    ws.broadcast_to_channel(channel_id, archived_notify.dump());
+                }
+
+                // Notify remaining members that someone left
+                json left_notify = {{"type", "member_left"},
+                                    {"channel_id", channel_id}, {"user_id", user_id}};
+                ws.broadcast_to_channel(channel_id, left_notify.dump());
+
+                // Tell leaving user the channel is archived for them
+                json removed = {{"type", "channel_updated"},
+                                {"channel", {{"id", channel_id}, {"is_archived", true}}}};
+                ws.send_to_user(user_id, removed.dump());
+            } else {
+                // Regular channel: check last admin (skip if already archived)
+                std::string role = db.get_member_role(channel_id, user_id);
+                if (role == "admin" && !ch->is_archived) {
+                    int admin_count = db.count_channel_members_with_role(channel_id, "admin");
+                    if (admin_count <= 1) {
+                        res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"You are the last admin. Assign a new admin or archive the channel.","last_admin":true})");
+                        return;
+                    }
+                }
+
+                db.remove_channel_member(channel_id, user_id);
+                ws.unsubscribe_user_from_channel(user_id, channel_id);
+
+                json left_notify = {{"type", "member_left"},
+                                    {"channel_id", channel_id}, {"user_id", user_id}};
+                ws.broadcast_to_channel(channel_id, left_notify.dump());
+
+                json removed = {{"type", "channel_removed"}, {"channel_id", channel_id}};
+                ws.send_to_user(user_id, removed.dump());
+            }
+
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+
+        // Archive channel
+        app.post("/api/channels/:id/archive", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string channel_id(req->getParameter("id"));
+
+            std::string role = db.get_effective_role(channel_id, user_id);
+            auto user = db.find_user_by_id(user_id);
+            bool is_server_privileged = user && (user->role == "admin" || user->role == "owner");
+
+            // Check if user is space owner for the channel's space
+            auto ch = db.find_channel_by_id(channel_id);
+            bool is_space_owner = false;
+            if (ch && !ch->space_id.empty()) {
+                std::string space_role = db.get_space_member_role(ch->space_id, user_id);
+                is_space_owner = (space_role == "owner");
+            }
+
+            if (role != "admin" && !is_server_privileged && !is_space_owner) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Permission denied"})");
+                return;
+            }
+
+            db.archive_channel(channel_id);
+            json notify = {{"type", "channel_updated"},
+                           {"channel", {{"id", channel_id}, {"is_archived", true}}}};
+            ws.broadcast_to_channel(channel_id, notify.dump());
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+
+        // Unarchive channel
+        app.post("/api/channels/:id/unarchive", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string channel_id(req->getParameter("id"));
+
+            std::string role = db.get_effective_role(channel_id, user_id);
+            auto user = db.find_user_by_id(user_id);
+            bool is_server_privileged = user && (user->role == "admin" || user->role == "owner");
+
+            auto ch = db.find_channel_by_id(channel_id);
+            bool is_space_owner = false;
+            if (ch && !ch->space_id.empty()) {
+                std::string space_role = db.get_space_member_role(ch->space_id, user_id);
+                is_space_owner = (space_role == "owner");
+                // Reject if parent space is archived
+                auto sp = db.find_space_by_id(ch->space_id);
+                if (sp && sp->is_archived) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(R"({"error":"Cannot unarchive: parent space is archived"})");
+                    return;
+                }
+            }
+
+            if (role != "admin" && !is_server_privileged && !is_space_owner) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Permission denied"})");
+                return;
+            }
+
+            db.unarchive_channel(channel_id);
+            json notify = {{"type", "channel_updated"},
+                           {"channel", {{"id", channel_id}, {"is_archived", false}}}};
+            ws.broadcast_to_channel(channel_id, notify.dump());
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
         });
     }
 

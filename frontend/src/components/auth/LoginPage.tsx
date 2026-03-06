@@ -20,15 +20,30 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
   const [hasLocalKey, setHasLocalKey] = useState(false);
   const [serverName, setServerName] = useState('Isle Chat');
   const [configLoading, setConfigLoading] = useState(true);
+  const [serverDown, setServerDown] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      api.getPublicConfig().then((config) => {
-        setAuthMethods(config.auth_methods);
-        setServerName(config.server_name);
-      }),
-      pki.hasStoredKey().then(setHasLocalKey),
-    ]).finally(() => setConfigLoading(false));
+    let retryTimer: ReturnType<typeof setTimeout>;
+    let isRetry = false;
+    const loadConfig = () => {
+      if (!isRetry) setConfigLoading(true);
+      Promise.all([
+        api.getPublicConfig().then((config) => {
+          setAuthMethods(config.auth_methods);
+          setServerName(config.server_name);
+          setServerDown(false);
+        }),
+        pki.hasStoredKey().then(setHasLocalKey),
+      ])
+        .catch(() => {
+          setServerDown(true);
+          isRetry = true;
+          retryTimer = setTimeout(loadConfig, 5000);
+        })
+        .finally(() => setConfigLoading(false));
+    };
+    loadConfig();
+    return () => clearTimeout(retryTimer);
   }, []);
 
   const handlePasskeyLogin = async () => {
@@ -75,7 +90,7 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
   };
 
   const passkeysEnabled = authMethods.includes('passkey');
-  const pkiEnabled = authMethods.includes('pki');
+  const pkiEnabled = authMethods.includes('pki') && pki.isWebCryptoAvailable();
   const webauthnSupported = browserSupportsWebAuthn();
 
   return (
@@ -103,7 +118,11 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
             </Alert>
           )}
 
-          {configLoading ? (
+          {serverDown ? (
+            <Alert color="danger" variant="flat" className="mb-4">
+              Unable to reach the server. Retrying...
+            </Alert>
+          ) : configLoading ? (
             <div className="text-center text-default-500 py-4">Loading...</div>
           ) : (
             <div className="space-y-3">
@@ -161,6 +180,7 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
               color="primary"
               fullWidth
               onPress={onSwitchToRegister}
+              isDisabled={serverDown || configLoading}
               size="sm"
             >
               Create an account
@@ -170,6 +190,7 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
               color="default"
               fullWidth
               onPress={onSwitchToRecovery}
+              isDisabled={serverDown || configLoading}
               size="sm"
             >
               Use a recovery key

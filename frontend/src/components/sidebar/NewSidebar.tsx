@@ -5,7 +5,6 @@ interface Props {
   onCreateConversation: () => void;
   onCreateChannel: () => void;
   onBrowseChannels: () => void;
-  onCreateSpace: () => void;
   onBrowseSpaces: () => void;
   onShowSpaceSettings: () => void;
   open: boolean;
@@ -16,7 +15,6 @@ export function NewSidebar({
   onCreateConversation,
   onCreateChannel,
   onBrowseChannels,
-  onCreateSpace,
   onBrowseSpaces,
   onShowSpaceSettings,
   open,
@@ -35,10 +33,7 @@ export function NewSidebar({
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        <IconRail
-          onCreateSpace={onCreateSpace}
-          onBrowseSpaces={onBrowseSpaces}
-        />
+        <IconRail onBrowseSpaces={onBrowseSpaces} />
         <div className="flex-1 flex flex-col overflow-hidden">
           <SidePanel
             onCreateConversation={onCreateConversation}

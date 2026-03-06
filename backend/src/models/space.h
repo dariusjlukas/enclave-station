@@ -11,6 +11,7 @@ struct Space {
     std::string default_role = "write";
     std::string created_by;
     std::string created_at;
+    bool is_archived = false;
 };
 
 struct SpaceMember {

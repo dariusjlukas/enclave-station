@@ -27,6 +27,7 @@ public:
     User update_user_profile(const std::string& user_id, const std::string& display_name,
                               const std::string& bio, const std::string& status);
     void delete_user(const std::string& user_id);
+    void update_user_role(const std::string& user_id, const std::string& role);
 
     // Sessions
     std::string create_session(const std::string& user_id, int expiry_hours);
@@ -77,6 +78,7 @@ public:
                            bool is_public = true, const std::string& default_role = "write",
                            const std::string& space_id = "");
     std::vector<Channel> list_user_channels(const std::string& user_id);
+    std::vector<Channel> list_space_channels(const std::string& space_id);
     std::optional<Channel> find_dm_channel(const std::string& user1_id, const std::string& user2_id);
     std::optional<Channel> find_channel_by_id(const std::string& id);
     bool is_channel_member(const std::string& channel_id, const std::string& user_id);
@@ -93,6 +95,9 @@ public:
                            const std::string& default_role);
     std::vector<Channel> list_public_channels(const std::string& user_id,
                                                const std::string& search = "");
+    std::vector<Channel> list_browsable_space_channels(const std::string& space_id,
+                                                        const std::string& user_id,
+                                                        const std::string& search = "");
     std::vector<Channel> list_all_channels();
     std::vector<ChannelMember> get_channel_members_with_roles(const std::string& channel_id);
     std::optional<Channel> find_general_channel();
@@ -128,7 +133,8 @@ public:
     std::vector<ChannelMemberUsername> get_channel_member_usernames(const std::string& channel_id);
     void store_mentions(const std::string& message_id, const std::string& channel_id,
                         const std::string& content,
-                        const std::vector<ChannelMemberUsername>& members);
+                        const std::vector<ChannelMemberUsername>& members,
+                        const std::string& sender_user_id = "");
 
     // Server settings
     std::optional<std::string> get_setting(const std::string& key);
@@ -160,6 +166,19 @@ public:
     void update_join_request(const std::string& id, const std::string& status,
                               const std::string& reviewed_by);
     void set_join_request_session(const std::string& id, const std::string& session_token);
+
+    // Space invites
+    struct SpaceInvite {
+        std::string id, space_id, space_name, space_icon;
+        std::string invited_user_id, invited_by, invited_by_username;
+        std::string role, status, created_at;
+    };
+    std::string create_space_invite(const std::string& space_id, const std::string& invited_user_id,
+                                     const std::string& invited_by, const std::string& role = "write");
+    std::vector<SpaceInvite> list_pending_space_invites(const std::string& user_id);
+    std::optional<SpaceInvite> get_space_invite(const std::string& invite_id);
+    void update_space_invite_status(const std::string& invite_id, const std::string& status);
+    bool has_pending_space_invite(const std::string& space_id, const std::string& user_id);
 
     // Device / multi-key management (legacy)
     struct UserKey {
@@ -268,6 +287,20 @@ public:
         const std::string& user_id, bool is_admin, int limit, int offset);
     std::vector<Message> get_messages_around(const std::string& channel_id,
         const std::string& message_id, int limit);
+
+    // Archive management
+    void archive_channel(const std::string& channel_id);
+    void unarchive_channel(const std::string& channel_id);
+    void archive_space(const std::string& space_id);
+    void unarchive_space(const std::string& space_id);
+    bool is_server_archived();
+    void set_server_archived(bool archived);
+
+    // Role counting
+    int count_channel_members_with_role(const std::string& channel_id, const std::string& role);
+    int count_space_members_with_role(const std::string& space_id, const std::string& role);
+    int count_users_with_role(const std::string& role);
+    int count_channel_members(const std::string& channel_id);
 
     // Recovery tokens (admin-generated account recovery)
     struct RecoveryTokenInfo {

@@ -2,14 +2,14 @@ export interface User {
   id: string;
   username: string;
   display_name: string;
-  role: 'admin' | 'user';
+  role: 'owner' | 'admin' | 'user';
   is_online: boolean;
   last_seen?: string;
   bio: string;
   status: string;
 }
 
-export type ChannelRole = 'admin' | 'write' | 'read';
+export type ChannelRole = 'owner' | 'admin' | 'write' | 'read';
 
 export interface ChannelMemberInfo {
   id: string;
@@ -29,6 +29,7 @@ export interface Channel {
   default_role: ChannelRole;
   my_role: ChannelRole;
   created_at: string;
+  is_archived?: boolean;
   members: ChannelMemberInfo[];
   space_id?: string;
   conversation_name?: string;
@@ -41,6 +42,7 @@ export interface Space {
   icon: string;
   is_public: boolean;
   default_role: ChannelRole;
+  is_archived?: boolean;
   my_role: ChannelRole;
   created_at: string;
   members: ChannelMemberInfo[];
@@ -69,6 +71,16 @@ export interface ReadReceiptInfo {
   username: string;
   last_read_message_id: string;
   last_read_at: string;
+}
+
+export interface SpaceInvite {
+  id: string;
+  space_id: string;
+  space_name: string;
+  space_icon: string;
+  invited_by_username: string;
+  role: ChannelRole;
+  created_at: string;
 }
 
 export interface InviteToken {

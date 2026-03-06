@@ -38,6 +38,21 @@ struct FileHandler {
             }
             std::string user_id = *user_id_opt;
 
+            // Check if server is archived
+            if (db.is_server_archived()) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Server is archived. No new content can be created."})");
+                return;
+            }
+
+            // Check if channel is archived
+            auto ch = db.find_channel_by_id(channel_id);
+            if (ch && ch->is_archived) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"This channel is archived"})");
+                return;
+            }
+
             // Check channel membership and write permission
             std::string role = db.get_effective_role(channel_id, user_id);
             if (role.empty() || role == "read") {

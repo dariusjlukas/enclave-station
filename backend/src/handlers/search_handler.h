@@ -49,7 +49,7 @@ struct SearchHandler {
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
                 } else if (type == "messages") {
                     auto user = db.find_user_by_id(user_id);
-                    bool is_admin = user && user->role == "admin";
+                    bool is_admin = user && (user->role == "admin" || user->role == "owner");
                     std::string tsquery = build_tsquery(terms, mode);
                     auto results = db.search_messages(tsquery, user_id, is_admin, limit, offset);
                     json arr = json::array();
@@ -65,7 +65,7 @@ struct SearchHandler {
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
                 } else if (type == "files") {
                     auto user = db.find_user_by_id(user_id);
-                    bool is_admin = user && user->role == "admin";
+                    bool is_admin = user && (user->role == "admin" || user->role == "owner");
                     auto results = db.search_files(terms[0], user_id, is_admin, limit, offset);
                     json arr = json::array();
                     for (const auto& f : results) {
@@ -81,7 +81,7 @@ struct SearchHandler {
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
                 } else if (type == "channels") {
                     auto user = db.find_user_by_id(user_id);
-                    bool is_admin = user && user->role == "admin";
+                    bool is_admin = user && (user->role == "admin" || user->role == "owner");
                     auto results = db.search_channels(terms[0], user_id, is_admin, limit, offset);
                     json arr = json::array();
                     for (const auto& c : results) {
@@ -95,7 +95,7 @@ struct SearchHandler {
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
                 } else if (type == "spaces") {
                     auto user = db.find_user_by_id(user_id);
-                    bool is_admin = user && user->role == "admin";
+                    bool is_admin = user && (user->role == "admin" || user->role == "owner");
                     auto results = db.search_spaces(terms[0], user_id, is_admin, limit, offset);
                     json arr = json::array();
                     for (const auto& s : results) {
@@ -147,7 +147,7 @@ struct SearchHandler {
 
             try {
                 auto user = db.find_user_by_id(user_id);
-                bool is_admin = user && user->role == "admin";
+                bool is_admin = user && (user->role == "admin" || user->role == "owner");
 
                 if (result_type == "messages") {
                     auto results = db.search_composite_messages(filters, mode, user_id, is_admin, limit, offset);

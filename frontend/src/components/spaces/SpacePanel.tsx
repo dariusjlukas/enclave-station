@@ -40,8 +40,13 @@ export function SpacePanel({
     [allChannels, spaceId],
   );
 
-  const canManage = space?.my_role === 'admin' || user?.role === 'admin';
-  const canCreate = canManage || space?.my_role === 'write';
+  const canManage =
+    space?.my_role === 'admin' ||
+    space?.my_role === 'owner' ||
+    user?.role === 'admin' ||
+    user?.role === 'owner';
+  const canCreate =
+    !space?.is_archived && (canManage || space?.my_role === 'write');
 
   if (!space) {
     return (
@@ -59,22 +64,23 @@ export function SpacePanel({
             {space.icon && <span className="mr-1">{space.icon}</span>}
             {space.name}
           </h3>
-          {canManage && (
-            <Button
-              isIconOnly
-              variant="light"
-              size="sm"
-              onPress={onShowSettings}
-              title="Space Settings"
-            >
-              <FontAwesomeIcon icon={faGear} className="text-xs" />
-            </Button>
-          )}
+          <Button
+            isIconOnly
+            variant="light"
+            size="sm"
+            onPress={onShowSettings}
+            title="Space Settings"
+          >
+            <FontAwesomeIcon icon={faGear} className="text-xs" />
+          </Button>
         </div>
         {space.description && (
           <p className="text-xs text-default-400 mt-1 truncate">
             {space.description}
           </p>
+        )}
+        {space.is_archived && (
+          <p className="text-xs text-warning mt-1">Archived — read only</p>
         )}
       </div>
 
@@ -128,7 +134,12 @@ export function SpacePanel({
                 />
                 {ch.name}
               </span>
-              {ch.my_role === 'read' && (
+              {ch.is_archived && (
+                <span className="ml-1 text-xs text-default-400">
+                  (archived)
+                </span>
+              )}
+              {!ch.is_archived && ch.my_role === 'read' && (
                 <span className="ml-1 text-xs text-default-400">
                   (read-only)
                 </span>
