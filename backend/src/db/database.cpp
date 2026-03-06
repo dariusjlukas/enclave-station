@@ -358,12 +358,12 @@ void Database::run_migrations() {
 std::optional<User> Database::find_user_by_public_key(const std::string& public_key) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
         "u.last_seen::text, u.created_at::text, u.bio, u.status "
         "FROM users u JOIN user_keys uk ON u.id = uk.user_id "
-        "WHERE uk.public_key = $1",
-        public_key);
+        "WHERE uk.public_key = $1", pqxx::params{
+        public_key});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -378,10 +378,10 @@ std::optional<User> Database::find_user_by_public_key(const std::string& public_
 std::optional<User> Database::find_user_by_id(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status FROM users WHERE id = $1",
-        id);
+        "last_seen::text, created_at::text, bio, status FROM users WHERE id = $1", pqxx::params{
+        id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -397,18 +397,18 @@ User Database::create_user(const std::string& username, const std::string& displ
                            const std::string& public_key, const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "INSERT INTO users (username, display_name, public_key, role) "
         "VALUES ($1, $2, $3, $4) "
         "RETURNING id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status",
-        username, display_name, public_key, role);
+        "last_seen::text, created_at::text, bio, status", pqxx::params{
+        username, display_name, public_key, role});
 
     // Also register in user_keys table (only if using legacy PKI auth)
     if (!public_key.empty()) {
-        txn.exec_params(
-            "INSERT INTO user_keys (user_id, public_key, device_name) VALUES ($1, $2, 'Primary Device')",
-            r[0][0].as<std::string>(), public_key);
+        txn.exec(
+            "INSERT INTO user_keys (user_id, public_key, device_name) VALUES ($1, $2, 'Primary Device')", pqxx::params{
+            r[0][0].as<std::string>(), public_key});
     }
 
     txn.commit();
@@ -445,9 +445,9 @@ void Database::set_user_online(const std::string& user_id, bool online) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     if (online) {
-        txn.exec_params("UPDATE users SET is_online = true WHERE id = $1", user_id);
+        txn.exec("UPDATE users SET is_online = true WHERE id = $1", pqxx::params{ user_id});
     } else {
-        txn.exec_params("UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1", user_id);
+        txn.exec("UPDATE users SET is_online = false, last_seen = NOW() WHERE id = $1", pqxx::params{ user_id});
     }
     txn.commit();
 }
@@ -464,11 +464,11 @@ User Database::update_user_profile(const std::string& user_id, const std::string
                                     const std::string& bio, const std::string& status) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "UPDATE users SET display_name = $2, bio = $3, status = $4 WHERE id = $1 "
         "RETURNING id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status",
-        user_id, display_name, bio, status);
+        "last_seen::text, created_at::text, bio, status", pqxx::params{
+        user_id, display_name, bio, status});
     txn.commit();
     if (r.empty()) throw std::runtime_error("User not found");
     return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -483,7 +483,7 @@ User Database::update_user_profile(const std::string& user_id, const std::string
 void Database::update_user_role(const std::string& user_id, const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE users SET role = $2 WHERE id = $1", user_id, role);
+    txn.exec("UPDATE users SET role = $2 WHERE id = $1", pqxx::params{ user_id, role});
     txn.commit();
 }
 
@@ -491,9 +491,9 @@ void Database::delete_user(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     // Messages don't cascade on user delete, so delete explicitly
-    txn.exec_params("DELETE FROM messages WHERE user_id = $1", user_id);
+    txn.exec("DELETE FROM messages WHERE user_id = $1", pqxx::params{ user_id});
     // The rest (sessions, user_keys, device_tokens, channel_members) cascade
-    txn.exec_params("DELETE FROM users WHERE id = $1", user_id);
+    txn.exec("DELETE FROM users WHERE id = $1", pqxx::params{ user_id});
     txn.commit();
 }
 
@@ -503,10 +503,10 @@ std::string Database::create_session(const std::string& user_id, int expiry_hour
     std::lock_guard<std::mutex> lock(mutex_);
     std::string token = random_hex(64);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO sessions (user_id, token, expires_at) "
-        "VALUES ($1, $2, NOW() + ($3 || ' hours')::interval)",
-        user_id, token, std::to_string(expiry_hours));
+        "VALUES ($1, $2, NOW() + ($3 || ' hours')::interval)", pqxx::params{
+        user_id, token, std::to_string(expiry_hours)});
     txn.commit();
     return token;
 }
@@ -514,9 +514,9 @@ std::string Database::create_session(const std::string& user_id, int expiry_hour
 std::optional<std::string> Database::validate_session(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT user_id FROM sessions WHERE token = $1 AND expires_at > NOW()",
-        token);
+    auto r = txn.exec(
+        "SELECT user_id FROM sessions WHERE token = $1 AND expires_at > NOW()", pqxx::params{
+        token});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return r[0][0].as<std::string>();
@@ -525,7 +525,7 @@ std::optional<std::string> Database::validate_session(const std::string& token) 
 void Database::delete_session(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("DELETE FROM sessions WHERE token = $1", token);
+    txn.exec("DELETE FROM sessions WHERE token = $1", pqxx::params{ token});
     txn.commit();
 }
 
@@ -534,20 +534,20 @@ void Database::delete_session(const std::string& token) {
 void Database::store_challenge(const std::string& public_key, const std::string& challenge) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO auth_challenges (public_key, challenge) VALUES ($1, $2) "
-        "ON CONFLICT (public_key) DO UPDATE SET challenge = $2, created_at = NOW()",
-        public_key, challenge);
+        "ON CONFLICT (public_key) DO UPDATE SET challenge = $2, created_at = NOW()", pqxx::params{
+        public_key, challenge});
     txn.commit();
 }
 
 std::optional<std::string> Database::get_challenge(const std::string& public_key) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT challenge FROM auth_challenges WHERE public_key = $1 "
-        "AND created_at > NOW() - INTERVAL '5 minutes'",
-        public_key);
+        "AND created_at > NOW() - INTERVAL '5 minutes'", pqxx::params{
+        public_key});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return r[0][0].as<std::string>();
@@ -556,7 +556,7 @@ std::optional<std::string> Database::get_challenge(const std::string& public_key
 void Database::delete_challenge(const std::string& public_key) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("DELETE FROM auth_challenges WHERE public_key = $1", public_key);
+    txn.exec("DELETE FROM auth_challenges WHERE public_key = $1", pqxx::params{ public_key});
     txn.commit();
 }
 
@@ -572,29 +572,29 @@ Channel Database::create_channel(const std::string& name, const std::string& des
 
     pqxx::result r;
     if (space_id.empty()) {
-        r = txn.exec_params(
+        r = txn.exec(
             "INSERT INTO channels (name, description, is_direct, is_public, default_role, created_by) "
             "VALUES (NULLIF($1, ''), NULLIF($2, ''), $3, $4, $5, $6) "
             "RETURNING id, name, description, is_direct, is_public, default_role, created_by, created_at::text, "
-            "space_id, conversation_name, is_archived",
-            name, description, is_direct, is_public, default_role, created_by);
+            "space_id, conversation_name, is_archived", pqxx::params{
+            name, description, is_direct, is_public, default_role, created_by});
     } else {
-        r = txn.exec_params(
+        r = txn.exec(
             "INSERT INTO channels (name, description, is_direct, is_public, default_role, created_by, space_id) "
             "VALUES (NULLIF($1, ''), NULLIF($2, ''), $3, $4, $5, $6, $7) "
             "RETURNING id, name, description, is_direct, is_public, default_role, created_by, created_at::text, "
-            "space_id, conversation_name, is_archived",
-            name, description, is_direct, is_public, default_role, created_by, space_id);
+            "space_id, conversation_name, is_archived", pqxx::params{
+            name, description, is_direct, is_public, default_role, created_by, space_id});
     }
 
     std::string channel_id = r[0][0].as<std::string>();
 
     for (const auto& mid : member_ids) {
         std::string member_role = (!is_direct && mid == created_by) ? "admin" : default_role;
-        txn.exec_params(
+        txn.exec(
             "INSERT INTO channel_members (channel_id, user_id, role) VALUES ($1, $2, $3) "
-            "ON CONFLICT DO NOTHING",
-            channel_id, mid, member_role);
+            "ON CONFLICT DO NOTHING", pqxx::params{
+            channel_id, mid, member_role});
     }
 
     txn.commit();
@@ -637,12 +637,12 @@ static const char* CH_COLS = "c.id, c.name, c.description, c.is_direct, c.is_pub
 std::vector<Channel> Database::list_user_channels(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("SELECT ") + CH_COLS +
         " FROM channels c "
         "JOIN channel_members cm ON c.id = cm.channel_id "
-        "WHERE cm.user_id = $1 ORDER BY c.created_at",
-        user_id);
+        "WHERE cm.user_id = $1 ORDER BY c.created_at", pqxx::params{
+        user_id});
     txn.commit();
 
     std::vector<Channel> channels;
@@ -655,11 +655,11 @@ std::vector<Channel> Database::list_user_channels(const std::string& user_id) {
 std::vector<Channel> Database::list_space_channels(const std::string& space_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("SELECT ") + CH_COLS +
         " FROM channels c "
-        "WHERE c.space_id = $1 ORDER BY c.created_at",
-        space_id);
+        "WHERE c.space_id = $1 ORDER BY c.created_at", pqxx::params{
+        space_id});
     txn.commit();
 
     std::vector<Channel> channels;
@@ -672,15 +672,15 @@ std::vector<Channel> Database::list_space_channels(const std::string& space_id) 
 std::optional<Channel> Database::find_dm_channel(const std::string& user1_id, const std::string& user2_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("SELECT ") + CH_COLS +
         " FROM channels c "
         "WHERE c.is_direct = true "
         "AND EXISTS (SELECT 1 FROM channel_members WHERE channel_id = c.id AND user_id = $1) "
         "AND EXISTS (SELECT 1 FROM channel_members WHERE channel_id = c.id AND user_id = $2) "
         "AND (SELECT COUNT(*) FROM channel_members WHERE channel_id = c.id) = "
-        "    CASE WHEN $1 = $2 THEN 1 ELSE 2 END",
-        user1_id, user2_id);
+        "    CASE WHEN $1 = $2 THEN 1 ELSE 2 END", pqxx::params{
+        user1_id, user2_id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return row_to_channel(r[0]);
@@ -689,8 +689,8 @@ std::optional<Channel> Database::find_dm_channel(const std::string& user1_id, co
 std::optional<Channel> Database::find_channel_by_id(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        std::string("SELECT ") + CH_COLS + " FROM channels c WHERE c.id = $1", id);
+    auto r = txn.exec(
+        std::string("SELECT ") + CH_COLS + " FROM channels c WHERE c.id = $1", pqxx::params{ id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return row_to_channel(r[0]);
@@ -699,9 +699,9 @@ std::optional<Channel> Database::find_channel_by_id(const std::string& id) {
 bool Database::is_channel_member(const std::string& channel_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2",
-        channel_id, user_id);
+    auto r = txn.exec(
+        "SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2", pqxx::params{
+        channel_id, user_id});
     txn.commit();
     return !r.empty();
 }
@@ -710,18 +710,18 @@ void Database::add_channel_member(const std::string& channel_id, const std::stri
                                    const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "INSERT INTO channel_members (channel_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-        channel_id, user_id, role);
+    txn.exec(
+        "INSERT INTO channel_members (channel_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", pqxx::params{
+        channel_id, user_id, role});
     txn.commit();
 }
 
 std::string Database::get_member_role(const std::string& channel_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT role FROM channel_members WHERE channel_id = $1 AND user_id = $2",
-        channel_id, user_id);
+    auto r = txn.exec(
+        "SELECT role FROM channel_members WHERE channel_id = $1 AND user_id = $2", pqxx::params{
+        channel_id, user_id});
     txn.commit();
     if (r.empty()) return "";
     return r[0][0].as<std::string>();
@@ -746,9 +746,9 @@ std::string Database::get_effective_role(const std::string& channel_id, const st
 void Database::remove_channel_member(const std::string& channel_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2",
-        channel_id, user_id);
+    txn.exec(
+        "DELETE FROM channel_members WHERE channel_id = $1 AND user_id = $2", pqxx::params{
+        channel_id, user_id});
     txn.commit();
 }
 
@@ -756,9 +756,9 @@ void Database::update_member_role(const std::string& channel_id, const std::stri
                                    const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "UPDATE channel_members SET role = $3 WHERE channel_id = $1 AND user_id = $2",
-        channel_id, user_id, role);
+    txn.exec(
+        "UPDATE channel_members SET role = $3 WHERE channel_id = $1 AND user_id = $2", pqxx::params{
+        channel_id, user_id, role});
     txn.commit();
 }
 
@@ -767,12 +767,12 @@ Channel Database::update_channel(const std::string& channel_id, const std::strin
                                   const std::string& default_role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "UPDATE channels SET name = $2, description = $3, is_public = $4, default_role = $5 "
-        "WHERE id = $1",
-        channel_id, name, description, is_public, default_role);
-    auto r = txn.exec_params(
-        std::string("SELECT ") + CH_COLS + " FROM channels c WHERE c.id = $1", channel_id);
+        "WHERE id = $1", pqxx::params{
+        channel_id, name, description, is_public, default_role});
+    auto r = txn.exec(
+        std::string("SELECT ") + CH_COLS + " FROM channels c WHERE c.id = $1", pqxx::params{ channel_id});
     txn.commit();
     if (r.empty()) throw std::runtime_error("Channel not found");
     return row_to_channel(r[0]);
@@ -784,22 +784,22 @@ std::vector<Channel> Database::list_public_channels(const std::string& user_id,
     pqxx::work txn(get_conn());
     pqxx::result r;
     if (search.empty()) {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + CH_COLS +
             " FROM channels c "
             "WHERE c.is_public = true AND c.is_direct = false "
             "AND NOT EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = $1) "
-            "ORDER BY c.name",
-            user_id);
+            "ORDER BY c.name", pqxx::params{
+            user_id});
     } else {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + CH_COLS +
             " FROM channels c "
             "WHERE c.is_public = true AND c.is_direct = false "
             "AND NOT EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = $1) "
             "AND (c.name ILIKE '%' || $2 || '%' OR c.description ILIKE '%' || $2 || '%') "
-            "ORDER BY c.name",
-            user_id, search);
+            "ORDER BY c.name", pqxx::params{
+            user_id, search});
     }
     txn.commit();
     std::vector<Channel> channels;
@@ -816,22 +816,22 @@ std::vector<Channel> Database::list_browsable_space_channels(const std::string& 
     pqxx::work txn(get_conn());
     pqxx::result r;
     if (search.empty()) {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + CH_COLS +
             " FROM channels c "
             "WHERE c.space_id = $1 AND c.is_direct = false "
             "AND NOT EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = $2) "
-            "ORDER BY c.name",
-            space_id, user_id);
+            "ORDER BY c.name", pqxx::params{
+            space_id, user_id});
     } else {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + CH_COLS +
             " FROM channels c "
             "WHERE c.space_id = $1 AND c.is_direct = false "
             "AND NOT EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = c.id AND cm.user_id = $2) "
             "AND (c.name ILIKE '%' || $3 || '%' OR c.description ILIKE '%' || $3 || '%') "
-            "ORDER BY c.name",
-            space_id, user_id, search);
+            "ORDER BY c.name", pqxx::params{
+            space_id, user_id, search});
     }
     txn.commit();
     std::vector<Channel> channels;
@@ -858,11 +858,11 @@ std::vector<Channel> Database::list_all_channels() {
 std::vector<ChannelMember> Database::get_channel_members_with_roles(const std::string& channel_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT u.id, u.username, u.display_name, cm.role, u.is_online, u.last_seen::text "
         "FROM channel_members cm JOIN users u ON cm.user_id = u.id "
-        "WHERE cm.channel_id = $1 ORDER BY cm.role, u.username",
-        channel_id);
+        "WHERE cm.channel_id = $1 ORDER BY cm.role, u.username", pqxx::params{
+        channel_id});
     txn.commit();
     std::vector<ChannelMember> members;
     for (const auto& row : r) {
@@ -873,22 +873,11 @@ std::vector<ChannelMember> Database::get_channel_members_with_roles(const std::s
     return members;
 }
 
-std::optional<Channel> Database::find_general_channel() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    pqxx::work txn(get_conn());
-    auto r = txn.exec(
-        std::string("SELECT ") + CH_COLS +
-        " FROM channels c WHERE c.name = 'general' AND c.is_direct = false LIMIT 1");
-    txn.commit();
-    if (r.empty()) return std::nullopt;
-    return row_to_channel(r[0]);
-}
-
 std::vector<std::string> Database::get_channel_member_ids(const std::string& channel_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT user_id FROM channel_members WHERE channel_id = $1", channel_id);
+    auto r = txn.exec(
+        "SELECT user_id FROM channel_members WHERE channel_id = $1", pqxx::params{ channel_id});
     txn.commit();
     std::vector<std::string> ids;
     for (const auto& row : r) ids.push_back(row[0].as<std::string>());
@@ -920,17 +909,17 @@ Space Database::create_space(const std::string& name, const std::string& descrip
                               const std::string& default_role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto ins = txn.exec_params(
+    auto ins = txn.exec(
         "INSERT INTO spaces (name, description, icon, is_public, default_role, created_by) "
-        "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-        name, description, icon, is_public, default_role, created_by);
+        "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id", pqxx::params{
+        name, description, icon, is_public, default_role, created_by});
     std::string space_id = ins[0][0].as<std::string>();
     // Creator is owner
-    txn.exec_params(
-        "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'owner')",
-        space_id, created_by);
-    auto r = txn.exec_params(
-        std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", space_id);
+    txn.exec(
+        "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'owner')", pqxx::params{
+        space_id, created_by});
+    auto r = txn.exec(
+        std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", pqxx::params{ space_id});
     txn.commit();
     return row_to_space(r[0]);
 }
@@ -938,12 +927,12 @@ Space Database::create_space(const std::string& name, const std::string& descrip
 std::vector<Space> Database::list_user_spaces(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("SELECT ") + SP_COLS +
         " FROM spaces s "
         "JOIN space_members sm ON s.id = sm.space_id "
-        "WHERE sm.user_id = $1 ORDER BY s.name",
-        user_id);
+        "WHERE sm.user_id = $1 ORDER BY s.name", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<Space> spaces;
     for (const auto& row : r) spaces.push_back(row_to_space(row));
@@ -953,8 +942,8 @@ std::vector<Space> Database::list_user_spaces(const std::string& user_id) {
 std::optional<Space> Database::find_space_by_id(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", id);
+    auto r = txn.exec(
+        std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", pqxx::params{ id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return row_to_space(r[0]);
@@ -965,12 +954,12 @@ Space Database::update_space(const std::string& space_id, const std::string& nam
                               bool is_public, const std::string& default_role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "UPDATE spaces SET name = $2, description = $3, icon = $4, is_public = $5, default_role = $6 "
-        "WHERE id = $1",
-        space_id, name, description, icon, is_public, default_role);
-    auto r = txn.exec_params(
-        std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", space_id);
+        "WHERE id = $1", pqxx::params{
+        space_id, name, description, icon, is_public, default_role});
+    auto r = txn.exec(
+        std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", pqxx::params{ space_id});
     txn.commit();
     if (r.empty()) throw std::runtime_error("Space not found");
     return row_to_space(r[0]);
@@ -982,22 +971,22 @@ std::vector<Space> Database::list_public_spaces(const std::string& user_id,
     pqxx::work txn(get_conn());
     pqxx::result r;
     if (search.empty()) {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + SP_COLS +
             " FROM spaces s "
             "WHERE s.is_public = true "
             "AND NOT EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = s.id AND sm.user_id = $1) "
-            "ORDER BY s.name",
-            user_id);
+            "ORDER BY s.name", pqxx::params{
+            user_id});
     } else {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + SP_COLS +
             " FROM spaces s "
             "WHERE s.is_public = true "
             "AND NOT EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = s.id AND sm.user_id = $1) "
             "AND (s.name ILIKE '%' || $2 || '%' OR s.description ILIKE '%' || $2 || '%') "
-            "ORDER BY s.name",
-            user_id, search);
+            "ORDER BY s.name", pqxx::params{
+            user_id, search});
     }
     txn.commit();
     std::vector<Space> spaces;
@@ -1019,9 +1008,9 @@ std::vector<Space> Database::list_all_spaces() {
 bool Database::is_space_member(const std::string& space_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT 1 FROM space_members WHERE space_id = $1 AND user_id = $2",
-        space_id, user_id);
+    auto r = txn.exec(
+        "SELECT 1 FROM space_members WHERE space_id = $1 AND user_id = $2", pqxx::params{
+        space_id, user_id});
     txn.commit();
     return !r.empty();
 }
@@ -1030,9 +1019,9 @@ void Database::add_space_member(const std::string& space_id, const std::string& 
                                  const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-        space_id, user_id, role);
+    txn.exec(
+        "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING", pqxx::params{
+        space_id, user_id, role});
     txn.commit();
 }
 
@@ -1040,13 +1029,13 @@ void Database::remove_space_member(const std::string& space_id, const std::strin
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     // Also remove from all channels in this space
-    txn.exec_params(
+    txn.exec(
         "DELETE FROM channel_members WHERE user_id = $2 "
-        "AND channel_id IN (SELECT id FROM channels WHERE space_id = $1)",
-        space_id, user_id);
-    txn.exec_params(
-        "DELETE FROM space_members WHERE space_id = $1 AND user_id = $2",
-        space_id, user_id);
+        "AND channel_id IN (SELECT id FROM channels WHERE space_id = $1)", pqxx::params{
+        space_id, user_id});
+    txn.exec(
+        "DELETE FROM space_members WHERE space_id = $1 AND user_id = $2", pqxx::params{
+        space_id, user_id});
     txn.commit();
 }
 
@@ -1054,18 +1043,18 @@ void Database::update_space_member_role(const std::string& space_id, const std::
                                          const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "UPDATE space_members SET role = $3 WHERE space_id = $1 AND user_id = $2",
-        space_id, user_id, role);
+    txn.exec(
+        "UPDATE space_members SET role = $3 WHERE space_id = $1 AND user_id = $2", pqxx::params{
+        space_id, user_id, role});
     txn.commit();
 }
 
 std::string Database::get_space_member_role(const std::string& space_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT role FROM space_members WHERE space_id = $1 AND user_id = $2",
-        space_id, user_id);
+    auto r = txn.exec(
+        "SELECT role FROM space_members WHERE space_id = $1 AND user_id = $2", pqxx::params{
+        space_id, user_id});
     txn.commit();
     if (r.empty()) return "";
     return r[0][0].as<std::string>();
@@ -1074,11 +1063,11 @@ std::string Database::get_space_member_role(const std::string& space_id, const s
 std::vector<SpaceMember> Database::get_space_members_with_roles(const std::string& space_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT u.id, u.username, u.display_name, sm.role, u.is_online, u.last_seen::text "
         "FROM space_members sm JOIN users u ON sm.user_id = u.id "
-        "WHERE sm.space_id = $1 ORDER BY sm.role, u.username",
-        space_id);
+        "WHERE sm.space_id = $1 ORDER BY sm.role, u.username", pqxx::params{
+        space_id});
     txn.commit();
     std::vector<SpaceMember> members;
     for (const auto& row : r) {
@@ -1096,23 +1085,23 @@ Channel Database::create_conversation(const std::string& created_by,
                                        const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "INSERT INTO channels (name, description, is_direct, is_public, default_role, created_by, conversation_name) "
         "VALUES (NULL, NULL, true, false, 'write', $1, NULLIF($2, '')) "
-        "RETURNING id",
-        created_by, name);
+        "RETURNING id", pqxx::params{
+        created_by, name});
 
     std::string channel_id = r[0][0].as<std::string>();
     for (const auto& mid : member_ids) {
-        txn.exec_params(
+        txn.exec(
             "INSERT INTO channel_members (channel_id, user_id, role) VALUES ($1, $2, 'write') "
-            "ON CONFLICT DO NOTHING",
-            channel_id, mid);
+            "ON CONFLICT DO NOTHING", pqxx::params{
+            channel_id, mid});
     }
 
-    auto r2 = txn.exec_params(
-        std::string("SELECT ") + CH_COLS + " FROM channels c WHERE c.id = $1",
-        channel_id);
+    auto r2 = txn.exec(
+        std::string("SELECT ") + CH_COLS + " FROM channels c WHERE c.id = $1", pqxx::params{
+        channel_id});
     txn.commit();
     auto ch = row_to_channel(r2[0]);
     ch.member_ids = member_ids;
@@ -1122,13 +1111,13 @@ Channel Database::create_conversation(const std::string& created_by,
 std::vector<Channel> Database::list_user_conversations(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("SELECT ") + CH_COLS +
         " FROM channels c "
         "JOIN channel_members cm ON c.id = cm.channel_id "
         "WHERE cm.user_id = $1 AND c.is_direct = true "
-        "ORDER BY c.created_at DESC",
-        user_id);
+        "ORDER BY c.created_at DESC", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<Channel> channels;
     for (const auto& row : r) channels.push_back(row_to_channel(row));
@@ -1142,9 +1131,9 @@ void Database::add_conversation_member(const std::string& channel_id, const std:
 void Database::rename_conversation(const std::string& channel_id, const std::string& name) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "UPDATE channels SET conversation_name = NULLIF($2, '') WHERE id = $1 AND is_direct = true",
-        channel_id, name);
+    txn.exec(
+        "UPDATE channels SET conversation_name = NULLIF($2, '') WHERE id = $1 AND is_direct = true", pqxx::params{
+        channel_id, name});
     txn.commit();
 }
 
@@ -1176,9 +1165,9 @@ Message Database::create_message(const std::string& channel_id, const std::strin
                                   const std::string& content) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        std::string("INSERT INTO messages (channel_id, user_id, content) VALUES ($1, $2, $3) RETURNING ") + MSG_COLS,
-        channel_id, user_id, content);
+    auto r = txn.exec(
+        std::string("INSERT INTO messages (channel_id, user_id, content) VALUES ($1, $2, $3) RETURNING ") + MSG_COLS, pqxx::params{
+        channel_id, user_id, content});
     txn.commit();
     return row_to_message(r[0]);
 }
@@ -1189,10 +1178,10 @@ Message Database::create_file_message(const std::string& channel_id, const std::
                                        const std::string& file_type) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("INSERT INTO messages (channel_id, user_id, content, file_id, file_name, file_size, file_type) "
-        "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ") + MSG_COLS,
-        channel_id, user_id, content, file_id, file_name, file_size, file_type);
+        "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING ") + MSG_COLS, pqxx::params{
+        channel_id, user_id, content, file_id, file_name, file_size, file_type});
     txn.commit();
     return row_to_message(r[0]);
 }
@@ -1203,18 +1192,18 @@ std::vector<Message> Database::get_messages(const std::string& channel_id, int l
     pqxx::work txn(get_conn());
     pqxx::result r;
     if (before.empty()) {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + MSG_COLS_JOINED +
             " FROM messages m JOIN users u ON m.user_id = u.id "
-            "WHERE m.channel_id = $1 ORDER BY m.created_at DESC LIMIT $2",
-            channel_id, limit);
+            "WHERE m.channel_id = $1 ORDER BY m.created_at DESC LIMIT $2", pqxx::params{
+            channel_id, limit});
     } else {
-        r = txn.exec_params(
+        r = txn.exec(
             std::string("SELECT ") + MSG_COLS_JOINED +
             " FROM messages m JOIN users u ON m.user_id = u.id "
             "WHERE m.channel_id = $1 AND m.created_at < $3 "
-            "ORDER BY m.created_at DESC LIMIT $2",
-            channel_id, limit, before);
+            "ORDER BY m.created_at DESC LIMIT $2", pqxx::params{
+            channel_id, limit, before});
     }
     txn.commit();
 
@@ -1231,10 +1220,10 @@ Message Database::edit_message(const std::string& message_id, const std::string&
                                 const std::string& new_content) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("UPDATE messages SET content = $3, edited_at = NOW() "
-        "WHERE id = $1 AND user_id = $2 AND is_deleted = false RETURNING ") + MSG_COLS,
-        message_id, user_id, new_content);
+        "WHERE id = $1 AND user_id = $2 AND is_deleted = false RETURNING ") + MSG_COLS, pqxx::params{
+        message_id, user_id, new_content});
     txn.commit();
     if (r.empty()) throw std::runtime_error("Message not found or not owned by user");
     return row_to_message(r[0]);
@@ -1243,10 +1232,10 @@ Message Database::edit_message(const std::string& message_id, const std::string&
 Message Database::delete_message(const std::string& message_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         std::string("UPDATE messages SET is_deleted = true, content = '' "
-        "WHERE id = $1 AND user_id = $2 RETURNING ") + MSG_COLS,
-        message_id, user_id);
+        "WHERE id = $1 AND user_id = $2 RETURNING ") + MSG_COLS, pqxx::params{
+        message_id, user_id});
     txn.commit();
     if (r.empty()) throw std::runtime_error("Message not found or not owned by user");
     return row_to_message(r[0]);
@@ -1255,9 +1244,9 @@ Message Database::delete_message(const std::string& message_id, const std::strin
 std::optional<Database::FileInfo> Database::get_file_info(const std::string& file_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT file_name, file_type FROM messages WHERE file_id = $1 LIMIT 1",
-        file_id);
+    auto r = txn.exec(
+        "SELECT file_name, file_type FROM messages WHERE file_id = $1 LIMIT 1", pqxx::params{
+        file_id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return FileInfo{r[0][0].as<std::string>(), r[0][1].as<std::string>()};
@@ -1269,10 +1258,10 @@ std::string Database::create_invite(const std::string& created_by, int expiry_ho
     std::lock_guard<std::mutex> lock(mutex_);
     std::string token = random_hex(32);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO invite_tokens (token, created_by, expires_at) "
-        "VALUES ($1, $2, NOW() + ($3 || ' hours')::interval)",
-        token, created_by, std::to_string(expiry_hours));
+        "VALUES ($1, $2, NOW() + ($3 || ' hours')::interval)", pqxx::params{
+        token, created_by, std::to_string(expiry_hours)});
     txn.commit();
     return token;
 }
@@ -1280,9 +1269,9 @@ std::string Database::create_invite(const std::string& created_by, int expiry_ho
 bool Database::validate_invite(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT 1 FROM invite_tokens WHERE token = $1 AND used_by IS NULL AND expires_at > NOW()",
-        token);
+    auto r = txn.exec(
+        "SELECT 1 FROM invite_tokens WHERE token = $1 AND used_by IS NULL AND expires_at > NOW()", pqxx::params{
+        token});
     txn.commit();
     return !r.empty();
 }
@@ -1290,7 +1279,7 @@ bool Database::validate_invite(const std::string& token) {
 void Database::use_invite(const std::string& token, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE invite_tokens SET used_by = $2 WHERE token = $1", token, user_id);
+    txn.exec("UPDATE invite_tokens SET used_by = $2 WHERE token = $1", pqxx::params{ token, user_id});
     txn.commit();
 }
 
@@ -1320,10 +1309,10 @@ std::string Database::create_join_request(const std::string& username, const std
                                            const std::string& credential_data) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "INSERT INTO join_requests (username, display_name, public_key, auth_method, credential_data) "
-        "VALUES ($1, $2, $3, $4, $5) RETURNING id",
-        username, display_name, public_key, auth_method, credential_data);
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id", pqxx::params{
+        username, display_name, public_key, auth_method, credential_data});
     txn.commit();
     return r[0][0].as<std::string>();
 }
@@ -1349,11 +1338,11 @@ std::vector<Database::JoinRequest> Database::list_pending_requests() {
 std::optional<Database::JoinRequest> Database::get_join_request(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, username, display_name, public_key, status, "
         "COALESCE(auth_method, ''), COALESCE(credential_data, ''), "
         "COALESCE(session_token, ''), created_at::text "
-        "FROM join_requests WHERE id = $1", id);
+        "FROM join_requests WHERE id = $1", pqxx::params{ id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return JoinRequest{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -1366,9 +1355,9 @@ std::optional<Database::JoinRequest> Database::get_join_request(const std::strin
 void Database::set_join_request_session(const std::string& id, const std::string& session_token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "UPDATE join_requests SET session_token = $2 WHERE id = $1",
-        id, session_token);
+    txn.exec(
+        "UPDATE join_requests SET session_token = $2 WHERE id = $1", pqxx::params{
+        id, session_token});
     txn.commit();
 }
 
@@ -1376,9 +1365,9 @@ void Database::update_join_request(const std::string& id, const std::string& sta
                                     const std::string& reviewed_by) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "UPDATE join_requests SET status = $2, reviewed_by = $3 WHERE id = $1",
-        id, status, reviewed_by);
+    txn.exec(
+        "UPDATE join_requests SET status = $2, reviewed_by = $3 WHERE id = $1", pqxx::params{
+        id, status, reviewed_by});
     txn.commit();
 }
 
@@ -1388,10 +1377,10 @@ std::string Database::create_space_invite(const std::string& space_id, const std
                                            const std::string& invited_by, const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "INSERT INTO space_invites (space_id, invited_user_id, invited_by, role) "
-        "VALUES ($1, $2, $3, $4) RETURNING id::text",
-        space_id, invited_user_id, invited_by, role);
+        "VALUES ($1, $2, $3, $4) RETURNING id::text", pqxx::params{
+        space_id, invited_user_id, invited_by, role});
     txn.commit();
     return r[0][0].as<std::string>();
 }
@@ -1399,7 +1388,7 @@ std::string Database::create_space_invite(const std::string& space_id, const std
 std::vector<Database::SpaceInvite> Database::list_pending_space_invites(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT si.id::text, si.space_id::text, s.name, COALESCE(s.icon, ''), "
         "si.invited_user_id::text, si.invited_by::text, u.username, "
         "si.role, si.status, si.created_at::text "
@@ -1407,8 +1396,8 @@ std::vector<Database::SpaceInvite> Database::list_pending_space_invites(const st
         "JOIN spaces s ON s.id = si.space_id "
         "JOIN users u ON u.id = si.invited_by "
         "WHERE si.invited_user_id = $1 AND si.status = 'pending' "
-        "ORDER BY si.created_at DESC",
-        user_id);
+        "ORDER BY si.created_at DESC", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<SpaceInvite> invites;
     for (const auto& row : r) {
@@ -1426,15 +1415,15 @@ std::vector<Database::SpaceInvite> Database::list_pending_space_invites(const st
 std::optional<Database::SpaceInvite> Database::get_space_invite(const std::string& invite_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT si.id::text, si.space_id::text, s.name, COALESCE(s.icon, ''), "
         "si.invited_user_id::text, si.invited_by::text, u.username, "
         "si.role, si.status, si.created_at::text "
         "FROM space_invites si "
         "JOIN spaces s ON s.id = si.space_id "
         "JOIN users u ON u.id = si.invited_by "
-        "WHERE si.id = $1",
-        invite_id);
+        "WHERE si.id = $1", pqxx::params{
+        invite_id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     const auto& row = r[0];
@@ -1450,16 +1439,16 @@ std::optional<Database::SpaceInvite> Database::get_space_invite(const std::strin
 void Database::update_space_invite_status(const std::string& invite_id, const std::string& status) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE space_invites SET status = $2 WHERE id = $1", invite_id, status);
+    txn.exec("UPDATE space_invites SET status = $2 WHERE id = $1", pqxx::params{ invite_id, status});
     txn.commit();
 }
 
 bool Database::has_pending_space_invite(const std::string& space_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT 1 FROM space_invites WHERE space_id = $1 AND invited_user_id = $2 AND status = 'pending' LIMIT 1",
-        space_id, user_id);
+    auto r = txn.exec(
+        "SELECT 1 FROM space_invites WHERE space_id = $1 AND invited_user_id = $2 AND status = 'pending' LIMIT 1", pqxx::params{
+        space_id, user_id});
     txn.commit();
     return !r.empty();
 }
@@ -1470,10 +1459,10 @@ std::string Database::create_device_token(const std::string& user_id, int expiry
     std::lock_guard<std::mutex> lock(mutex_);
     std::string token = random_hex(32);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO device_tokens (user_id, token, expires_at) "
-        "VALUES ($1, $2, NOW() + ($3 || ' minutes')::interval)",
-        user_id, token, std::to_string(expiry_minutes));
+        "VALUES ($1, $2, NOW() + ($3 || ' minutes')::interval)", pqxx::params{
+        user_id, token, std::to_string(expiry_minutes)});
     txn.commit();
     return token;
 }
@@ -1481,10 +1470,10 @@ std::string Database::create_device_token(const std::string& user_id, int expiry
 std::optional<std::string> Database::validate_device_token(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT user_id FROM device_tokens "
-        "WHERE token = $1 AND expires_at > NOW() AND used = false",
-        token);
+        "WHERE token = $1 AND expires_at > NOW() AND used = false", pqxx::params{
+        token});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return r[0][0].as<std::string>();
@@ -1493,7 +1482,7 @@ std::optional<std::string> Database::validate_device_token(const std::string& to
 void Database::mark_device_token_used(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE device_tokens SET used = true WHERE token = $1", token);
+    txn.exec("UPDATE device_tokens SET used = true WHERE token = $1", pqxx::params{ token});
     txn.commit();
 }
 
@@ -1501,19 +1490,19 @@ void Database::add_user_key(const std::string& user_id, const std::string& publi
                              const std::string& device_name) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "INSERT INTO user_keys (user_id, public_key, device_name) VALUES ($1, $2, $3)",
-        user_id, public_key, device_name);
+    txn.exec(
+        "INSERT INTO user_keys (user_id, public_key, device_name) VALUES ($1, $2, $3)", pqxx::params{
+        user_id, public_key, device_name});
     txn.commit();
 }
 
 std::vector<Database::UserKey> Database::list_user_keys(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, user_id, public_key, device_name, created_at::text "
-        "FROM user_keys WHERE user_id = $1 ORDER BY created_at",
-        user_id);
+        "FROM user_keys WHERE user_id = $1 ORDER BY created_at", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<UserKey> keys;
     for (const auto& row : r) {
@@ -1527,15 +1516,15 @@ std::vector<Database::UserKey> Database::list_user_keys(const std::string& user_
 void Database::remove_user_key(const std::string& key_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto count_r = txn.exec_params(
-        "SELECT COUNT(*) FROM user_keys WHERE user_id = $1", user_id);
+    auto count_r = txn.exec(
+        "SELECT COUNT(*) FROM user_keys WHERE user_id = $1", pqxx::params{ user_id});
     if (count_r[0][0].as<int>() <= 1) {
         txn.abort();
         throw std::runtime_error("Cannot remove the last device key");
     }
-    txn.exec_params(
-        "DELETE FROM user_keys WHERE id = $1 AND user_id = $2",
-        key_id, user_id);
+    txn.exec(
+        "DELETE FROM user_keys WHERE id = $1 AND user_id = $2", pqxx::params{
+        key_id, user_id});
     txn.commit();
 }
 
@@ -1544,8 +1533,8 @@ void Database::remove_user_key(const std::string& key_id, const std::string& use
 std::optional<std::string> Database::get_setting(const std::string& key) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT value FROM server_settings WHERE key = $1", key);
+    auto r = txn.exec(
+        "SELECT value FROM server_settings WHERE key = $1", pqxx::params{ key});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return r[0][0].as<std::string>();
@@ -1554,10 +1543,10 @@ std::optional<std::string> Database::get_setting(const std::string& key) {
 void Database::set_setting(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO server_settings (key, value) VALUES ($1, $2) "
-        "ON CONFLICT (key) DO UPDATE SET value = $2",
-        key, value);
+        "ON CONFLICT (key) DO UPDATE SET value = $2", pqxx::params{
+        key, value});
     txn.commit();
 }
 
@@ -1577,30 +1566,31 @@ void Database::store_webauthn_credential(const std::string& user_id, const std::
                                           const std::string& device_name, const std::string& transports) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO webauthn_credentials (user_id, credential_id, public_key, sign_count, device_name, transports) "
-        "VALUES ($1, $2, $3, $4, $5, $6)",
+        "VALUES ($1, $2, $3, $4, $5, $6)", pqxx::params{
         user_id, credential_id,
-        pqxx::binarystring(public_key.data(), public_key.size()),
-        sign_count, device_name, transports);
+        pqxx::binary_cast(public_key),
+        sign_count, device_name, transports});
     txn.commit();
 }
 
 std::optional<Database::WebAuthnCredential> Database::find_webauthn_credential(const std::string& credential_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, user_id, credential_id, public_key, sign_count, device_name, transports, created_at::text "
-        "FROM webauthn_credentials WHERE credential_id = $1",
-        credential_id);
+        "FROM webauthn_credentials WHERE credential_id = $1", pqxx::params{
+        credential_id});
     txn.commit();
     if (r.empty()) return std::nullopt;
-    auto pk_view = r[0][3].as<pqxx::binarystring>();
+    auto pk_view = r[0][3].as<std::basic_string<std::byte>>();
     WebAuthnCredential cred;
     cred.id = r[0][0].as<std::string>();
     cred.user_id = r[0][1].as<std::string>();
     cred.credential_id = r[0][2].as<std::string>();
-    cred.public_key.assign(pk_view.begin(), pk_view.end());
+    cred.public_key.assign(reinterpret_cast<const uint8_t*>(pk_view.data()),
+                           reinterpret_cast<const uint8_t*>(pk_view.data()) + pk_view.size());
     cred.sign_count = r[0][4].as<int>();
     cred.device_name = r[0][5].is_null() ? "Passkey" : r[0][5].as<std::string>();
     cred.transports = r[0][6].is_null() ? "" : r[0][6].as<std::string>();
@@ -1611,19 +1601,20 @@ std::optional<Database::WebAuthnCredential> Database::find_webauthn_credential(c
 std::vector<Database::WebAuthnCredential> Database::list_webauthn_credentials(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, user_id, credential_id, public_key, sign_count, device_name, transports, created_at::text "
-        "FROM webauthn_credentials WHERE user_id = $1 ORDER BY created_at",
-        user_id);
+        "FROM webauthn_credentials WHERE user_id = $1 ORDER BY created_at", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<WebAuthnCredential> creds;
     for (const auto& row : r) {
-        auto pk_view = row[3].as<pqxx::binarystring>();
+        auto pk_view = row[3].as<std::basic_string<std::byte>>();
         WebAuthnCredential cred;
         cred.id = row[0].as<std::string>();
         cred.user_id = row[1].as<std::string>();
         cred.credential_id = row[2].as<std::string>();
-        cred.public_key.assign(pk_view.begin(), pk_view.end());
+        cred.public_key.assign(reinterpret_cast<const uint8_t*>(pk_view.data()),
+                           reinterpret_cast<const uint8_t*>(pk_view.data()) + pk_view.size());
         cred.sign_count = row[4].as<int>();
         cred.device_name = row[5].is_null() ? "Passkey" : row[5].as<std::string>();
         cred.transports = row[6].is_null() ? "" : row[6].as<std::string>();
@@ -1636,36 +1627,36 @@ std::vector<Database::WebAuthnCredential> Database::list_webauthn_credentials(co
 void Database::update_webauthn_sign_count(const std::string& credential_id, int new_count) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "UPDATE webauthn_credentials SET sign_count = $2 WHERE credential_id = $1",
-        credential_id, new_count);
+    txn.exec(
+        "UPDATE webauthn_credentials SET sign_count = $2 WHERE credential_id = $1", pqxx::params{
+        credential_id, new_count});
     txn.commit();
 }
 
 void Database::remove_webauthn_credential(const std::string& credential_id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto count_r = txn.exec_params(
-        "SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1", user_id);
+    auto count_r = txn.exec(
+        "SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1", pqxx::params{ user_id});
     if (count_r[0][0].as<int>() <= 1) {
         txn.abort();
         throw std::runtime_error("Cannot remove the last passkey");
     }
-    txn.exec_params(
-        "DELETE FROM webauthn_credentials WHERE credential_id = $1 AND user_id = $2",
-        credential_id, user_id);
+    txn.exec(
+        "DELETE FROM webauthn_credentials WHERE credential_id = $1 AND user_id = $2", pqxx::params{
+        credential_id, user_id});
     txn.commit();
 }
 
 std::optional<User> Database::find_user_by_credential_id(const std::string& credential_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
         "u.last_seen::text, u.created_at::text, u.bio, u.status "
         "FROM users u JOIN webauthn_credentials wc ON u.id = wc.user_id "
-        "WHERE wc.credential_id = $1",
-        credential_id);
+        "WHERE wc.credential_id = $1", pqxx::params{
+        credential_id});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -1683,20 +1674,20 @@ std::optional<User> Database::find_user_by_credential_id(const std::string& cred
 void Database::store_webauthn_challenge(const std::string& challenge, const std::string& extra_data_json) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO webauthn_challenges (challenge, extra_data) VALUES ($1, $2) "
-        "ON CONFLICT (challenge) DO UPDATE SET extra_data = $2, created_at = NOW()",
-        challenge, extra_data_json);
+        "ON CONFLICT (challenge) DO UPDATE SET extra_data = $2, created_at = NOW()", pqxx::params{
+        challenge, extra_data_json});
     txn.commit();
 }
 
 std::optional<Database::WebAuthnChallenge> Database::get_webauthn_challenge(const std::string& challenge) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT challenge, extra_data FROM webauthn_challenges "
-        "WHERE challenge = $1 AND created_at > NOW() - INTERVAL '5 minutes'",
-        challenge);
+        "WHERE challenge = $1 AND created_at > NOW() - INTERVAL '5 minutes'", pqxx::params{
+        challenge});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return WebAuthnChallenge{r[0][0].as<std::string>(),
@@ -1706,16 +1697,16 @@ std::optional<Database::WebAuthnChallenge> Database::get_webauthn_challenge(cons
 void Database::delete_webauthn_challenge(const std::string& challenge) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("DELETE FROM webauthn_challenges WHERE challenge = $1", challenge);
+    txn.exec("DELETE FROM webauthn_challenges WHERE challenge = $1", pqxx::params{ challenge});
     txn.commit();
 }
 
 bool Database::has_approved_join_request(const std::string& username) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT 1 FROM join_requests WHERE username = $1 AND status = 'approved' LIMIT 1",
-        username);
+    auto r = txn.exec(
+        "SELECT 1 FROM join_requests WHERE username = $1 AND status = 'approved' LIMIT 1", pqxx::params{
+        username});
     txn.commit();
     return !r.empty();
 }
@@ -1726,19 +1717,19 @@ void Database::store_pki_credential(const std::string& user_id, const std::strin
                                       const std::string& device_name) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
-        "INSERT INTO pki_credentials (user_id, public_key, device_name) VALUES ($1, $2, $3)",
-        user_id, public_key_spki, device_name);
+    txn.exec(
+        "INSERT INTO pki_credentials (user_id, public_key, device_name) VALUES ($1, $2, $3)", pqxx::params{
+        user_id, public_key_spki, device_name});
     txn.commit();
 }
 
 std::vector<Database::PkiCredential> Database::list_pki_credentials(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, user_id, public_key, device_name, created_at::text "
-        "FROM pki_credentials WHERE user_id = $1 ORDER BY created_at",
-        user_id);
+        "FROM pki_credentials WHERE user_id = $1 ORDER BY created_at", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<PkiCredential> creds;
     for (const auto& row : r) {
@@ -1752,10 +1743,10 @@ std::vector<Database::PkiCredential> Database::list_pki_credentials(const std::s
 std::optional<Database::PkiCredential> Database::find_pki_credential_by_key(const std::string& public_key_spki) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, user_id, public_key, device_name, created_at::text "
-        "FROM pki_credentials WHERE public_key = $1",
-        public_key_spki);
+        "FROM pki_credentials WHERE public_key = $1", pqxx::params{
+        public_key_spki});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return PkiCredential{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -1766,19 +1757,19 @@ std::optional<Database::PkiCredential> Database::find_pki_credential_by_key(cons
 void Database::remove_pki_credential(const std::string& id, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("DELETE FROM pki_credentials WHERE id = $1 AND user_id = $2", id, user_id);
+    txn.exec("DELETE FROM pki_credentials WHERE id = $1 AND user_id = $2", pqxx::params{ id, user_id});
     txn.commit();
 }
 
 std::optional<User> Database::find_user_by_pki_key(const std::string& public_key_spki) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
         "u.last_seen::text, u.created_at::text, u.bio, u.status "
         "FROM users u JOIN pki_credentials pc ON u.id = pc.user_id "
-        "WHERE pc.public_key = $1",
-        public_key_spki);
+        "WHERE pc.public_key = $1", pqxx::params{
+        public_key_spki});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -1797,9 +1788,9 @@ void Database::store_recovery_keys(const std::string& user_id, const std::vector
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     for (const auto& hash : key_hashes) {
-        txn.exec_params(
-            "INSERT INTO recovery_keys (user_id, key_hash) VALUES ($1, $2)",
-            user_id, hash);
+        txn.exec(
+            "INSERT INTO recovery_keys (user_id, key_hash) VALUES ($1, $2)", pqxx::params{
+            user_id, hash});
     }
     txn.commit();
 }
@@ -1807,16 +1798,16 @@ void Database::store_recovery_keys(const std::string& user_id, const std::vector
 std::optional<std::string> Database::verify_and_consume_recovery_key(const std::string& key_hash) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT id, user_id FROM recovery_keys WHERE key_hash = $1 AND used = false LIMIT 1",
-        key_hash);
+    auto r = txn.exec(
+        "SELECT id, user_id FROM recovery_keys WHERE key_hash = $1 AND used = false LIMIT 1", pqxx::params{
+        key_hash});
     if (r.empty()) {
         txn.commit();
         return std::nullopt;
     }
     std::string id = r[0][0].as<std::string>();
     std::string user_id = r[0][1].as<std::string>();
-    txn.exec_params("UPDATE recovery_keys SET used = true WHERE id = $1", id);
+    txn.exec("UPDATE recovery_keys SET used = true WHERE id = $1", pqxx::params{ id});
     txn.commit();
     return user_id;
 }
@@ -1824,9 +1815,9 @@ std::optional<std::string> Database::verify_and_consume_recovery_key(const std::
 int Database::count_remaining_recovery_keys(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT COUNT(*) FROM recovery_keys WHERE user_id = $1 AND used = false",
-        user_id);
+    auto r = txn.exec(
+        "SELECT COUNT(*) FROM recovery_keys WHERE user_id = $1 AND used = false", pqxx::params{
+        user_id});
     txn.commit();
     return r[0][0].as<int>();
 }
@@ -1834,17 +1825,17 @@ int Database::count_remaining_recovery_keys(const std::string& user_id) {
 void Database::delete_recovery_keys(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("DELETE FROM recovery_keys WHERE user_id = $1", user_id);
+    txn.exec("DELETE FROM recovery_keys WHERE user_id = $1", pqxx::params{ user_id});
     txn.commit();
 }
 
 int Database::count_user_credentials(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT (SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = $1) + "
-        "(SELECT COUNT(*) FROM pki_credentials WHERE user_id = $1)",
-        user_id);
+        "(SELECT COUNT(*) FROM pki_credentials WHERE user_id = $1)", pqxx::params{
+        user_id});
     txn.commit();
     return r[0][0].as<int>();
 }
@@ -1857,10 +1848,10 @@ std::string Database::create_recovery_token(const std::string& created_by,
     std::lock_guard<std::mutex> lock(mutex_);
     std::string token = random_hex(32);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO recovery_tokens (token, created_by, for_user_id, expires_at) "
-        "VALUES ($1, $2, $3, NOW() + ($4 || ' hours')::interval)",
-        token, created_by, for_user_id, std::to_string(expiry_hours));
+        "VALUES ($1, $2, $3, NOW() + ($4 || ' hours')::interval)", pqxx::params{
+        token, created_by, for_user_id, std::to_string(expiry_hours)});
     txn.commit();
     return token;
 }
@@ -1868,10 +1859,10 @@ std::string Database::create_recovery_token(const std::string& created_by,
 std::optional<std::string> Database::get_recovery_token_user_id(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT for_user_id FROM recovery_tokens "
-        "WHERE token = $1 AND used = FALSE AND expires_at > NOW()",
-        token);
+        "WHERE token = $1 AND used = FALSE AND expires_at > NOW()", pqxx::params{
+        token});
     txn.commit();
     if (r.empty()) return std::nullopt;
     return r[0][0].as<std::string>();
@@ -1880,7 +1871,7 @@ std::optional<std::string> Database::get_recovery_token_user_id(const std::strin
 void Database::use_recovery_token(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE recovery_tokens SET used = TRUE WHERE token = $1", token);
+    txn.exec("UPDATE recovery_tokens SET used = TRUE WHERE token = $1", pqxx::params{ token});
     txn.commit();
 }
 
@@ -1912,26 +1903,26 @@ void Database::update_read_state(const std::string& channel_id, const std::strin
                                   const std::string& message_id, const std::string& timestamp) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params(
+    txn.exec(
         "INSERT INTO channel_read_state (channel_id, user_id, last_read_at, last_read_message_id) "
         "VALUES ($1, $2, $3::timestamptz, $4::uuid) "
         "ON CONFLICT (channel_id, user_id) DO UPDATE "
         "SET last_read_at = GREATEST(channel_read_state.last_read_at, EXCLUDED.last_read_at), "
         "    last_read_message_id = CASE WHEN EXCLUDED.last_read_at > channel_read_state.last_read_at "
-        "                           THEN EXCLUDED.last_read_message_id ELSE channel_read_state.last_read_message_id END",
-        channel_id, user_id, timestamp, message_id);
+        "                           THEN EXCLUDED.last_read_message_id ELSE channel_read_state.last_read_message_id END", pqxx::params{
+        channel_id, user_id, timestamp, message_id});
     // Clear mention records for messages up to the read point
-    txn.exec_params(
+    txn.exec(
         "DELETE FROM mentions WHERE channel_id = $1 AND mentioned_user_id = $2 "
-        "AND message_id IN (SELECT id FROM messages WHERE channel_id = $1 AND created_at <= $3::timestamptz)",
-        channel_id, user_id, timestamp);
+        "AND message_id IN (SELECT id FROM messages WHERE channel_id = $1 AND created_at <= $3::timestamptz)", pqxx::params{
+        channel_id, user_id, timestamp});
     txn.commit();
 }
 
 std::vector<Database::UnreadCount> Database::get_unread_counts(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT cm.channel_id, COUNT(m.id)::int AS unread "
         "FROM channel_members cm "
         "LEFT JOIN channel_read_state crs "
@@ -1942,8 +1933,8 @@ std::vector<Database::UnreadCount> Database::get_unread_counts(const std::string
         "  AND m.user_id != cm.user_id "
         "WHERE cm.user_id = $1 "
         "GROUP BY cm.channel_id "
-        "HAVING COUNT(m.id) > 0",
-        user_id);
+        "HAVING COUNT(m.id) > 0", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<UnreadCount> counts;
     for (const auto& row : r) {
@@ -1955,7 +1946,7 @@ std::vector<Database::UnreadCount> Database::get_unread_counts(const std::string
 std::vector<Database::UnreadCount> Database::get_mention_unread_counts(const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT mn.channel_id, COUNT(DISTINCT mn.message_id)::int AS unread "
         "FROM mentions mn "
         "JOIN messages m ON m.id = mn.message_id AND m.is_deleted = false "
@@ -1965,8 +1956,8 @@ std::vector<Database::UnreadCount> Database::get_mention_unread_counts(const std
         "WHERE mn.mentioned_user_id = $1 "
         "  AND (crs.last_read_at IS NULL OR m.created_at > crs.last_read_at) "
         "GROUP BY mn.channel_id "
-        "HAVING COUNT(DISTINCT mn.message_id) > 0",
-        user_id);
+        "HAVING COUNT(DISTINCT mn.message_id) > 0", pqxx::params{
+        user_id});
     txn.commit();
     std::vector<UnreadCount> counts;
     for (const auto& row : r) {
@@ -1978,13 +1969,13 @@ std::vector<Database::UnreadCount> Database::get_mention_unread_counts(const std
 std::vector<Database::ReadReceipt> Database::get_channel_read_receipts(const std::string& channel_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT crs.user_id, u.username, "
         "COALESCE(crs.last_read_message_id::text, ''), crs.last_read_at::text "
         "FROM channel_read_state crs "
         "JOIN users u ON u.id = crs.user_id "
-        "WHERE crs.channel_id = $1",
-        channel_id);
+        "WHERE crs.channel_id = $1", pqxx::params{
+        channel_id});
     txn.commit();
     std::vector<ReadReceipt> receipts;
     for (const auto& row : r) {
@@ -1997,10 +1988,10 @@ std::vector<Database::ReadReceipt> Database::get_channel_read_receipts(const std
 std::vector<Database::ChannelMemberUsername> Database::get_channel_member_usernames(const std::string& channel_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT cm.user_id, u.username FROM channel_members cm "
-        "JOIN users u ON u.id = cm.user_id WHERE cm.channel_id = $1",
-        channel_id);
+        "JOIN users u ON u.id = cm.user_id WHERE cm.channel_id = $1", pqxx::params{
+        channel_id});
     txn.commit();
     std::vector<ChannelMemberUsername> members;
     for (const auto& row : r) {
@@ -2044,10 +2035,10 @@ void Database::store_mentions(const std::string& message_id, const std::string& 
         // Find matching member
         for (const auto& m : members) {
             if (m.username == token && m.user_id != sender_user_id) {
-                txn.exec_params(
+                txn.exec(
                     "INSERT INTO mentions (message_id, channel_id, mentioned_user_id, is_channel_mention) "
-                    "VALUES ($1::uuid, $2::uuid, $3::uuid, false) ON CONFLICT DO NOTHING",
-                    message_id, channel_id, m.user_id);
+                    "VALUES ($1::uuid, $2::uuid, $3::uuid, false) ON CONFLICT DO NOTHING", pqxx::params{
+                    message_id, channel_id, m.user_id});
                 break;
             }
         }
@@ -2057,10 +2048,10 @@ void Database::store_mentions(const std::string& message_id, const std::string& 
     if (is_channel_mention) {
         for (const auto& m : members) {
             if (m.user_id == sender_user_id) continue;
-            txn.exec_params(
+            txn.exec(
                 "INSERT INTO mentions (message_id, channel_id, mentioned_user_id, is_channel_mention) "
-                "VALUES ($1::uuid, $2::uuid, $3::uuid, true) ON CONFLICT DO NOTHING",
-                message_id, channel_id, m.user_id);
+                "VALUES ($1::uuid, $2::uuid, $3::uuid, true) ON CONFLICT DO NOTHING", pqxx::params{
+                message_id, channel_id, m.user_id});
         }
     }
 
@@ -2072,15 +2063,15 @@ void Database::store_mentions(const std::string& message_id, const std::string& 
 std::vector<User> Database::search_users(const std::string& query, int limit, int offset) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
+    auto r = txn.exec(
         "SELECT id, username, display_name, public_key, role, is_online, "
         "last_seen::text, created_at::text, bio, status "
         "FROM users "
         "WHERE username ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%' "
         "ORDER BY CASE WHEN username ILIKE $1 || '%' THEN 0 "
         "              WHEN display_name ILIKE $1 || '%' THEN 1 ELSE 2 END, username "
-        "LIMIT $2 OFFSET $3",
-        query, limit, offset);
+        "LIMIT $2 OFFSET $3", pqxx::params{
+        query, limit, offset});
     txn.commit();
     std::vector<User> users;
     for (const auto& row : r) {
@@ -2117,7 +2108,7 @@ std::vector<Database::MessageSearchResult> Database::search_messages(
     }
     sql += ") ORDER BY m.created_at DESC LIMIT $2 OFFSET $3";
 
-    auto r = txn.exec_params(sql, user_id, limit, offset);
+    auto r = txn.exec(sql, pqxx::params{ user_id, limit, offset});
     txn.commit();
 
     std::vector<MessageSearchResult> results;
@@ -2155,7 +2146,7 @@ std::vector<Database::FileSearchResult> Database::search_files(
     }
     sql += ") ORDER BY m.created_at DESC LIMIT $3 OFFSET $4";
 
-    auto r = txn.exec_params(sql, query, user_id, limit, offset);
+    auto r = txn.exec(sql, pqxx::params{ query, user_id, limit, offset});
     txn.commit();
 
     std::vector<FileSearchResult> results;
@@ -2188,7 +2179,7 @@ std::vector<Database::SpaceSearchResult> Database::search_spaces(
     }
     sql += ") ORDER BY s.name LIMIT $3 OFFSET $4";
 
-    auto r = txn.exec_params(sql, query, user_id, limit, offset);
+    auto r = txn.exec(sql, pqxx::params{ query, user_id, limit, offset});
     txn.commit();
 
     std::vector<SpaceSearchResult> results;
@@ -2221,7 +2212,7 @@ std::vector<Database::ChannelSearchResult> Database::search_channels(
     }
     sql += ") ORDER BY c.name LIMIT $3 OFFSET $4";
 
-    auto r = txn.exec_params(sql, query, user_id, limit, offset);
+    auto r = txn.exec(sql, pqxx::params{ query, user_id, limit, offset});
     txn.commit();
 
     std::vector<ChannelSearchResult> results;
@@ -2590,7 +2581,7 @@ std::vector<Message> Database::get_messages_around(const std::string& channel_id
         "WHERE m.channel_id = $1 AND m.created_at > (SELECT created_at FROM messages WHERE id = $2) "
         "ORDER BY m.created_at ASC LIMIT $3)"
         ") sub ORDER BY created_at ASC";
-    auto r = txn.exec_params(sql, channel_id, message_id, half);
+    auto r = txn.exec(sql, pqxx::params{ channel_id, message_id, half});
     txn.commit();
 
     std::vector<Message> msgs;
@@ -2605,30 +2596,30 @@ std::vector<Message> Database::get_messages_around(const std::string& channel_id
 void Database::archive_channel(const std::string& channel_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE channels SET is_archived = TRUE WHERE id = $1", channel_id);
+    txn.exec("UPDATE channels SET is_archived = TRUE WHERE id = $1", pqxx::params{ channel_id});
     txn.commit();
 }
 
 void Database::unarchive_channel(const std::string& channel_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE channels SET is_archived = FALSE WHERE id = $1", channel_id);
+    txn.exec("UPDATE channels SET is_archived = FALSE WHERE id = $1", pqxx::params{ channel_id});
     txn.commit();
 }
 
 void Database::archive_space(const std::string& space_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE spaces SET is_archived = TRUE WHERE id = $1", space_id);
-    txn.exec_params("UPDATE channels SET is_archived = TRUE WHERE space_id = $1", space_id);
+    txn.exec("UPDATE spaces SET is_archived = TRUE WHERE id = $1", pqxx::params{ space_id});
+    txn.exec("UPDATE channels SET is_archived = TRUE WHERE space_id = $1", pqxx::params{ space_id});
     txn.commit();
 }
 
 void Database::unarchive_space(const std::string& space_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE spaces SET is_archived = FALSE WHERE id = $1", space_id);
-    txn.exec_params("UPDATE channels SET is_archived = FALSE WHERE space_id = $1", space_id);
+    txn.exec("UPDATE spaces SET is_archived = FALSE WHERE id = $1", pqxx::params{ space_id});
+    txn.exec("UPDATE channels SET is_archived = FALSE WHERE space_id = $1", pqxx::params{ space_id});
     txn.commit();
 }
 
@@ -2644,9 +2635,9 @@ void Database::set_server_archived(bool archived) {
 int Database::count_channel_members_with_role(const std::string& channel_id, const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT COUNT(*) FROM channel_members WHERE channel_id = $1 AND role = $2",
-        channel_id, role);
+    auto r = txn.exec(
+        "SELECT COUNT(*) FROM channel_members WHERE channel_id = $1 AND role = $2", pqxx::params{
+        channel_id, role});
     txn.commit();
     return r[0][0].as<int>();
 }
@@ -2654,9 +2645,9 @@ int Database::count_channel_members_with_role(const std::string& channel_id, con
 int Database::count_space_members_with_role(const std::string& space_id, const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT COUNT(*) FROM space_members WHERE space_id = $1 AND role = $2",
-        space_id, role);
+    auto r = txn.exec(
+        "SELECT COUNT(*) FROM space_members WHERE space_id = $1 AND role = $2", pqxx::params{
+        space_id, role});
     txn.commit();
     return r[0][0].as<int>();
 }
@@ -2664,7 +2655,7 @@ int Database::count_space_members_with_role(const std::string& space_id, const s
 int Database::count_users_with_role(const std::string& role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params("SELECT COUNT(*) FROM users WHERE role = $1", role);
+    auto r = txn.exec("SELECT COUNT(*) FROM users WHERE role = $1", pqxx::params{ role});
     txn.commit();
     return r[0][0].as<int>();
 }
@@ -2672,8 +2663,8 @@ int Database::count_users_with_role(const std::string& role) {
 int Database::count_channel_members(const std::string& channel_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        "SELECT COUNT(*) FROM channel_members WHERE channel_id = $1", channel_id);
+    auto r = txn.exec(
+        "SELECT COUNT(*) FROM channel_members WHERE channel_id = $1", pqxx::params{ channel_id});
     txn.commit();
     return r[0][0].as<int>();
 }

@@ -472,21 +472,15 @@ struct SpaceHandler {
                 if (!last) return;
                 if (user_id.empty()) return;
 
-                // Must be a space member with write+ permissions
+                // Must be a space admin/owner or server admin/owner
                 auto u = db.find_user_by_id(user_id);
                 bool is_server_admin = u && (u->role == "admin" || u->role == "owner");
                 if (!is_server_admin) {
                     std::string space_role = db.get_space_member_role(space_id, user_id);
-                    if (space_role.empty()) {
+                    if (space_role != "admin" && space_role != "owner") {
                         res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                             ->writeHeader("Access-Control-Allow-Origin", "*")
-                            ->end(R"({"error":"Must be a space member"})");
-                        return;
-                    }
-                    if (space_role == "read") {
-                        res->writeStatus("403")->writeHeader("Content-Type", "application/json")
-                            ->writeHeader("Access-Control-Allow-Origin", "*")
-                            ->end(R"({"error":"Insufficient permissions to create channels in this space"})");
+                            ->end(R"({"error":"Only space admins and owners can create channels"})");
                         return;
                     }
                 }

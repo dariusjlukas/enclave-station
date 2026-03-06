@@ -90,7 +90,7 @@ export function UserSettings({ onClose }: Props) {
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      size="lg"
+      size="3xl"
       scrollBehavior="inside"
       backdrop="opaque"
     >

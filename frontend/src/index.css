@@ -4,6 +4,12 @@
 @source "../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}";
 @custom-variant dark (&:is(.dark *));
 
+/* Align modals to top of screen so they grow downward */
+[data-slot='wrapper'] {
+  align-items: flex-start;
+  padding-top: 4rem;
+}
+
 .highlight-flash {
   animation: highlightFlash 2s ease-out;
 }

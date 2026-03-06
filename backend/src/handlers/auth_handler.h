@@ -197,20 +197,8 @@ private:
 
     // Complete user creation (shared between passkey and PKI registration)
     void complete_user_creation(User& user, const std::string& invite_token) {
-        bool is_first_user_after_create = (user.role == "admin");
-
         if (!invite_token.empty()) {
             db.use_invite(invite_token, user.id);
-        }
-
-        if (is_first_user_after_create) {
-            db.create_channel("general", "General discussion", false, user.id, {user.id},
-                               true, "read");
-        } else {
-            auto general = db.find_general_channel();
-            if (general) {
-                db.add_channel_member(general->id, user.id, general->default_role);
-            }
         }
     }
 

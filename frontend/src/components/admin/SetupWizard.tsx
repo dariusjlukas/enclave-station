@@ -11,7 +11,7 @@ export function SetupWizard({ onComplete }: Props) {
       isOpen
       isDismissable={false}
       hideCloseButton
-      size="lg"
+      size="3xl"
       scrollBehavior="inside"
     >
       <ModalContent>

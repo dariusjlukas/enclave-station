@@ -252,17 +252,6 @@ TEST_F(DatabaseTest, ListPublicChannels) {
     EXPECT_EQ(public_channels[0].name, "available");
 }
 
-TEST_F(DatabaseTest, FindGeneralChannel) {
-    EXPECT_FALSE(db_->find_general_channel().has_value());
-
-    auto user = db_->create_user("alice", "Alice", "KEY_A");
-    db_->create_channel("general", "General", false, user.id, {user.id});
-
-    auto found = db_->find_general_channel();
-    ASSERT_TRUE(found.has_value());
-    EXPECT_EQ(found->name, "general");
-}
-
 TEST_F(DatabaseTest, UpdateChannel) {
     auto user = db_->create_user("alice", "Alice", "KEY_A");
     auto ch = db_->create_channel("old", "old desc", false, user.id, {user.id}, true, "write");

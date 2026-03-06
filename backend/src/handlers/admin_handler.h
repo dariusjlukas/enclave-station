@@ -408,12 +408,6 @@ private:
                 db.store_webauthn_credential(user.id, credential_id, pk_bytes, sign_count, "Passkey", transports);
             }
 
-            // Add to general channel
-            auto general = db.find_general_channel();
-            if (general) {
-                db.add_channel_member(general->id, user.id, general->default_role);
-            }
-
             // Create session token for polling pickup
             std::string session_token = db.create_session(user.id, get_session_expiry());
             db.set_join_request_session(request_id, session_token);

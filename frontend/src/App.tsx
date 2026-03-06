@@ -261,7 +261,7 @@ function App() {
       <Modal
         isOpen={showAdmin}
         onOpenChange={setShowAdmin}
-        size="lg"
+        size="3xl"
         scrollBehavior="inside"
         backdrop="opaque"
       >

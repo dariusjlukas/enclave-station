@@ -100,8 +100,6 @@ public:
                                                         const std::string& search = "");
     std::vector<Channel> list_all_channels();
     std::vector<ChannelMember> get_channel_members_with_roles(const std::string& channel_id);
-    std::optional<Channel> find_general_channel();
-
     // Messages
     Message create_message(const std::string& channel_id, const std::string& user_id,
                            const std::string& content);

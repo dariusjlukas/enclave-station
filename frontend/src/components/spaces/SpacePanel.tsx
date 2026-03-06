@@ -45,8 +45,7 @@ export function SpacePanel({
     space?.my_role === 'owner' ||
     user?.role === 'admin' ||
     user?.role === 'owner';
-  const canCreate =
-    !space?.is_archived && (canManage || space?.my_role === 'write');
+  const canCreate = !space?.is_archived && canManage;
 
   if (!space) {
     return (

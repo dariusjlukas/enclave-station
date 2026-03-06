@@ -35,6 +35,7 @@ export function ConnectionLostModal() {
       hideCloseButton
       backdrop="blur"
       size="sm"
+      classNames={{ wrapper: '!items-center !pt-0' }}
     >
       <ModalContent>
         <ModalBody className="py-10 text-center">

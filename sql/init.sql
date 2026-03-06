@@ -72,5 +72,3 @@ CREATE TABLE sessions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Create a default "general" channel on first setup
--- (will be created by backend on first admin registration)

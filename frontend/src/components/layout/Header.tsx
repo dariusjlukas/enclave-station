@@ -1,10 +1,13 @@
-import { Button } from '@heroui/react';
+import { Button, Tooltip } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBars,
   faGear,
   faHashtag,
   faLock,
+  faRightFromBracket,
+  faShieldHalved,
+  faSliders,
 } from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
 import * as api from '../../services/api';
@@ -129,31 +132,39 @@ export function Header({
 
       <div className="flex items-center gap-1 sm:gap-2 justify-end">
         {(user?.role === 'admin' || user?.role === 'owner') && (
+          <Tooltip content="Admin Panel">
+            <Button
+              isIconOnly
+              variant="light"
+              size="sm"
+              onPress={onShowAdmin}
+              className="relative overflow-visible"
+            >
+              <FontAwesomeIcon icon={faShieldHalved} />
+              {adminNotificationCount > 0 && (
+                <span className="absolute -bottom-1 -right-1 bg-danger text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
+                  {adminNotificationCount}
+                </span>
+              )}
+            </Button>
+          </Tooltip>
+        )}
+        <Tooltip content="User Settings">
+          <Button isIconOnly variant="light" size="sm" onPress={onShowSettings}>
+            <FontAwesomeIcon icon={faSliders} />
+          </Button>
+        </Tooltip>
+        <Tooltip content="Logout">
           <Button
+            isIconOnly
             variant="light"
             size="sm"
-            onPress={onShowAdmin}
-            className="relative overflow-visible"
+            color="default"
+            onPress={handleLogout}
           >
-            Admin Panel
-            {adminNotificationCount > 0 && (
-              <span className="absolute -bottom-1 -right-1 bg-danger text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1">
-                {adminNotificationCount}
-              </span>
-            )}
+            <FontAwesomeIcon icon={faRightFromBracket} />
           </Button>
-        )}
-        <Button variant="light" size="sm" onPress={onShowSettings}>
-          User Settings
-        </Button>
-        <Button
-          variant="light"
-          size="sm"
-          color="default"
-          onPress={handleLogout}
-        >
-          Logout
-        </Button>
+        </Tooltip>
       </div>
     </header>
   );
