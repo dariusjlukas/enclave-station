@@ -56,6 +56,12 @@ target_link_libraries(chat-lib PUBLIC
 
 target_compile_definitions(chat-lib PUBLIC LIBUS_USE_OPENSSL)
 
+# Suppress pqxx deprecation warnings (exec_params, binarystring)
+# These APIs are deprecated in pqxx >=7.10 but still required for 7.9.x compatibility
+set_source_files_properties(src/db/database.cpp PROPERTIES
+    COMPILE_FLAGS "-Wno-deprecated-declarations"
+)
+
 # Main executable
 add_executable(chat-server src/main.cpp)
 target_link_libraries(chat-server PRIVATE chat-lib)
