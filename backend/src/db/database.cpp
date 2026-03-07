@@ -362,6 +362,11 @@ void Database::run_migrations() {
         CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
     )SQL");
 
+    // Reply-to-message support
+    txn.exec(R"SQL(
+        ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL;
+    )SQL");
+
     txn.commit();
     std::cout << "[DB] Migrations complete" << std::endl;
 }
@@ -1162,25 +1167,45 @@ static Message row_to_message(const pqxx::row& r) {
         r[8].is_null() ? "" : r[8].as<std::string>(),
         r[9].is_null() ? "" : r[9].as<std::string>(),
         r[10].is_null() ? 0 : r[10].as<int64_t>(),
-        r[11].is_null() ? "" : r[11].as<std::string>()
+        r[11].is_null() ? "" : r[11].as<std::string>(),
+        r[12].is_null() ? "" : r[12].as<std::string>(),
+        r[13].is_null() ? "" : r[13].as<std::string>(),
+        r[14].is_null() ? "" : r[14].as<std::string>(),
+        !r[15].is_null() && r[15].as<bool>()
     };
 }
 
 static const char* MSG_COLS = "id, channel_id, user_id, "
     "(SELECT username FROM users WHERE id = user_id), content, created_at::text, "
-    "edited_at::text, is_deleted, file_id, file_name, file_size, file_type";
+    "edited_at::text, is_deleted, file_id, file_name, file_size, file_type, "
+    "reply_to_message_id, "
+    "(SELECT username FROM users WHERE id = (SELECT user_id FROM messages m2 WHERE m2.id = messages.reply_to_message_id)), "
+    "(SELECT LEFT(m2.content, 200) FROM messages m2 WHERE m2.id = messages.reply_to_message_id), "
+    "(SELECT m2.is_deleted FROM messages m2 WHERE m2.id = messages.reply_to_message_id)";
 
 static const char* MSG_COLS_JOINED = "m.id, m.channel_id, m.user_id, u.username, m.content, "
     "m.created_at::text, m.edited_at::text, m.is_deleted, "
-    "m.file_id, m.file_name, m.file_size, m.file_type";
+    "m.file_id, m.file_name, m.file_size, m.file_type, "
+    "m.reply_to_message_id, "
+    "(SELECT u2.username FROM users u2 WHERE u2.id = (SELECT user_id FROM messages WHERE id = m.reply_to_message_id)), "
+    "(SELECT LEFT(content, 200) FROM messages WHERE id = m.reply_to_message_id), "
+    "(SELECT is_deleted FROM messages WHERE id = m.reply_to_message_id)";
 
 Message Database::create_message(const std::string& channel_id, const std::string& user_id,
-                                  const std::string& content) {
+                                  const std::string& content,
+                                  const std::string& reply_to_message_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    auto r = txn.exec_params(
-        std::string("INSERT INTO messages (channel_id, user_id, content) VALUES ($1, $2, $3) RETURNING ") + MSG_COLS,
-        channel_id, user_id, content);
+    pqxx::result r;
+    if (reply_to_message_id.empty()) {
+        r = txn.exec_params(
+            std::string("INSERT INTO messages (channel_id, user_id, content) VALUES ($1, $2, $3) RETURNING ") + MSG_COLS,
+            channel_id, user_id, content);
+    } else {
+        r = txn.exec_params(
+            std::string("INSERT INTO messages (channel_id, user_id, content, reply_to_message_id) VALUES ($1, $2, $3, $4) RETURNING ") + MSG_COLS,
+            channel_id, user_id, content, reply_to_message_id);
+    }
     txn.commit();
     return row_to_message(r[0]);
 }

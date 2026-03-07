@@ -103,7 +103,8 @@ public:
     std::vector<ChannelMember> get_channel_members_with_roles(const std::string& channel_id);
     // Messages
     Message create_message(const std::string& channel_id, const std::string& user_id,
-                           const std::string& content);
+                           const std::string& content,
+                           const std::string& reply_to_message_id = "");
     Message create_file_message(const std::string& channel_id, const std::string& user_id,
                                 const std::string& content, const std::string& file_id,
                                 const std::string& file_name, int64_t file_size,

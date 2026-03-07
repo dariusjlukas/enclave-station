@@ -72,6 +72,10 @@ export interface Message {
   file_size?: number;
   file_type?: string;
   reactions?: Reaction[];
+  reply_to_message_id?: string;
+  reply_to_username?: string;
+  reply_to_content?: string;
+  reply_to_is_deleted?: boolean;
 }
 
 export interface ReadReceiptInfo {

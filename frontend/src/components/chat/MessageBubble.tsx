@@ -27,6 +27,7 @@ import {
   faEye,
   faFaceSmile,
   faPlus,
+  faReply,
 } from '@fortawesome/free-solid-svg-icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -555,6 +556,7 @@ interface Props {
   onDelete?: (messageId: string) => void;
   onAddReaction?: (messageId: string, emoji: string) => void;
   onRemoveReaction?: (messageId: string, emoji: string) => void;
+  onReply?: (message: Message) => void;
 }
 
 export function MessageBubble({
@@ -563,12 +565,14 @@ export function MessageBubble({
   onDelete,
   onAddReaction,
   onRemoveReaction,
+  onReply,
 }: Props) {
   const currentUser = useChatStore((s) => s.user);
   const isOwn = currentUser?.id === message.user_id;
   const receipts = useChatStore((s) => s.readReceipts[message.channel_id]);
   const users = useChatStore((s) => s.users);
   const channels = useChatStore((s) => s.channels);
+  const setJumpToMessage = useChatStore((s) => s.setJumpToMessage);
   const author = !isOwn ? users.find((u) => u.id === message.user_id) : null;
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -600,7 +604,10 @@ export function MessageBubble({
 
   if (message.is_deleted) {
     return (
-      <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2`}>
+      <div
+        id={`msg-${message.id}`}
+        className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2`}
+      >
         <div className='max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2 bg-content1 border border-divider rounded-br-md'>
           {!isOwn && (
             <p className='text-xs font-semibold text-default-400 mb-1'>
@@ -646,6 +653,30 @@ export function MessageBubble({
               message.username
             )}
           </p>
+        )}
+
+        {message.reply_to_message_id && (
+          <div
+            className={`cursor-pointer mb-2 p-2 rounded-lg border-l-2 border-primary text-xs hover:opacity-80 transition-opacity ${
+              isOwn ? 'bg-black/10' : 'bg-background/50'
+            }`}
+            onClick={() =>
+              setJumpToMessage(message.channel_id, message.reply_to_message_id!)
+            }
+          >
+            <span className='font-semibold text-primary'>
+              {message.reply_to_username}
+            </span>
+            {message.reply_to_is_deleted ? (
+              <p className='text-default-400 italic mt-0.5'>
+                This message was deleted
+              </p>
+            ) : (
+              <p className='text-default-500 line-clamp-2 mt-0.5'>
+                {message.reply_to_content}
+              </p>
+            )}
+          </div>
         )}
 
         {editing ? (
@@ -778,49 +809,61 @@ export function MessageBubble({
           />
         )}
 
-        {isOwn && !editing && (
+        {!editing && (
           <div
-            className={`absolute -bottom-2 -right-3 ${menuOpen ? 'block' : 'hidden group-hover:block'}`}
+            className={`absolute -bottom-2 -right-3 ${menuOpen ? 'block' : 'hidden group-hover:block'} flex items-center gap-1`}
           >
-            <Dropdown
-              placement='bottom-end'
-              isOpen={menuOpen}
-              onOpenChange={setMenuOpen}
-            >
-              <DropdownTrigger>
-                <button className='w-6 h-6 rounded-full bg-content1 border border-divider flex items-center justify-center text-xs hover:bg-content2 text-foreground shadow-sm'>
-                  <FontAwesomeIcon icon={faEllipsis} />
-                </button>
-              </DropdownTrigger>
-              <DropdownMenu
-                aria-label='Message actions'
-                onAction={(key) => {
-                  if (key === 'edit') {
-                    setEditContent(message.content);
-                    setEditing(true);
-                  } else if (key === 'delete') {
-                    handleDelete();
-                  }
-                }}
-              >
-                {!message.file_id ? (
-                  <DropdownItem
-                    key='edit'
-                    startContent={<FontAwesomeIcon icon={faPencil} />}
-                  >
-                    Edit
-                  </DropdownItem>
-                ) : null}
-                <DropdownItem
-                  key='delete'
-                  className='text-danger'
-                  color='danger'
-                  startContent={<FontAwesomeIcon icon={faTrashCan} />}
+            {onReply && (
+              <Tooltip content='Reply' placement='top' delay={300}>
+                <button
+                  className='w-6 h-6 rounded-full bg-content1 border border-divider flex items-center justify-center text-xs hover:bg-content2 text-foreground shadow-sm'
+                  onClick={() => onReply(message)}
                 >
-                  Delete
-                </DropdownItem>
-              </DropdownMenu>
-            </Dropdown>
+                  <FontAwesomeIcon icon={faReply} />
+                </button>
+              </Tooltip>
+            )}
+            {isOwn && (
+              <Dropdown
+                placement='bottom-end'
+                isOpen={menuOpen}
+                onOpenChange={setMenuOpen}
+              >
+                <DropdownTrigger>
+                  <button className='w-6 h-6 rounded-full bg-content1 border border-divider flex items-center justify-center text-xs hover:bg-content2 text-foreground shadow-sm'>
+                    <FontAwesomeIcon icon={faEllipsis} />
+                  </button>
+                </DropdownTrigger>
+                <DropdownMenu
+                  aria-label='Message actions'
+                  onAction={(key) => {
+                    if (key === 'edit') {
+                      setEditContent(message.content);
+                      setEditing(true);
+                    } else if (key === 'delete') {
+                      handleDelete();
+                    }
+                  }}
+                >
+                  {!message.file_id ? (
+                    <DropdownItem
+                      key='edit'
+                      startContent={<FontAwesomeIcon icon={faPencil} />}
+                    >
+                      Edit
+                    </DropdownItem>
+                  ) : null}
+                  <DropdownItem
+                    key='delete'
+                    className='text-danger'
+                    color='danger'
+                    startContent={<FontAwesomeIcon icon={faTrashCan} />}
+                  >
+                    Delete
+                  </DropdownItem>
+                </DropdownMenu>
+              </Dropdown>
+            )}
           </div>
         )}
       </div>

@@ -288,9 +288,20 @@ export function useWebSocket() {
     };
   }, [token]);
 
-  const sendMessage = useCallback((channelId: string, content: string) => {
-    wsService.send({ type: 'send_message', channel_id: channelId, content });
-  }, []);
+  const sendMessage = useCallback(
+    (channelId: string, content: string, replyToMessageId?: string) => {
+      const payload: Record<string, string> = {
+        type: 'send_message',
+        channel_id: channelId,
+        content,
+      };
+      if (replyToMessageId) {
+        payload.reply_to_message_id = replyToMessageId;
+      }
+      wsService.send(payload);
+    },
+    [],
+  );
 
   const sendTyping = useCallback((channelId: string) => {
     wsService.send({ type: 'typing', channel_id: channelId });

@@ -12,6 +12,7 @@
 
 .highlight-flash {
   animation: highlightFlash 2s ease-out;
+  border-radius: 1rem;
 }
 
 @keyframes highlightFlash {

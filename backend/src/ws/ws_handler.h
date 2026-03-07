@@ -356,7 +356,12 @@ private:
             return;
         }
 
-        auto msg = db.create_message(channel_id, data->user_id, content);
+        std::string reply_to;
+        if (j.contains("reply_to_message_id") && j["reply_to_message_id"].is_string()) {
+            reply_to = j["reply_to_message_id"].get<std::string>();
+        }
+
+        auto msg = db.create_message(channel_id, data->user_id, content, reply_to);
 
         // Detect and store @mentions
         auto members = db.get_channel_member_usernames(channel_id);
@@ -531,6 +536,12 @@ private:
             j["file_name"] = msg.file_name;
             j["file_size"] = msg.file_size;
             j["file_type"] = msg.file_type;
+        }
+        if (!msg.reply_to_message_id.empty()) {
+            j["reply_to_message_id"] = msg.reply_to_message_id;
+            j["reply_to_username"] = msg.reply_to_username;
+            j["reply_to_content"] = msg.reply_to_content;
+            j["reply_to_is_deleted"] = msg.reply_to_is_deleted;
         }
         return j;
     }

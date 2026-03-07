@@ -157,6 +157,12 @@ struct ChannelHandler {
                     m["file_size"] = msg.file_size;
                     m["file_type"] = msg.file_type;
                 }
+                if (!msg.reply_to_message_id.empty()) {
+                    m["reply_to_message_id"] = msg.reply_to_message_id;
+                    m["reply_to_username"] = msg.reply_to_username;
+                    m["reply_to_content"] = msg.reply_to_content;
+                    m["reply_to_is_deleted"] = msg.reply_to_is_deleted;
+                }
                 auto it = reactions_map.find(msg.id);
                 if (it != reactions_map.end() && !it->second.empty()) {
                     json rarr = json::array();

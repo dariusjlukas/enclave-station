@@ -251,10 +251,8 @@ BACKEND_BUILD_BG=false
 if [ "$NEED_BACKEND" = true ] && [ "$SKIP_BUILD" = false ]; then
     if [ ! -d "$BACKEND_DIR/libs/uWebSockets" ] || [ ! -d "$BACKEND_DIR/libs/json" ]; then
         printf "\n${RED}Error: Backend library dependencies not found.${NC}\n"
-        printf "Run the following to set up:\n"
-        printf "  cd backend && mkdir -p libs\n"
-        printf "  git clone --depth 1 --recurse-submodules https://github.com/uNetworking/uWebSockets.git libs/uWebSockets\n"
-        printf "  git clone --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git libs/json\n"
+        printf "Run the following to initialize submodules:\n"
+        printf "  git submodule update --init --recursive\n"
         FAILED=1
         RESULTS["Backend Build"]="FAIL"
         BUILD_OK=false

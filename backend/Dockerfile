@@ -19,12 +19,8 @@ RUN git clone --depth 1 --branch 7.9.2 https://github.com/jtv/libpqxx.git /tmp/l
     make -j$(nproc) && make install && \
     rm -rf /tmp/libpqxx
 
-# Clone dependencies
-RUN mkdir -p libs && \
-    git clone --depth 1 --recurse-submodules https://github.com/uNetworking/uWebSockets.git libs/uWebSockets && \
-    git clone --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git libs/json
-
-# Copy source
+# Copy submodule dependencies and source
+COPY libs/ libs/
 COPY CMakeLists.txt .
 COPY src/ src/
 

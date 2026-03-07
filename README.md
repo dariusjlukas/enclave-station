@@ -7,13 +7,26 @@ A self-hosted chat application with PKI-based authentication, multi-device suppo
 - **Database**: PostgreSQL 16
 - **Proxy**: Nginx (serves frontend + proxies API/WebSocket to backend)
 
-## Prerequisites
+## Quick Start (Docker)
+
+### Prerequisites
 
 - Docker and Docker Compose
 
-## Setup
+### Steps
 
-1. Clone the repository and `cd` into it.
+1. Clone the repository with submodules:
+
+   ```
+   git clone --recurse-submodules https://github.com/your-org/isle-chat.git
+   cd isle-chat
+   ```
+
+   If you already cloned without `--recurse-submodules`, initialize them now:
+
+   ```
+   git submodule update --init --recursive
+   ```
 
 2. Copy the example environment file and edit it:
 
@@ -23,21 +36,92 @@ A self-hosted chat application with PKI-based authentication, multi-device suppo
 
    At minimum, change `POSTGRES_PASSWORD` to something secure.
 
-3. If you want other devices on your LAN to link via QR code, set `PUBLIC_URL` to your machine's LAN address:
-
-   ```
-   PUBLIC_URL=http://192.168.1.100
-   ```
-
-   If left blank, the QR code will use the browser's current origin (which is `localhost` when the admin is on the server machine).
-
-4. Start the application:
+3. Build and start:
 
    ```
    docker compose up -d --build
    ```
 
-5. Open `http://localhost` in your browser. The first user to register becomes the admin.
+4. Open `http://localhost` in your browser. The first user to register becomes the admin.
+
+## Development Setup
+
+### Prerequisites
+
+- **Node.js** 22+ and npm
+- **CMake** 3.16+
+- **C++ compiler** with C++17 support (GCC 9+ or Clang 10+)
+- **PostgreSQL client libraries** (`libpqxx-devel` / `libpqxx-dev`)
+- **OpenSSL development headers** (`openssl-devel` / `libssl-dev`)
+- **zlib** (`zlib-devel` / `zlib1g-dev`)
+- **Docker** (for running the test PostgreSQL container and building images)
+- **Python 3** with `venv` (for API tests)
+
+### Getting Started
+
+1. Clone with submodules:
+
+   ```
+   git clone --recurse-submodules https://github.com/your-org/isle-chat.git
+   cd isle-chat
+   ```
+
+2. Install frontend dependencies:
+
+   ```
+   cd frontend && npm install && cd ..
+   ```
+
+3. Install E2E test dependencies and Playwright browsers:
+
+   ```
+   cd tests/e2e && npm install && npx playwright install chromium && cd ../..
+   ```
+
+4. Build the backend:
+
+   ```
+   cd backend && cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON && cmake --build build -j$(nproc) && cd ..
+   ```
+
+5. Run the full test suite:
+
+   ```
+   ./run-tests.sh
+   ```
+
+   The test runner handles starting/stopping a PostgreSQL container, backend servers, and Vite dev servers automatically.
+
+### Running Individual Components
+
+**Frontend dev server:**
+
+```
+cd frontend && npm run dev
+```
+
+**Backend server** (requires a running PostgreSQL instance):
+
+```
+POSTGRES_HOST=localhost POSTGRES_PORT=5432 POSTGRES_USER=chatapp \
+POSTGRES_PASSWORD=changeme POSTGRES_DB=chatapp \
+./backend/build/chat-server
+```
+
+### Running Specific Tests
+
+The test runner supports targeted test execution:
+
+```
+./run-tests.sh --frontend         # Lint, typecheck, format, build
+./run-tests.sh --backend          # Build + unit + integration tests
+./run-tests.sh --backend-unit     # Backend unit tests only
+./run-tests.sh --api-tests        # Black-box API tests
+./run-tests.sh --e2e              # Playwright E2E tests
+./run-tests.sh --docker           # Docker image builds
+./run-tests.sh --e2e --parallel 4 # E2E tests with 4 parallel workers
+./run-tests.sh --help             # Full list of options
+```
 
 ## Configuration
 
@@ -128,4 +212,4 @@ Browser ──► Nginx (:80)
 Backend (:9001) ──► PostgreSQL (:5432)
 ```
 
-Authentication uses Ed25519 keypairs stored in the browser's IndexedDB. No passwords are involved — each device holds a private key and the server stores the corresponding public key.
+Authentication uses ECDSA P-256 keypairs stored in the browser's IndexedDB. No passwords are involved -- each device holds a private key and the server stores the corresponding public key.

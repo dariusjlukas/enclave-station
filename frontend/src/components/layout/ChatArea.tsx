@@ -4,6 +4,7 @@ import { MessageList } from '../chat/MessageList';
 import { MessageInput } from '../chat/MessageInput';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { uploadFile } from '../../services/api';
+import type { Message } from '../../types';
 
 export function ChatArea() {
   const activeChannelId = useChatStore((s) => s.activeChannelId);
@@ -11,6 +12,7 @@ export function ChatArea() {
   const uploadProgress = useChatStore((s) => s.uploadProgress);
   const setUploadProgress = useChatStore((s) => s.setUploadProgress);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const errorTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const {
     sendMessage,
@@ -69,14 +71,20 @@ export function ChatArea() {
         onMarkRead={markRead}
         onAddReaction={addReaction}
         onRemoveReaction={removeReaction}
+        onReply={canWrite ? setReplyingTo : undefined}
       />
       {canWrite ? (
         <MessageInput
-          onSend={(content) => sendMessage(activeChannelId, content)}
+          onSend={(content) => {
+            sendMessage(activeChannelId, content, replyingTo?.id);
+            setReplyingTo(null);
+          }}
           onTyping={() => sendTyping(activeChannelId)}
           onUpload={handleUpload}
           uploadProgress={uploadProgress}
           uploadError={uploadError}
+          replyingTo={replyingTo}
+          onCancelReply={() => setReplyingTo(null)}
         />
       ) : (
         <div className='border-t border-default-100 p-4 text-center text-default-400 text-sm'>

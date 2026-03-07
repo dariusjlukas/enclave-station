@@ -265,6 +265,12 @@ struct SearchHandler {
                         j["file_size"] = msg.file_size;
                         j["file_type"] = msg.file_type;
                     }
+                    if (!msg.reply_to_message_id.empty()) {
+                        j["reply_to_message_id"] = msg.reply_to_message_id;
+                        j["reply_to_username"] = msg.reply_to_username;
+                        j["reply_to_content"] = msg.reply_to_content;
+                        j["reply_to_is_deleted"] = msg.reply_to_is_deleted;
+                    }
                     auto it = reactions_map.find(msg.id);
                     if (it != reactions_map.end() && !it->second.empty()) {
                         json rarr = json::array();

@@ -18,6 +18,7 @@ interface Props {
   ) => void;
   onAddReaction?: (messageId: string, emoji: string) => void;
   onRemoveReaction?: (messageId: string, emoji: string) => void;
+  onReply?: (message: import('../../types').Message) => void;
 }
 
 const EMPTY_MESSAGES: Array<import('../../types').Message> = [];
@@ -29,6 +30,7 @@ export function MessageList({
   onMarkRead,
   onAddReaction,
   onRemoveReaction,
+  onReply,
 }: Props) {
   const storeMessages = useChatStore((s) => s.messages[channelId]);
   const messages = storeMessages ?? EMPTY_MESSAGES;
@@ -38,12 +40,16 @@ export function MessageList({
   const jumpToChannelId = useChatStore((s) => s.jumpToChannelId);
   const clearJumpToMessage = useChatStore((s) => s.clearJumpToMessage);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const markReadTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [isViewingAround, setIsViewingAround] = useState(false);
+  const [isScrolledUp, setIsScrolledUp] = useState(false);
 
   // Load messages normally (skip if jump is pending for this channel)
   useEffect(() => {
-    if (jumpToChannelId === channelId && jumpToMessageId) return;
+    const { jumpToChannelId: jCh, jumpToMessageId: jMsg } =
+      useChatStore.getState();
+    if (jCh === channelId && jMsg) return;
     api.getMessages(channelId).then((msgs) => {
       setMessages(channelId, msgs);
       setIsViewingAround(false);
@@ -69,13 +75,7 @@ export function MessageList({
         setReadReceipts(channelId, map);
       })
       .catch(() => {});
-  }, [
-    channelId,
-    setMessages,
-    setReadReceipts,
-    jumpToChannelId,
-    jumpToMessageId,
-  ]);
+  }, [channelId, setMessages, setReadReceipts]);
 
   // Jump-to-message
   useEffect(() => {
@@ -119,22 +119,49 @@ export function MessageList({
 
   useEffect(() => {
     if (!isViewingAround) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      const el = containerRef.current;
+      if (el) {
+        const threshold = 100;
+        const atBottom =
+          el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+        if (atBottom) {
+          bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        } else {
+          setIsScrolledUp(true);
+        }
+      }
     }
   }, [messages.length, isViewingAround]);
 
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const threshold = 100;
+    const atBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setIsScrolledUp(!atBottom);
+  }, []);
+
   const handleJumpToLatest = useCallback(() => {
-    api.getMessages(channelId).then((msgs) => {
-      setMessages(channelId, msgs);
-      setIsViewingAround(false);
-      requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (isViewingAround) {
+      api.getMessages(channelId).then((msgs) => {
+        setMessages(channelId, msgs);
+        setIsViewingAround(false);
+        requestAnimationFrame(() => {
+          bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+        });
       });
-    });
-  }, [channelId, setMessages]);
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [channelId, setMessages, isViewingAround]);
 
   return (
-    <div className='flex-1 overflow-y-auto p-4 relative'>
+    <div
+      ref={containerRef}
+      className='flex-1 overflow-y-auto p-4 relative'
+      onScroll={handleScroll}
+    >
       {messages.length === 0 && (
         <div className='flex items-center justify-center h-full text-default-400'>
           No messages yet. Start the conversation!
@@ -148,13 +175,17 @@ export function MessageList({
           onDelete={onDeleteMessage}
           onAddReaction={onAddReaction}
           onRemoveReaction={onRemoveReaction}
+          onReply={onReply}
         />
       ))}
       <TypingIndicator channelId={channelId} />
       <div ref={bottomRef} />
 
-      {isViewingAround && (
-        <div className='sticky bottom-4 flex justify-center'>
+      {isScrolledUp && (
+        <div
+          className='sticky bottom-4 flex justify-center'
+          onMouseDown={(e) => e.stopPropagation()}
+        >
           <Button
             size='sm'
             color='primary'

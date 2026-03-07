@@ -15,4 +15,8 @@ struct Message {
     std::string file_name;
     int64_t file_size = 0;
     std::string file_type;
+    std::string reply_to_message_id;
+    std::string reply_to_username;
+    std::string reply_to_content;
+    bool reply_to_is_deleted = false;
 };

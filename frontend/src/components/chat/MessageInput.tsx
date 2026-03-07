@@ -5,12 +5,14 @@ import {
   faPaperclip,
   faXmark,
   faFaceSmile,
+  faReply,
 } from '@fortawesome/free-solid-svg-icons';
 import { formatFileSize } from '../../utils/format';
 import { useChatStore } from '../../stores/chatStore';
 import { MentionAutocomplete } from './MentionAutocomplete';
 import { getFilteredOptions, type MentionOption } from './mentionUtils';
 import { EmojiPickerPopup } from './EmojiPickerPopup';
+import type { Message } from '../../types';
 
 interface Props {
   onSend: (content: string) => void;
@@ -18,6 +20,8 @@ interface Props {
   onUpload?: (file: File, message: string) => void;
   uploadProgress?: number | null;
   uploadError?: string | null;
+  replyingTo?: Message | null;
+  onCancelReply?: () => void;
 }
 
 interface MentionContext {
@@ -64,6 +68,8 @@ export function MessageInput({
   onUpload,
   uploadProgress,
   uploadError,
+  replyingTo,
+  onCancelReply,
 }: Props) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [mentionState, setMentionState] = useState<MentionContext | null>(null);
@@ -294,6 +300,25 @@ export function MessageInput({
 
   return (
     <div className='border-t border-default-100 p-2 sm:p-4'>
+      {replyingTo && (
+        <div className='flex items-center gap-2 mb-2 px-2 py-1.5 bg-content2 rounded-lg text-sm'>
+          <FontAwesomeIcon icon={faReply} className='text-primary text-xs' />
+          <div className='flex-1 min-w-0'>
+            <span className='font-semibold text-xs text-primary'>
+              Replying to {replyingTo.username}
+            </span>
+            <p className='text-xs text-default-400 truncate'>
+              {replyingTo.content}
+            </p>
+          </div>
+          <button
+            onClick={onCancelReply}
+            className='text-default-400 hover:text-danger'
+          >
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        </div>
+      )}
       {selectedFile && (
         <div className='flex items-center gap-2 mb-2 px-2 py-1.5 bg-content2 rounded-lg text-sm'>
           <FontAwesomeIcon
