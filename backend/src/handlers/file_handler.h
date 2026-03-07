@@ -8,6 +8,7 @@
 #include <iomanip>
 #include "db/database.h"
 #include "config.h"
+#include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
 
@@ -23,20 +24,12 @@ struct FileHandler {
         // Upload file to a channel
         app.post("/api/channels/:id/upload", [this](auto* res, auto* req) {
             std::string channel_id(req->getParameter("id"));
-            std::string token(req->getHeader("authorization"));
-            if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-
             std::string filename(req->getQuery("filename"));
             std::string content_type(req->getQuery("content_type"));
             std::string message_text(req->getQuery("message"));
 
-            auto user_id_opt = db.validate_session(token);
-            if (!user_id_opt) {
-                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
-                    ->end(R"({"error":"Unauthorized"})");
-                return;
-            }
-            std::string user_id = *user_id_opt;
+            std::string user_id = validate_session_or_401(res, req, db);
+            if (user_id.empty()) return;
 
             // Check if server is archived
             if (db.is_server_archived()) {
@@ -153,8 +146,7 @@ struct FileHandler {
             std::string file_id(req->getParameter("id"));
 
             // Auth via header or query param (needed for <img> tags)
-            std::string token(req->getHeader("authorization"));
-            if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
+            std::string token = extract_bearer_token(req);
             if (token.empty()) {
                 token = std::string(req->getQuery("token"));
             }

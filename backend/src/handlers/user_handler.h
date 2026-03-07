@@ -5,6 +5,7 @@
 #include "ws/ws_handler.h"
 #include "auth/webauthn.h"
 #include "config.h"
+#include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
 
@@ -168,7 +169,7 @@ struct UserHandler {
                         {"userVerification", "preferred"}
                     }},
                     {"attestation", "none"},
-                    {"timeout", 60000}
+                    {"timeout", defaults::WEBAUTHN_TIMEOUT_MS}
                 };
 
                 res->writeHeader("Content-Type", "application/json")->end(options.dump());
@@ -404,14 +405,6 @@ struct UserHandler {
 
 private:
     std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
-        std::string token(req->getHeader("authorization"));
-        if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-        auto user_id = db.validate_session(token);
-        if (!user_id) {
-            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Unauthorized"})");
-            return "";
-        }
-        return *user_id;
+        return validate_session_or_401(res, req, db);
     }
 };

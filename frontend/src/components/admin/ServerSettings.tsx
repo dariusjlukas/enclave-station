@@ -135,8 +135,8 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
         const data = await api.getAdminSettings();
         applySettings(data);
       }
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Settings operation failed:', e);
     }
     setSaving(false);
   };
@@ -380,8 +380,8 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
                   try {
                     await api.unarchiveServer();
                     setServerArchived(false);
-                  } catch {
-                    /* ignored */
+                  } catch (e) {
+                    console.error('Unarchive failed:', e);
                   }
                 }}
               >
@@ -402,8 +402,8 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
                   try {
                     await api.archiveServer();
                     setServerArchived(true);
-                  } catch {
-                    /* ignored */
+                  } catch (e) {
+                    console.error('Archive failed:', e);
                   }
                 }}
               >

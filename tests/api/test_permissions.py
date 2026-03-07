@@ -317,6 +317,59 @@ class TestSpaceRoleHierarchy:
         assert r.status_code == 200
 
 
+class TestSelfDemotion:
+    """Owners and admins at all levels should be able to demote themselves."""
+
+    def test_space_owner_can_demote_self(self, client, admin_user, regular_user,
+                                          second_regular_user):
+        """Space owner can demote themselves when another owner exists."""
+        r = client.post("/api/spaces", json={"name": "Team"},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        client.post(f"/api/spaces/{sp_id}/join",
+                    headers=regular_user["headers"])
+        # Promote regular to owner so there are two owners
+        client.put(f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
+                   json={"role": "owner"}, headers=admin_user["headers"])
+        # Original owner demotes themselves to admin
+        r = client.put(
+            f"/api/spaces/{sp_id}/members/{admin_user['user']['id']}",
+            json={"role": "admin"}, headers=admin_user["headers"])
+        assert r.status_code == 200
+
+    def test_space_admin_can_demote_self(self, client, admin_user, regular_user):
+        """Space admin can demote themselves to write."""
+        r = client.post("/api/spaces", json={"name": "Team"},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        client.post(f"/api/spaces/{sp_id}/join",
+                    headers=regular_user["headers"])
+        # Promote regular to admin
+        client.put(f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
+                   json={"role": "admin"}, headers=admin_user["headers"])
+        # Admin demotes themselves to write
+        r = client.put(
+            f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
+            json={"role": "write"}, headers=regular_user["headers"])
+        assert r.status_code == 200
+
+    def test_channel_admin_can_demote_self(self, client, admin_user, regular_user):
+        """Channel admin can demote themselves to write."""
+        r = client.post("/api/channels", json={"name": "ch"},
+                        headers=admin_user["headers"])
+        ch_id = r.json()["id"]
+        # Add regular_user as admin
+        client.post(f"/api/channels/{ch_id}/members", json={
+            "user_id": regular_user["user"]["id"],
+            "role": "admin",
+        }, headers=admin_user["headers"])
+        # Admin demotes themselves to write
+        r = client.put(
+            f"/api/channels/{ch_id}/members/{regular_user['user']['id']}",
+            json={"role": "write"}, headers=regular_user["headers"])
+        assert r.status_code == 200
+
+
 class TestInputValidation:
     """Test that the API properly validates and sanitizes input."""
 

@@ -59,8 +59,8 @@ export function Header({
   const handleLogout = async () => {
     try {
       await api.logout();
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Logout failed:', e);
     }
     clearAuth();
   };

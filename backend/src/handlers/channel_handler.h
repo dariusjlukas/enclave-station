@@ -4,6 +4,7 @@
 #include <unordered_set>
 #include "db/database.h"
 #include "ws/ws_handler.h"
+#include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
 
@@ -126,7 +127,7 @@ struct ChannelHandler {
             std::string channel_id(req->getParameter("id"));
             std::string before(req->getQuery("before"));
             std::string limit_str(req->getQuery("limit"));
-            int limit = limit_str.empty() ? 50 : std::stoi(limit_str);
+            int limit = limit_str.empty() ? defaults::MESSAGE_DEFAULT_LIMIT : std::stoi(limit_str);
 
             // Server admins can view any channel's messages
             std::string role = db.get_effective_role(channel_id, user_id);
@@ -359,17 +360,10 @@ struct ChannelHandler {
                         return;
                     }
 
-                    // Rank hierarchy: admin=2, write=1, read=0
-                    auto ch_rank = [](const std::string& r) -> int {
-                        if (r == "admin") return 2;
-                        if (r == "write") return 1;
-                        return 0;
-                    };
-
                     std::string current_role = db.get_member_role(channel_id, target_user_id);
-                    int actor_rank = ch_rank(role); // effective role (already "admin" if elevated)
-                    int target_rank = ch_rank(current_role);
-                    int new_rank = ch_rank(new_role);
+                    int actor_rank = channel_role_rank(role); // effective role (already "admin" if elevated)
+                    int target_rank = channel_role_rank(current_role);
+                    int new_rank = channel_role_rank(new_role);
 
                     // Cannot promote above own rank
                     if (new_rank > actor_rank) {
@@ -378,8 +372,8 @@ struct ChannelHandler {
                         return;
                     }
 
-                    // Cannot demote someone of equal or higher rank
-                    if (new_rank < target_rank && target_rank >= actor_rank) {
+                    // Cannot demote someone of equal or higher rank (unless self-demotion)
+                    if (new_rank < target_rank && target_rank >= actor_rank && user_id != target_user_id) {
                         res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                             ->end(R"({"error":"Cannot demote a user of equal or higher rank"})");
                         return;
@@ -600,15 +594,7 @@ struct ChannelHandler {
 
 private:
     std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
-        std::string token(req->getHeader("authorization"));
-        if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-        auto user_id = db.validate_session(token);
-        if (!user_id) {
-            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Unauthorized"})");
-            return "";
-        }
-        return *user_id;
+        return validate_session_or_401(res, req, db);
     }
 
     void handle_create_channel(uWS::HttpResponse<SSL>* res, const std::string& body,

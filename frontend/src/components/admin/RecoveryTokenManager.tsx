@@ -23,8 +23,8 @@ export function RecoveryTokenManager() {
     try {
       const data = await api.listRecoveryTokens();
       setTokens(data);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Recovery token operation failed:', e);
     }
   };
 
@@ -42,8 +42,8 @@ export function RecoveryTokenManager() {
       await api.createRecoveryToken(selectedUserId[0]);
       await loadTokens();
       setSelectedUserId([]);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Recovery token operation failed:', e);
     }
     setLoading(false);
   };

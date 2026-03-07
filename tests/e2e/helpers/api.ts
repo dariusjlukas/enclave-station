@@ -156,6 +156,31 @@ export async function completeSetup(token: string): Promise<void> {
 }
 
 /**
+ * Change a user's server role via the admin API.
+ */
+export async function apiChangeUserRole(
+  userId: string,
+  role: string,
+  token: string,
+): Promise<Response> {
+  return apiPut(`/api/admin/users/${userId}/role`, { role }, token);
+}
+
+/**
+ * Get admin users list via the API.
+ */
+export async function apiGetAdminUsers(
+  token: string,
+): Promise<Array<{ id: string; username: string; role: string }>> {
+  const res = await apiGet("/api/admin/users", token);
+  return (await res.json()) as Array<{
+    id: string;
+    username: string;
+    role: string;
+  }>;
+}
+
+/**
  * Create a standalone channel via the API.
  */
 export async function apiCreateChannel(

@@ -20,8 +20,8 @@ export function JoinRequests() {
       const data = await api.listJoinRequests();
       setRequests(data);
       setPendingRequestCount(data.filter((r) => r.status === 'pending').length);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Join request operation failed:', e);
     }
   };
 
@@ -36,8 +36,8 @@ export function JoinRequests() {
     try {
       await api.approveRequest(id);
       await loadRequests();
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Join request operation failed:', e);
     }
   };
 
@@ -45,8 +45,8 @@ export function JoinRequests() {
     try {
       await api.denyRequest(id);
       await loadRequests();
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Join request operation failed:', e);
     }
   };
 

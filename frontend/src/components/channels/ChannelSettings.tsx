@@ -63,8 +63,8 @@ export function ChannelSettings({ channel, onClose }: Props) {
         default_role: defaultRole,
       });
       updateChannel(updated);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Channel operation failed:', e);
     }
     setSaving(false);
   };
@@ -74,8 +74,8 @@ export function ChannelSettings({ channel, onClose }: Props) {
       await api.changeMemberRole(channel.id, userId, newRole);
       const channels = await api.listChannels();
       setChannels(channels);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Channel operation failed:', e);
     }
   };
 
@@ -86,8 +86,8 @@ export function ChannelSettings({ channel, onClose }: Props) {
       await api.kickFromChannel(channel.id, member.id);
       const channels = await api.listChannels();
       setChannels(channels);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Channel operation failed:', e);
     }
   };
 
@@ -99,8 +99,8 @@ export function ChannelSettings({ channel, onClose }: Props) {
       const channels = await api.listChannels();
       setChannels(channels);
       setInviteUserId([]);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Channel operation failed:', e);
     }
     setInviting(false);
   };
@@ -302,8 +302,8 @@ export function ChannelSettings({ channel, onClose }: Props) {
                         id: channel.id,
                         is_archived: true,
                       });
-                    } catch {
-                      /* ignored */
+                    } catch (e) {
+                      console.error('Channel archive failed:', e);
                     }
                   }}
                 >

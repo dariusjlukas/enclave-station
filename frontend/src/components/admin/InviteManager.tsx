@@ -18,8 +18,8 @@ export function InviteManager() {
     try {
       const data = await api.listInvites();
       setInvites(data);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Invite operation failed:', e);
     }
   };
 
@@ -35,8 +35,8 @@ export function InviteManager() {
     try {
       await api.createInvite(24);
       await loadInvites();
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Invite operation failed:', e);
     }
     setLoading(false);
   };

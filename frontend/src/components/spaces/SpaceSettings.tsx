@@ -76,8 +76,8 @@ export function SpaceSettings({ space, onClose }: Props) {
         default_role: defaultRole,
       });
       updateSpace({ id: space.id, ...updated });
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Space operation failed:', e);
     }
     setSaving(false);
   };
@@ -87,8 +87,8 @@ export function SpaceSettings({ space, onClose }: Props) {
       await api.changeSpaceMemberRole(space.id, userId, newRole);
       const spaces = await api.listSpaces();
       setSpaces(spaces);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Space operation failed:', e);
     }
   };
 
@@ -98,8 +98,8 @@ export function SpaceSettings({ space, onClose }: Props) {
       await api.kickFromSpace(space.id, member.id);
       const spaces = await api.listSpaces();
       setSpaces(spaces);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Space operation failed:', e);
     }
   };
 
@@ -225,10 +225,9 @@ export function SpaceSettings({ space, onClose }: Props) {
                     </UserPopoverCard>
                     {(() => {
                       const targetRank = SPACE_RANK[m.role] ?? 0;
+                      const isSelf = m.id === user?.id;
                       const canEditMember =
-                        canManage &&
-                        targetRank < actorRank &&
-                        m.id !== user?.id;
+                        canManage && (targetRank < actorRank || isSelf);
                       const roleItems = [
                         { key: 'owner', label: 'Owner', rank: 3 },
                         { key: 'admin', label: 'Admin', rank: 2 },
@@ -254,14 +253,16 @@ export function SpaceSettings({ space, onClose }: Props) {
                               </SelectItem>
                             )}
                           </Select>
-                          <Button
-                            size="sm"
-                            variant="flat"
-                            color="danger"
-                            onPress={() => handleKick(m)}
-                          >
-                            Kick
-                          </Button>
+                          {!isSelf && (
+                            <Button
+                              size="sm"
+                              variant="flat"
+                              color="danger"
+                              onPress={() => handleKick(m)}
+                            >
+                              Kick
+                            </Button>
+                          )}
                         </div>
                       ) : (
                         <span className="text-xs text-default-400 flex-shrink-0 capitalize">
@@ -353,8 +354,8 @@ export function SpaceSettings({ space, onClose }: Props) {
                         id: space.id,
                         is_archived: true,
                       });
-                    } catch {
-                      /* ignored */
+                    } catch (e) {
+                      console.error('Space archive failed:', e);
                     }
                   }}
                 >

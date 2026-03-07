@@ -57,8 +57,8 @@ export function SpaceBrowser({ onClose, onCreateSpace }: Props) {
       useChatStore.getState().setSpaces(allSpaces);
       setActiveView({ type: 'space', spaceId });
       onClose();
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Space join failed:', e);
     }
   };
 

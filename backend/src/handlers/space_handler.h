@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include "db/database.h"
 #include "ws/ws_handler.h"
+#include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
 
@@ -384,23 +385,15 @@ struct SpaceHandler {
                         return;
                     }
 
-                    // Rank hierarchy: owner=3, admin=2, write=1, read=0
-                    auto space_rank = [](const std::string& r) -> int {
-                        if (r == "owner") return 3;
-                        if (r == "admin") return 2;
-                        if (r == "write") return 1;
-                        return 0;
-                    };
-
                     // Actor's effective rank is the higher of space role and server role
-                    int actor_space_rank = space_rank(role);
-                    if (user && user->role == "owner") actor_space_rank = space_rank("owner");
-                    else if (user && user->role == "admin" && actor_space_rank < space_rank("admin"))
-                        actor_space_rank = space_rank("admin");
+                    int actor_space_rank = space_role_rank(role);
+                    if (user && user->role == "owner") actor_space_rank = space_role_rank("owner");
+                    else if (user && user->role == "admin" && actor_space_rank < space_role_rank("admin"))
+                        actor_space_rank = space_role_rank("admin");
 
                     std::string current_role = db.get_space_member_role(space_id, target_user_id);
-                    int target_rank = space_rank(current_role);
-                    int new_rank = space_rank(new_role);
+                    int target_rank = space_role_rank(current_role);
+                    int new_rank = space_role_rank(new_role);
 
                     // Cannot promote anyone to a rank above your own
                     if (new_rank > actor_space_rank) {
@@ -410,8 +403,8 @@ struct SpaceHandler {
                         return;
                     }
 
-                    // Cannot demote someone of equal or higher rank
-                    if (new_rank < target_rank && target_rank >= actor_space_rank) {
+                    // Cannot demote someone of equal or higher rank (unless self-demotion)
+                    if (new_rank < target_rank && target_rank >= actor_space_rank && user_id != target_user_id) {
                         res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                             ->writeHeader("Access-Control-Allow-Origin", "*")
                             ->end(R"({"error":"Cannot demote a user of equal or higher rank"})");
@@ -1019,15 +1012,6 @@ struct SpaceHandler {
 
 private:
     std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
-        std::string token(req->getHeader("authorization"));
-        if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-        auto user_id = db.validate_session(token);
-        if (!user_id) {
-            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
-                ->writeHeader("Access-Control-Allow-Origin", "*")
-                ->end(R"({"error":"Unauthorized"})");
-            return "";
-        }
-        return *user_id;
+        return validate_session_or_401(res, req, db);
     }
 };

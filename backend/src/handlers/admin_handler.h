@@ -5,6 +5,7 @@
 #include "auth/webauthn.h"
 #include "config.h"
 #include "ws/ws_handler.h"
+#include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
 
@@ -24,10 +25,10 @@ struct AdminHandler {
                 if (!last) return;
                 if (user_id.empty()) return;
 
-                int expiry = 24;
+                int expiry = defaults::INVITE_EXPIRY_HOURS;
                 try {
                     auto j = json::parse(body);
-                    expiry = j.value("expiry_hours", 24);
+                    expiry = j.value("expiry_hours", defaults::INVITE_EXPIRY_HOURS);
                 } catch (...) {}
 
                 auto token = db.create_invite(user_id, expiry);
@@ -139,7 +140,7 @@ struct AdminHandler {
                 try {
                     auto j = json::parse(body);
                     std::string user_id = j.at("user_id");
-                    int expiry = j.value("expiry_hours", 24);
+                    int expiry = j.value("expiry_hours", defaults::RECOVERY_TOKEN_EXPIRY_HOURS);
 
                     auto user = db.find_user_by_id(user_id);
                     if (!user) {
@@ -240,15 +241,9 @@ struct AdminHandler {
                         return;
                     }
 
-                    // Rank hierarchy: owner=2, admin=1, user=0
-                    auto server_rank = [](const std::string& r) -> int {
-                        if (r == "owner") return 2;
-                        if (r == "admin") return 1;
-                        return 0;
-                    };
-                    int actor_rank = server_rank(actor->role);
-                    int target_rank = server_rank(target->role);
-                    int new_rank = server_rank(new_role);
+                    int actor_rank = server_role_rank(actor->role);
+                    int target_rank = server_role_rank(target->role);
+                    int new_rank = server_role_rank(new_role);
 
                     // Cannot promote anyone to a rank above your own
                     if (new_rank > actor_rank) {
@@ -292,39 +287,11 @@ struct AdminHandler {
 
 private:
     std::string get_admin_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
-        std::string token(req->getHeader("authorization"));
-        if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-        auto user_id = db.validate_session(token);
-        if (!user_id) {
-            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Unauthorized"})");
-            return "";
-        }
-        auto user = db.find_user_by_id(*user_id);
-        if (!user || (user->role != "admin" && user->role != "owner")) {
-            res->writeStatus("403")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Admin access required"})");
-            return "";
-        }
-        return *user_id;
+        return validate_admin_or_403(res, req, db);
     }
 
     std::string get_owner_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
-        std::string token(req->getHeader("authorization"));
-        if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-        auto user_id = db.validate_session(token);
-        if (!user_id) {
-            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Unauthorized"})");
-            return "";
-        }
-        auto user = db.find_user_by_id(*user_id);
-        if (!user || user->role != "owner") {
-            res->writeStatus("403")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Owner access required"})");
-            return "";
-        }
-        return *user_id;
+        return validate_owner_or_403(res, req, db);
     }
 
     std::string get_setting_or(const std::string& key, const std::string& fallback) {
@@ -337,12 +304,7 @@ private:
         auto max_storage = db.get_setting("max_storage_size");
         int64_t storage_used = db.get_total_file_size();
 
-        // Parse auth_methods
-        json auth_methods = json::array({"passkey", "pki"});
-        auto am = db.get_setting("auth_methods");
-        if (am) {
-            try { auth_methods = json::parse(*am); } catch (...) {}
-        }
+        json auth_methods = get_auth_methods(db);
 
         return {
             {"max_file_size", max_file ? std::stoll(*max_file) : config.max_file_size},
@@ -413,12 +375,8 @@ private:
         }
     }
 
-    int get_session_expiry() {
-        auto setting = db.get_setting("session_expiry_hours");
-        if (setting) {
-            try { return std::stoi(*setting); } catch (...) {}
-        }
-        return config.session_expiry_hours;
+    int get_session_expiry_hours() {
+        return ::get_session_expiry(db, config);
     }
 
     void handle_approve(uWS::HttpResponse<SSL>* res, const std::string& request_id,
@@ -460,7 +418,7 @@ private:
             }
 
             // Create session token for polling pickup
-            std::string session_token = db.create_session(user.id, get_session_expiry());
+            std::string session_token = db.create_session(user.id, get_session_expiry_hours());
             db.set_join_request_session(request_id, session_token);
             db.update_join_request(request_id, "approved", admin_id);
 

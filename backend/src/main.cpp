@@ -67,13 +67,7 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
         json resp;
         resp["public_url"] = config.public_url;
 
-        // Auth methods
-        json auth_methods = json::array({"passkey", "pki"});
-        auto am = db.get_setting("auth_methods");
-        if (am) {
-            try { auth_methods = json::parse(*am); } catch (...) {}
-        }
-        resp["auth_methods"] = auth_methods;
+        resp["auth_methods"] = get_auth_methods(db);
 
         auto server_name = db.get_setting("server_name");
         resp["server_name"] = server_name.value_or("Isle Chat");

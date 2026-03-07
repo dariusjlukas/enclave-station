@@ -45,18 +45,21 @@ export function UserManager() {
   };
   const actorRank = SERVER_RANK[currentUser?.role ?? 'user'] ?? 0;
 
-  // Only show roles up to actor's rank (can't promote above own rank)
-  const roleItems = [
+  const ALL_ROLES = [
     { key: 'owner', label: 'Owner', rank: 2 },
     { key: 'admin', label: 'Admin', rank: 1 },
     { key: 'user', label: 'User', rank: 0 },
-  ].filter((r) => r.rank <= actorRank);
+  ];
 
-  // Can edit if: target rank is strictly below actor's rank, and not self
+  // Can edit if: target rank is strictly below actor's rank, OR self (for self-demotion)
   const canEditUser = (u: AdminUser) => {
     const targetRank = SERVER_RANK[u.role] ?? 0;
-    return targetRank < actorRank && u.id !== currentUser?.id;
+    const isSelf = u.id === currentUser?.id;
+    return targetRank < actorRank || isSelf;
   };
+
+  // Show roles up to actor's rank (backend enforces promotion/demotion rules)
+  const roleItems = ALL_ROLES.filter((r) => r.rank <= actorRank);
 
   return (
     <div>

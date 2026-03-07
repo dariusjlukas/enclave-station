@@ -15,8 +15,8 @@ export function SpaceInviteNotification() {
     try {
       await api.acceptSpaceInvite(inviteId);
       removeSpaceInvite(inviteId);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Space invite operation failed:', e);
     }
     setLoading((prev) => ({ ...prev, [inviteId]: false }));
   };
@@ -26,8 +26,8 @@ export function SpaceInviteNotification() {
     try {
       await api.declineSpaceInvite(inviteId);
       removeSpaceInvite(inviteId);
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Space invite operation failed:', e);
     }
     setLoading((prev) => ({ ...prev, [inviteId]: false }));
   };

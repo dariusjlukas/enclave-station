@@ -63,8 +63,8 @@ export function ChannelBrowser({ onClose, spaceId }: Props) {
       useChatStore.getState().setChannels(allChannels);
       setActiveChannel(channelId);
       onClose();
-    } catch {
-      /* ignored */
+    } catch (e) {
+      console.error('Channel join failed:', e);
     }
   };
 

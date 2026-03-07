@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include "db/database.h"
+#include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
 
@@ -28,7 +29,7 @@ struct SearchHandler {
                 return;
             }
 
-            int limit = limit_str.empty() ? 20 : std::min(std::stoi(limit_str), 50);
+            int limit = limit_str.empty() ? 20 : std::min(std::stoi(limit_str), defaults::SEARCH_MAX_RESULTS);
             int offset = offset_str.empty() ? 0 : std::stoi(offset_str);
             if (mode.empty()) mode = "and";
 
@@ -134,7 +135,7 @@ struct SearchHandler {
             }
             if (result_type.empty()) result_type = "messages";
 
-            int limit = limit_str.empty() ? 20 : std::min(std::stoi(limit_str), 50);
+            int limit = limit_str.empty() ? 20 : std::min(std::stoi(limit_str), defaults::SEARCH_MAX_RESULTS);
             int offset = offset_str.empty() ? 0 : std::stoi(offset_str);
             if (mode.empty()) mode = "and";
 
@@ -271,15 +272,7 @@ struct SearchHandler {
 
 private:
     std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
-        std::string token(req->getHeader("authorization"));
-        if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-        auto user_id = db.validate_session(token);
-        if (!user_id) {
-            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Unauthorized"})");
-            return "";
-        }
-        return *user_id;
+        return validate_session_or_401(res, req, db);
     }
 
     static std::vector<std::string> split_terms(const std::string& input) {

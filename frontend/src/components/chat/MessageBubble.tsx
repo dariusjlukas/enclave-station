@@ -32,12 +32,7 @@ import type { Message } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { getFileUrl, downloadFile } from '../../services/api';
 import { UserPopoverCard } from '../common/UserPopoverCard';
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
+import { formatFileSize } from '../../utils/format';
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 10;

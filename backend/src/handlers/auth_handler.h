@@ -6,6 +6,7 @@
 #include "auth/webauthn.h"
 #include "config.h"
 #include "ws/ws_handler.h"
+#include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
 
@@ -146,26 +147,12 @@ struct AuthHandler {
     }
 
 private:
-    // Check if an auth method is enabled
     bool is_method_enabled(const std::string& method) {
-        auto setting = db.get_setting("auth_methods");
-        if (!setting) return true; // default: all methods enabled
-        try {
-            auto arr = json::parse(*setting);
-            for (const auto& m : arr) {
-                if (m.get<std::string>() == method) return true;
-            }
-        } catch (...) {}
-        return false;
+        return is_auth_method_enabled(db, method);
     }
 
-    // Get session expiry hours from DB setting or config default
     int get_session_expiry() {
-        auto setting = db.get_setting("session_expiry_hours");
-        if (setting) {
-            try { return std::stoi(*setting); } catch (...) {}
-        }
-        return config.session_expiry_hours;
+        return ::get_session_expiry(db, config);
     }
 
     // Check registration eligibility for direct registration (with invite token)
@@ -273,7 +260,7 @@ private:
                     {"userVerification", "preferred"}
                 }},
                 {"attestation", "none"},
-                {"timeout", 60000}
+                {"timeout", defaults::WEBAUTHN_TIMEOUT_MS}
             };
 
             res->writeHeader("Content-Type", "application/json")->end(options.dump());
@@ -368,7 +355,7 @@ private:
                 {"rpId", config.webauthn_rp_id},
                 {"allowCredentials", json::array()},
                 {"userVerification", "preferred"},
-                {"timeout", 60000}
+                {"timeout", defaults::WEBAUTHN_TIMEOUT_MS}
             };
 
             res->writeHeader("Content-Type", "application/json")->end(options.dump());
@@ -722,7 +709,7 @@ private:
                     {"userVerification", "preferred"}
                 }},
                 {"attestation", "none"},
-                {"timeout", 60000}
+                {"timeout", defaults::WEBAUTHN_TIMEOUT_MS}
             };
 
             res->writeHeader("Content-Type", "application/json")->end(options.dump());
