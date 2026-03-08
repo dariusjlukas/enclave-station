@@ -4,6 +4,11 @@
 @source "../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}";
 @custom-variant dark (&:is(.dark *));
 
+/* Custom scrollbar colors (standard property, supported by all modern browsers) */
+* {
+  scrollbar-color: hsl(var(--heroui-default-300)) transparent;
+}
+
 /* Align modals to top of screen so they grow downward */
 [data-slot='wrapper'] {
   align-items: flex-start;

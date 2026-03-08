@@ -119,8 +119,9 @@ export function MessageList({
 
   useEffect(() => {
     if (!isViewingAround) {
-      const el = containerRef.current;
-      if (el) {
+      requestAnimationFrame(() => {
+        const el = containerRef.current;
+        if (!el) return;
         const threshold = 100;
         const atBottom =
           el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
@@ -129,7 +130,7 @@ export function MessageList({
         } else {
           setIsScrolledUp(true);
         }
-      }
+      });
     }
   }, [messages.length, isViewingAround]);
 
