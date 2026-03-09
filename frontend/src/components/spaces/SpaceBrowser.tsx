@@ -25,7 +25,6 @@ export function SpaceBrowser({ onClose, onCreateSpace }: Props) {
       id: string;
       name: string;
       description: string;
-      icon: string;
       is_public: boolean;
       default_role: string;
       created_at: string;
@@ -86,10 +85,7 @@ export function SpaceBrowser({ onClose, onCreateSpace }: Props) {
               <Card key={sp.id} shadow='sm'>
                 <CardBody className='flex flex-row items-center justify-between gap-4'>
                   <div className='min-w-0'>
-                    <p className='font-semibold text-foreground'>
-                      {sp.icon && <span className='mr-1'>{sp.icon}</span>}
-                      {sp.name}
-                    </p>
+                    <p className='font-semibold text-foreground'>{sp.name}</p>
                     {sp.description && (
                       <p className='text-sm text-default-400 truncate'>
                         {sp.description}

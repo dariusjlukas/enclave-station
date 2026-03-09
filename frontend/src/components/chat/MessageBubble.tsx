@@ -38,6 +38,7 @@ import type { Message, Reaction, ChannelMemberInfo } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { getFileUrl, downloadFile } from '../../services/api';
 import { UserPopoverCard } from '../common/UserPopoverCard';
+import { UserAvatar } from '../common/UserAvatar';
 import { formatFileSize } from '../../utils/format';
 
 const MENTION_RE = /@(\w[\w-]*)/g;
@@ -608,6 +609,20 @@ export function MessageBubble({
         id={`msg-${message.id}`}
         className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2`}
       >
+        {!isOwn && (
+          <div className='flex-shrink-0 mr-2 mt-1'>
+            {author ? (
+              <UserAvatar
+                username={message.username}
+                avatarFileId={author.avatar_file_id}
+                profileColor={author.profile_color}
+                size='sm'
+              />
+            ) : (
+              <UserAvatar username={message.username} size='sm' />
+            )}
+          </div>
+        )}
         <div className='max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2 bg-content1 border border-divider rounded-br-md'>
           {!isOwn && (
             <p className='text-xs font-semibold text-default-400 mb-1'>
@@ -636,6 +651,24 @@ export function MessageBubble({
       id={`msg-${message.id}`}
       className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 group`}
     >
+      {!isOwn && (
+        <div className='flex-shrink-0 mr-2 mt-1'>
+          {author ? (
+            <UserPopoverCard user={author} channelId={message.channel_id}>
+              <button className='cursor-pointer'>
+                <UserAvatar
+                  username={message.username}
+                  avatarFileId={author.avatar_file_id}
+                  profileColor={author.profile_color}
+                  size='sm'
+                />
+              </button>
+            </UserPopoverCard>
+          ) : (
+            <UserAvatar username={message.username} size='sm' />
+          )}
+        </div>
+      )}
       <div
         className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2 relative text-foreground ${
           isOwn ? 'bg-content3 rounded-br-md' : 'bg-content2 rounded-bl-md'

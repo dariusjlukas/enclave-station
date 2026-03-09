@@ -134,6 +134,8 @@ void Database::run_migrations() {
     txn.exec(R"SQL(
         ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT '';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS status VARCHAR(100) DEFAULT '';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_file_id TEXT DEFAULT '';
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_color VARCHAR(7) DEFAULT '';
     )SQL");
 
     // Add edit/delete support for messages
@@ -367,6 +369,12 @@ void Database::run_migrations() {
         ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_message_id UUID REFERENCES messages(id) ON DELETE SET NULL;
     )SQL");
 
+    // Space avatars and profile color
+    txn.exec(R"SQL(
+        ALTER TABLE spaces ADD COLUMN IF NOT EXISTS avatar_file_id TEXT DEFAULT '';
+        ALTER TABLE spaces ADD COLUMN IF NOT EXISTS profile_color VARCHAR(7) DEFAULT '';
+    )SQL");
+
     txn.commit();
     std::cout << "[DB] Migrations complete" << std::endl;
 }
@@ -378,7 +386,7 @@ std::optional<User> Database::find_user_by_public_key(const std::string& public_
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
-        "u.last_seen::text, u.created_at::text, u.bio, u.status "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
         "FROM users u JOIN user_keys uk ON u.id = uk.user_id "
         "WHERE uk.public_key = $1",
         public_key);
@@ -390,7 +398,9 @@ std::optional<User> Database::find_user_by_public_key(const std::string& public_
                 r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
                 r[0][7].as<std::string>(),
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
-                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
+                r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
 }
 
 std::optional<User> Database::find_user_by_id(const std::string& id) {
@@ -398,7 +408,7 @@ std::optional<User> Database::find_user_by_id(const std::string& id) {
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status FROM users WHERE id = $1",
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color FROM users WHERE id = $1",
         id);
     txn.commit();
     if (r.empty()) return std::nullopt;
@@ -408,7 +418,9 @@ std::optional<User> Database::find_user_by_id(const std::string& id) {
                 r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
                 r[0][7].as<std::string>(),
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
-                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
+                r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
 }
 
 User Database::create_user(const std::string& username, const std::string& display_name,
@@ -419,7 +431,7 @@ User Database::create_user(const std::string& username, const std::string& displ
         "INSERT INTO users (username, display_name, public_key, role) "
         "VALUES ($1, $2, $3, $4) "
         "RETURNING id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status",
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color",
         username, display_name, public_key, role);
 
     // Also register in user_keys table (only if using legacy PKI auth)
@@ -436,7 +448,9 @@ User Database::create_user(const std::string& username, const std::string& displ
                 r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
                 r[0][7].as<std::string>(),
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
-                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
+                r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
 }
 
 std::vector<User> Database::list_users() {
@@ -444,7 +458,7 @@ std::vector<User> Database::list_users() {
     pqxx::work txn(get_conn());
     auto r = txn.exec(
         "SELECT id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status FROM users ORDER BY username");
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color FROM users ORDER BY username");
     txn.commit();
     std::vector<User> users;
     for (const auto& row : r) {
@@ -454,9 +468,18 @@ std::vector<User> Database::list_users() {
                          row[6].is_null() ? "" : row[6].as<std::string>(),
                          row[7].as<std::string>(),
                          row[8].is_null() ? "" : row[8].as<std::string>(),
-                         row[9].is_null() ? "" : row[9].as<std::string>()});
+                         row[9].is_null() ? "" : row[9].as<std::string>(),
+                         row[10].is_null() ? "" : row[10].as<std::string>(),
+                         row[11].is_null() ? "" : row[11].as<std::string>()});
     }
     return users;
+}
+
+void Database::set_all_users_offline() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec("UPDATE users SET is_online = false WHERE is_online = true");
+    txn.commit();
 }
 
 void Database::set_user_online(const std::string& user_id, bool online) {
@@ -479,14 +502,15 @@ int Database::count_users() {
 }
 
 User Database::update_user_profile(const std::string& user_id, const std::string& display_name,
-                                    const std::string& bio, const std::string& status) {
+                                    const std::string& bio, const std::string& status,
+                                    const std::string& profile_color) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
-        "UPDATE users SET display_name = $2, bio = $3, status = $4 WHERE id = $1 "
+        "UPDATE users SET display_name = $2, bio = $3, status = $4, profile_color = $5 WHERE id = $1 "
         "RETURNING id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status",
-        user_id, display_name, bio, status);
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color",
+        user_id, display_name, bio, status, profile_color);
     txn.commit();
     if (r.empty()) throw std::runtime_error("User not found");
     return User{r[0][0].as<std::string>(), r[0][1].as<std::string>(),
@@ -495,7 +519,26 @@ User Database::update_user_profile(const std::string& user_id, const std::string
                 r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
                 r[0][7].as<std::string>(),
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
-                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
+                r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
+}
+
+void Database::set_user_avatar(const std::string& user_id, const std::string& avatar_file_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("UPDATE users SET avatar_file_id = $2 WHERE id = $1", user_id, avatar_file_id);
+    txn.commit();
+}
+
+void Database::clear_user_avatar(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params("SELECT avatar_file_id FROM users WHERE id = $1", user_id);
+    std::string old_file_id;
+    if (!r.empty() && !r[0][0].is_null()) old_file_id = r[0][0].as<std::string>();
+    txn.exec_params("UPDATE users SET avatar_file_id = '' WHERE id = $1", user_id);
+    txn.commit();
 }
 
 void Database::update_user_role(const std::string& user_id, const std::string& role) {
@@ -909,28 +952,28 @@ static Space row_to_space(const pqxx::row& row) {
     sp.id = row[0].as<std::string>();
     sp.name = row[1].is_null() ? "" : row[1].as<std::string>();
     sp.description = row[2].is_null() ? "" : row[2].as<std::string>();
-    sp.icon = row[3].is_null() ? "" : row[3].as<std::string>();
-    sp.is_public = row[4].as<bool>();
-    sp.default_role = row[5].as<std::string>();
-    sp.created_by = row[6].is_null() ? "" : row[6].as<std::string>();
-    sp.created_at = row[7].as<std::string>();
-    sp.is_archived = row[8].as<bool>();
+    sp.is_public = row[3].as<bool>();
+    sp.default_role = row[4].as<std::string>();
+    sp.created_by = row[5].is_null() ? "" : row[5].as<std::string>();
+    sp.created_at = row[6].as<std::string>();
+    sp.is_archived = row[7].as<bool>();
+    sp.avatar_file_id = row[8].is_null() ? "" : row[8].as<std::string>();
+    sp.profile_color = row[9].is_null() ? "" : row[9].as<std::string>();
     return sp;
 }
 
-static const char* SP_COLS = "s.id, s.name, s.description, s.icon, s.is_public, s.default_role, "
-    "s.created_by, s.created_at::text, s.is_archived";
+static const char* SP_COLS = "s.id, s.name, s.description, s.is_public, s.default_role, "
+    "s.created_by, s.created_at::text, s.is_archived, s.avatar_file_id, s.profile_color";
 
 Space Database::create_space(const std::string& name, const std::string& description,
-                              const std::string& icon, bool is_public,
-                              const std::string& created_by,
+                              bool is_public, const std::string& created_by,
                               const std::string& default_role) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto ins = txn.exec_params(
-        "INSERT INTO spaces (name, description, icon, is_public, default_role, created_by) "
-        "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
-        name, description, icon, is_public, default_role, created_by);
+        "INSERT INTO spaces (name, description, is_public, default_role, created_by) "
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        name, description, is_public, default_role, created_by);
     std::string space_id = ins[0][0].as<std::string>();
     // Creator is owner
     txn.exec_params(
@@ -968,14 +1011,15 @@ std::optional<Space> Database::find_space_by_id(const std::string& id) {
 }
 
 Space Database::update_space(const std::string& space_id, const std::string& name,
-                              const std::string& description, const std::string& icon,
-                              bool is_public, const std::string& default_role) {
+                              const std::string& description, bool is_public,
+                              const std::string& default_role,
+                              const std::string& profile_color) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     txn.exec_params(
-        "UPDATE spaces SET name = $2, description = $3, icon = $4, is_public = $5, default_role = $6 "
+        "UPDATE spaces SET name = $2, description = $3, is_public = $4, default_role = $5, profile_color = $6 "
         "WHERE id = $1",
-        space_id, name, description, icon, is_public, default_role);
+        space_id, name, description, is_public, default_role, profile_color);
     auto r = txn.exec_params(
         std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", space_id);
     txn.commit();
@@ -1021,6 +1065,20 @@ std::vector<Space> Database::list_all_spaces() {
     std::vector<Space> spaces;
     for (const auto& row : r) spaces.push_back(row_to_space(row));
     return spaces;
+}
+
+void Database::set_space_avatar(const std::string& space_id, const std::string& avatar_file_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("UPDATE spaces SET avatar_file_id = $2 WHERE id = $1", space_id, avatar_file_id);
+    txn.commit();
+}
+
+void Database::clear_space_avatar(const std::string& space_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("UPDATE spaces SET avatar_file_id = '' WHERE id = $1", space_id);
+    txn.commit();
 }
 
 bool Database::is_space_member(const std::string& space_id, const std::string& user_id) {
@@ -1414,6 +1472,16 @@ std::vector<Database::InviteInfo> Database::list_invites() {
     return invites;
 }
 
+bool Database::revoke_invite(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "DELETE FROM invite_tokens WHERE id = $1 AND used_by IS NULL RETURNING id",
+        id);
+    txn.commit();
+    return !r.empty();
+}
+
 // --- Join Requests ---
 
 std::string Database::create_join_request(const std::string& username, const std::string& display_name,
@@ -1502,7 +1570,7 @@ std::vector<Database::SpaceInvite> Database::list_pending_space_invites(const st
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
-        "SELECT si.id::text, si.space_id::text, s.name, COALESCE(s.icon, ''), "
+        "SELECT si.id::text, si.space_id::text, s.name, "
         "si.invited_user_id::text, si.invited_by::text, u.username, "
         "si.role, si.status, si.created_at::text "
         "FROM space_invites si "
@@ -1516,10 +1584,10 @@ std::vector<Database::SpaceInvite> Database::list_pending_space_invites(const st
     for (const auto& row : r) {
         invites.push_back({
             row[0].as<std::string>(), row[1].as<std::string>(),
-            row[2].as<std::string>(), row[3].as<std::string>(),
-            row[4].as<std::string>(), row[5].as<std::string>(),
-            row[6].as<std::string>(), row[7].as<std::string>(),
-            row[8].as<std::string>(), row[9].as<std::string>()
+            row[2].as<std::string>(),
+            row[3].as<std::string>(), row[4].as<std::string>(),
+            row[5].as<std::string>(), row[6].as<std::string>(),
+            row[7].as<std::string>(), row[8].as<std::string>()
         });
     }
     return invites;
@@ -1529,7 +1597,7 @@ std::optional<Database::SpaceInvite> Database::get_space_invite(const std::strin
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
-        "SELECT si.id::text, si.space_id::text, s.name, COALESCE(s.icon, ''), "
+        "SELECT si.id::text, si.space_id::text, s.name, "
         "si.invited_user_id::text, si.invited_by::text, u.username, "
         "si.role, si.status, si.created_at::text "
         "FROM space_invites si "
@@ -1542,10 +1610,10 @@ std::optional<Database::SpaceInvite> Database::get_space_invite(const std::strin
     const auto& row = r[0];
     return SpaceInvite{
         row[0].as<std::string>(), row[1].as<std::string>(),
-        row[2].as<std::string>(), row[3].as<std::string>(),
-        row[4].as<std::string>(), row[5].as<std::string>(),
-        row[6].as<std::string>(), row[7].as<std::string>(),
-        row[8].as<std::string>(), row[9].as<std::string>()
+        row[2].as<std::string>(),
+        row[3].as<std::string>(), row[4].as<std::string>(),
+        row[5].as<std::string>(), row[6].as<std::string>(),
+        row[7].as<std::string>(), row[8].as<std::string>()
     };
 }
 
@@ -1764,7 +1832,7 @@ std::optional<User> Database::find_user_by_credential_id(const std::string& cred
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
-        "u.last_seen::text, u.created_at::text, u.bio, u.status "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
         "FROM users u JOIN webauthn_credentials wc ON u.id = wc.user_id "
         "WHERE wc.credential_id = $1",
         credential_id);
@@ -1777,7 +1845,9 @@ std::optional<User> Database::find_user_by_credential_id(const std::string& cred
                 r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
                 r[0][7].as<std::string>(),
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
-                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
+                r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
 }
 
 // --- WebAuthn Challenges ---
@@ -1877,7 +1947,7 @@ std::optional<User> Database::find_user_by_pki_key(const std::string& public_key
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
-        "u.last_seen::text, u.created_at::text, u.bio, u.status "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
         "FROM users u JOIN pki_credentials pc ON u.id = pc.user_id "
         "WHERE pc.public_key = $1",
         public_key_spki);
@@ -1890,7 +1960,9 @@ std::optional<User> Database::find_user_by_pki_key(const std::string& public_key
                 r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
                 r[0][7].as<std::string>(),
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
-                r[0][9].is_null() ? "" : r[0][9].as<std::string>()};
+                r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
+                r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
 }
 
 // --- Recovery Keys ---
@@ -2176,7 +2248,7 @@ std::vector<User> Database::search_users(const std::string& query, int limit, in
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status "
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color "
         "FROM users "
         "WHERE username ILIKE '%' || $1 || '%' OR display_name ILIKE '%' || $1 || '%' "
         "ORDER BY CASE WHEN username ILIKE $1 || '%' THEN 0 "
@@ -2193,7 +2265,9 @@ std::vector<User> Database::search_users(const std::string& query, int limit, in
             row[6].is_null() ? "" : row[6].as<std::string>(),
             row[7].as<std::string>(),
             row[8].is_null() ? "" : row[8].as<std::string>(),
-            row[9].is_null() ? "" : row[9].as<std::string>()});
+            row[9].is_null() ? "" : row[9].as<std::string>(),
+            row[10].is_null() ? "" : row[10].as<std::string>(),
+            row[11].is_null() ? "" : row[11].as<std::string>()});
     }
     return users;
 }
@@ -2281,7 +2355,8 @@ std::vector<Database::SpaceSearchResult> Database::search_spaces(
     pqxx::work txn(get_conn());
 
     std::string sql =
-        "SELECT s.id, s.name, s.description, s.icon, s.is_public "
+        "SELECT s.id, s.name, s.description, s.is_public, "
+        "COALESCE(s.avatar_file_id, ''), COALESCE(s.profile_color, '') "
         "FROM spaces s "
         "WHERE (s.name ILIKE '%' || $1 || '%' OR s.description ILIKE '%' || $1 || '%') "
         "AND (EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = s.id AND sm.user_id = $2)";
@@ -2298,8 +2373,8 @@ std::vector<Database::SpaceSearchResult> Database::search_spaces(
         results.push_back(SpaceSearchResult{
             row[0].as<std::string>(), row[1].as<std::string>(),
             row[2].is_null() ? "" : row[2].as<std::string>(),
-            row[3].is_null() ? "" : row[3].as<std::string>(),
-            row[4].as<bool>()});
+            row[3].as<bool>(),
+            row[4].as<std::string>(), row[5].as<std::string>()});
     }
     return results;
 }
@@ -2471,7 +2546,7 @@ std::vector<User> Database::search_composite_users(
 
     std::string sql =
         "SELECT DISTINCT u.id, u.username, u.display_name, u.public_key, u.role, "
-        "u.is_online, u.last_seen::text, u.created_at::text, u.bio, u.status "
+        "u.is_online, u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
         "FROM users u ";
 
     std::vector<std::string> clauses;
@@ -2530,7 +2605,9 @@ std::vector<User> Database::search_composite_users(
             row[6].is_null() ? "" : row[6].as<std::string>(),
             row[7].as<std::string>(),
             row[8].is_null() ? "" : row[8].as<std::string>(),
-            row[9].is_null() ? "" : row[9].as<std::string>()});
+            row[9].is_null() ? "" : row[9].as<std::string>(),
+            row[10].is_null() ? "" : row[10].as<std::string>(),
+            row[11].is_null() ? "" : row[11].as<std::string>()});
     }
     return users;
 }
@@ -2613,7 +2690,8 @@ std::vector<Database::SpaceSearchResult> Database::search_composite_spaces(
     pqxx::work txn(get_conn());
 
     std::string sql =
-        "SELECT DISTINCT s.id, s.name, s.description, s.icon, s.is_public "
+        "SELECT DISTINCT s.id, s.name, s.description, s.is_public, "
+        "COALESCE(s.avatar_file_id, ''), COALESCE(s.profile_color, '') "
         "FROM spaces s ";
 
     bool needs_user_join = false;
@@ -2671,8 +2749,8 @@ std::vector<Database::SpaceSearchResult> Database::search_composite_spaces(
         results.push_back(SpaceSearchResult{
             row[0].as<std::string>(), row[1].as<std::string>(),
             row[2].is_null() ? "" : row[2].as<std::string>(),
-            row[3].is_null() ? "" : row[3].as<std::string>(),
-            row[4].as<bool>()});
+            row[3].as<bool>(),
+            row[4].as<std::string>(), row[5].as<std::string>()});
     }
     return results;
 }

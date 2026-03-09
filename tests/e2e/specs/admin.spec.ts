@@ -102,6 +102,32 @@ test.describe("Invite tokens", () => {
       page.getByRole("button", { name: /generate|create/i }),
     ).toBeVisible({ timeout: 5_000 });
   });
+
+  test("admin can generate and revoke an invite token", async ({ page }) => {
+    await loginViaToken(page, admin.token);
+
+    await clickHeaderButton(page, ADMIN_BTN);
+    await page.getByRole("button", { name: "Invite Tokens" }).click();
+
+    // Generate an invite
+    await page.getByRole("button", { name: /generate/i }).click();
+
+    // Wait for the invite to appear with Copy and Revoke buttons
+    await expect(
+      page.getByRole("button", { name: "Copy" }).first(),
+    ).toBeVisible({ timeout: 5_000 });
+    await expect(
+      page.getByRole("button", { name: "Revoke" }).first(),
+    ).toBeVisible();
+
+    // Revoke the invite
+    await page.getByRole("button", { name: "Revoke" }).first().click();
+
+    // After revoking, the invite should be gone
+    await expect(
+      page.getByRole("button", { name: "Revoke" }),
+    ).toHaveCount(0, { timeout: 5_000 });
+  });
 });
 
 test.describe("User settings", () => {

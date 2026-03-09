@@ -224,6 +224,87 @@ class TestSpaceChannels:
         assert r.status_code == 403
 
 
+class TestSpaceAvatarFields:
+    def test_space_response_has_avatar_fields(self, client, admin_user):
+        r = client.post("/api/spaces", json={"name": "Team"},
+                        headers=admin_user["headers"])
+        assert r.status_code == 200
+        sp = r.json()
+        assert "avatar_file_id" in sp
+        assert "profile_color" in sp
+        assert "icon" not in sp
+
+    def test_space_list_has_avatar_fields(self, client, admin_user):
+        client.post("/api/spaces", json={"name": "Team"},
+                    headers=admin_user["headers"])
+        r = client.get("/api/spaces", headers=admin_user["headers"])
+        assert r.status_code == 200
+        sp = r.json()[0]
+        assert "avatar_file_id" in sp
+        assert "profile_color" in sp
+        assert "icon" not in sp
+
+    def test_update_space_profile_color(self, client, admin_user):
+        r = client.post("/api/spaces", json={"name": "Team"},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        r = client.put(f"/api/spaces/{sp_id}", json={
+            "name": "Team",
+            "profile_color": "#ff5500",
+        }, headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert r.json()["profile_color"] == "#ff5500"
+
+
+class TestSpaceAvatar:
+    def test_upload_space_avatar(self, client, admin_user):
+        r = client.post("/api/spaces", json={"name": "Team"},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        # Create a minimal 1x1 PNG
+        import struct, zlib
+        def make_png():
+            raw = b'\x00\x00\x00\x00'  # 1 pixel RGBA
+            data = zlib.compress(raw)
+            def chunk(ctype, body):
+                c = ctype + body
+                return struct.pack('>I', len(body)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+            ihdr = struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0)
+            return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', data) + chunk(b'IEND', b'')
+        png_data = make_png()
+        r = client.post(f"/api/spaces/{sp_id}/avatar",
+                        content=png_data,
+                        headers={
+                            **admin_user["headers"],
+                            "Content-Type": "image/png",
+                        })
+        assert r.status_code == 200
+        assert r.json()["avatar_file_id"] != ""
+
+    def test_delete_space_avatar(self, client, admin_user):
+        r = client.post("/api/spaces", json={"name": "Team"},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        r = client.delete(f"/api/spaces/{sp_id}/avatar",
+                          headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert r.json()["avatar_file_id"] == ""
+
+    def test_non_admin_cannot_upload_space_avatar(self, client, admin_user, regular_user):
+        r = client.post("/api/spaces", json={"name": "Team"},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        client.post(f"/api/spaces/{sp_id}/join",
+                    headers=regular_user["headers"])
+        r = client.post(f"/api/spaces/{sp_id}/avatar",
+                        content=b'\x89PNG fake',
+                        headers={
+                            **regular_user["headers"],
+                            "Content-Type": "image/png",
+                        })
+        assert r.status_code == 403
+
+
 class TestSpaceArchive:
     def test_owner_can_archive(self, client, admin_user):
         r = client.post("/api/spaces", json={"name": "Old"},

@@ -266,6 +266,12 @@ export function listInvites() {
   >('/admin/invites');
 }
 
+export function revokeInvite(id: string) {
+  return request<{ ok: boolean }>(`/admin/invites/${id}`, {
+    method: 'DELETE',
+  });
+}
+
 export function listJoinRequests() {
   return request<
     Array<{
@@ -327,15 +333,48 @@ export function updateProfile(data: {
   display_name?: string;
   bio?: string;
   status?: string;
+  profile_color?: string;
 }) {
-  return request<{
-    id: string;
-    username: string;
-    display_name: string;
-    role: string;
-    bio: string;
-    status: string;
-  }>('/users/me', { method: 'PUT', body: JSON.stringify(data) });
+  return request<User>('/users/me', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export function uploadAvatar(file: File): Promise<User> {
+  return new Promise((resolve, reject) => {
+    const token = getToken();
+    const params = new URLSearchParams({
+      content_type: file.type || 'image/png',
+    });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE}/users/me/avatar?${params}`);
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          reject(new Error(body.error || xhr.statusText));
+        } catch {
+          reject(new Error(xhr.statusText));
+        }
+      }
+    };
+    xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.send(file);
+  });
+}
+
+export function deleteAvatar() {
+  return request<User>('/users/me/avatar', { method: 'DELETE' });
+}
+
+export function getAvatarUrl(avatarFileId: string): string {
+  return `${API_BASE}/avatars/${avatarFileId}`;
 }
 
 export function deleteAccount() {
@@ -501,7 +540,6 @@ export function listSpaces() {
 export function createSpace(
   name: string,
   description?: string,
-  icon?: string,
   isPublic = true,
   defaultRole = 'write',
 ) {
@@ -510,7 +548,6 @@ export function createSpace(
     body: JSON.stringify({
       name,
       description,
-      icon,
       is_public: isPublic,
       default_role: defaultRole,
     }),
@@ -526,14 +563,51 @@ export function updateSpaceSettings(
   data: {
     name?: string;
     description?: string;
-    icon?: string;
     is_public?: boolean;
     default_role?: string;
+    profile_color?: string;
   },
 ) {
   return request<Partial<Space>>(`/spaces/${spaceId}`, {
     method: 'PUT',
     body: JSON.stringify(data),
+  });
+}
+
+export function uploadSpaceAvatar(
+  spaceId: string,
+  file: File,
+): Promise<Partial<Space>> {
+  return new Promise((resolve, reject) => {
+    const token = getToken();
+    const params = new URLSearchParams({
+      content_type: file.type || 'image/png',
+    });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE}/spaces/${spaceId}/avatar?${params}`);
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(JSON.parse(xhr.responseText));
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          reject(new Error(body.error || xhr.statusText));
+        } catch {
+          reject(new Error(xhr.statusText));
+        }
+      }
+    };
+    xhr.onerror = () => reject(new Error('Upload failed'));
+    xhr.send(file);
+  });
+}
+
+export function deleteSpaceAvatar(spaceId: string) {
+  return request<Partial<Space>>(`/spaces/${spaceId}/avatar`, {
+    method: 'DELETE',
   });
 }
 
@@ -855,8 +929,9 @@ export interface SpaceSearchResult {
   id: string;
   name: string;
   description: string;
-  icon: string;
   is_public: boolean;
+  avatar_file_id: string;
+  profile_color: string;
 }
 
 export interface ChannelSearchResult {

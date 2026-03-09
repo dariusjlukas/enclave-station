@@ -18,6 +18,9 @@ protected:
         txn.exec("DELETE FROM messages");
         txn.exec("DELETE FROM channel_members");
         txn.exec("DELETE FROM channels");
+        txn.exec("DELETE FROM space_invites");
+        txn.exec("DELETE FROM space_members");
+        txn.exec("DELETE FROM spaces");
         txn.exec("DELETE FROM sessions");
         txn.exec("DELETE FROM auth_challenges");
         txn.exec("DELETE FROM device_tokens");
@@ -367,6 +370,56 @@ TEST_F(DatabaseTest, ListInvites) {
     EXPECT_EQ(invites.size(), 2u);
 }
 
+TEST_F(DatabaseTest, RevokeUnusedInvite) {
+    auto user = db_->create_user("admin", "Admin", "KEY_ADMIN", "admin");
+    db_->create_invite(user.id);
+
+    auto invites = db_->list_invites();
+    ASSERT_EQ(invites.size(), 1u);
+
+    bool revoked = db_->revoke_invite(invites[0].id);
+    EXPECT_TRUE(revoked);
+
+    // Invite should be gone
+    auto after = db_->list_invites();
+    EXPECT_EQ(after.size(), 0u);
+}
+
+TEST_F(DatabaseTest, RevokeUsedInviteReturnsFalse) {
+    auto admin = db_->create_user("admin", "Admin", "KEY_ADMIN", "admin");
+    auto token = db_->create_invite(admin.id);
+
+    auto user = db_->create_user("alice", "Alice", "KEY_A");
+    db_->use_invite(token, user.id);
+
+    auto invites = db_->list_invites();
+    ASSERT_EQ(invites.size(), 1u);
+
+    bool revoked = db_->revoke_invite(invites[0].id);
+    EXPECT_FALSE(revoked);
+
+    // Used invite should still exist
+    auto after = db_->list_invites();
+    EXPECT_EQ(after.size(), 1u);
+}
+
+TEST_F(DatabaseTest, RevokeNonexistentInviteReturnsFalse) {
+    bool revoked = db_->revoke_invite("00000000-0000-0000-0000-000000000000");
+    EXPECT_FALSE(revoked);
+}
+
+TEST_F(DatabaseTest, RevokedInviteCannotBeValidated) {
+    auto user = db_->create_user("admin", "Admin", "KEY_ADMIN", "admin");
+    auto token = db_->create_invite(user.id);
+
+    EXPECT_TRUE(db_->validate_invite(token));
+
+    auto invites = db_->list_invites();
+    db_->revoke_invite(invites[0].id);
+
+    EXPECT_FALSE(db_->validate_invite(token));
+}
+
 // --- Join Requests ---
 
 TEST_F(DatabaseTest, CreateAndListJoinRequests) {
@@ -430,4 +483,67 @@ TEST_F(DatabaseTest, RemoveUserKeyPreventsLastRemoval) {
     ASSERT_EQ(keys.size(), 1u);
 
     EXPECT_THROW(db_->remove_user_key(keys[0].id, user.id), std::runtime_error);
+}
+
+// --- User Avatars ---
+
+TEST_F(DatabaseTest, SetAndClearUserAvatar) {
+    auto user = db_->create_user("alice", "Alice", "KEY_A");
+    EXPECT_TRUE(user.avatar_file_id.empty());
+
+    db_->set_user_avatar(user.id, "avatar-file-123");
+    auto found = db_->find_user_by_id(user.id);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->avatar_file_id, "avatar-file-123");
+
+    db_->clear_user_avatar(user.id);
+    found = db_->find_user_by_id(user.id);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_TRUE(found->avatar_file_id.empty());
+}
+
+TEST_F(DatabaseTest, UserProfileColor) {
+    auto user = db_->create_user("alice", "Alice", "KEY_A");
+    EXPECT_TRUE(user.profile_color.empty());
+
+    auto updated = db_->update_user_profile(user.id, "Alice", "", "", "#ff0000");
+    EXPECT_EQ(updated.profile_color, "#ff0000");
+}
+
+// --- Spaces ---
+
+TEST_F(DatabaseTest, CreateSpace) {
+    auto user = db_->create_user("alice", "Alice", "KEY_A");
+    auto space = db_->create_space("Engineering", "Eng team", true, user.id, "write");
+
+    EXPECT_FALSE(space.id.empty());
+    EXPECT_EQ(space.name, "Engineering");
+    EXPECT_EQ(space.description, "Eng team");
+    EXPECT_TRUE(space.is_public);
+    EXPECT_TRUE(space.avatar_file_id.empty());
+    EXPECT_TRUE(space.profile_color.empty());
+}
+
+TEST_F(DatabaseTest, SetAndClearSpaceAvatar) {
+    auto user = db_->create_user("alice", "Alice", "KEY_A");
+    auto space = db_->create_space("Team", "", true, user.id);
+    EXPECT_TRUE(space.avatar_file_id.empty());
+
+    db_->set_space_avatar(space.id, "space-avatar-456");
+    auto found = db_->find_space_by_id(space.id);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->avatar_file_id, "space-avatar-456");
+
+    db_->clear_space_avatar(space.id);
+    found = db_->find_space_by_id(space.id);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_TRUE(found->avatar_file_id.empty());
+}
+
+TEST_F(DatabaseTest, UpdateSpaceProfileColor) {
+    auto user = db_->create_user("alice", "Alice", "KEY_A");
+    auto space = db_->create_space("Team", "", true, user.id);
+
+    auto updated = db_->update_space(space.id, "Team", "", true, "write", "#00ff00");
+    EXPECT_EQ(updated.profile_color, "#00ff00");
 }

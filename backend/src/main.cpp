@@ -38,7 +38,7 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
     WsHandler<SSL> ws_handler(db);
     AuthHandler<SSL> auth_handler{db, config, ws_handler};
     ChannelHandler<SSL> channel_handler{db, ws_handler};
-    SpaceHandler<SSL> space_handler{db, ws_handler};
+    SpaceHandler<SSL> space_handler{db, ws_handler, config};
     UserHandler<SSL> user_handler{db, ws_handler, config};
     AdminHandler<SSL> admin_handler{db, config, ws_handler};
     FileHandler<SSL> file_handler{db, config};
@@ -125,6 +125,7 @@ int main() {
     // Connect to database
     Database db(config.pg_connection_string());
     db.run_migrations();
+    db.set_all_users_offline();
 
     std::signal(SIGTERM, shutdown_handler);
     std::signal(SIGINT, shutdown_handler);

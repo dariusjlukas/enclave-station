@@ -45,6 +45,15 @@ export function InviteManager() {
     navigator.clipboard.writeText(token);
   };
 
+  const handleRevoke = async (id: string) => {
+    try {
+      await api.revokeInvite(id);
+      await loadInvites();
+    } catch (e) {
+      console.error('Failed to revoke invite:', e);
+    }
+  };
+
   return (
     <div>
       <div className='flex justify-end mb-4'>
@@ -73,14 +82,24 @@ export function InviteManager() {
                 </p>
               </div>
               {!inv.used && (
-                <Button
-                  variant='light'
-                  color='primary'
-                  size='sm'
-                  onPress={() => copyToken(inv.token)}
-                >
-                  Copy
-                </Button>
+                <div className='flex gap-2'>
+                  <Button
+                    variant='light'
+                    color='primary'
+                    size='sm'
+                    onPress={() => copyToken(inv.token)}
+                  >
+                    Copy
+                  </Button>
+                  <Button
+                    variant='light'
+                    color='danger'
+                    size='sm'
+                    onPress={() => handleRevoke(inv.id)}
+                  >
+                    Revoke
+                  </Button>
+                </div>
               )}
             </CardBody>
           </Card>

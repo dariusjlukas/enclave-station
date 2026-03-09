@@ -94,9 +94,6 @@ export function Header({
           <h2 className='text-foreground font-semibold truncate'>
             {activeSpace && (
               <span className='text-default-400 font-normal'>
-                {activeSpace.icon && (
-                  <span className='mr-1'>{activeSpace.icon}</span>
-                )}
                 {activeSpace.name}
                 <span className='mx-1.5'>/</span>
               </span>

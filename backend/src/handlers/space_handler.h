@@ -1,8 +1,14 @@
 #pragma once
 #include <App.h>
 #include <nlohmann/json.hpp>
+#include <fstream>
+#include <filesystem>
+#include <random>
+#include <sstream>
+#include <iomanip>
 #include "db/database.h"
 #include "ws/ws_handler.h"
+#include "config.h"
 #include "handlers/handler_utils.h"
 
 using json = nlohmann::json;
@@ -11,6 +17,7 @@ template <bool SSL>
 struct SpaceHandler {
     Database& db;
     WsHandler<SSL>& ws;
+    const Config& config;
 
     void register_routes(uWS::TemplatedApp<SSL>& app) {
         // List user's spaces
@@ -48,11 +55,13 @@ struct SpaceHandler {
                 if (my_role.empty() && is_server_admin) my_role = "admin";
 
                 arr.push_back({{"id", sp.id}, {"name", sp.name},
-                               {"description", sp.description}, {"icon", sp.icon},
+                               {"description", sp.description},
                                {"is_public", sp.is_public},
                                {"default_role", sp.default_role},
                                {"created_at", sp.created_at},
                                {"is_archived", sp.is_archived},
+                               {"avatar_file_id", sp.avatar_file_id},
+                               {"profile_color", sp.profile_color},
                                {"my_role", my_role},
                                {"members", members_arr}});
             }
@@ -70,10 +79,12 @@ struct SpaceHandler {
             json arr = json::array();
             for (const auto& sp : spaces) {
                 arr.push_back({{"id", sp.id}, {"name", sp.name},
-                               {"description", sp.description}, {"icon", sp.icon},
+                               {"description", sp.description},
                                {"is_public", sp.is_public},
                                {"default_role", sp.default_role},
                                {"is_archived", sp.is_archived},
+                               {"avatar_file_id", sp.avatar_file_id},
+                               {"profile_color", sp.profile_color},
                                {"created_at", sp.created_at}});
             }
             res->writeHeader("Content-Type", "application/json")
@@ -94,11 +105,10 @@ struct SpaceHandler {
                     auto j = json::parse(body);
                     std::string name = j.at("name");
                     std::string description = j.value("description", "");
-                    std::string icon = j.value("icon", "");
                     bool is_public = j.value("is_public", true);
                     std::string default_role = j.value("default_role", "write");
 
-                    auto sp = db.create_space(name, description, icon, is_public, user_id, default_role);
+                    auto sp = db.create_space(name, description, is_public, user_id, default_role);
 
                     auto members = db.get_space_members_with_roles(sp.id);
                     json members_arr = json::array();
@@ -109,11 +119,13 @@ struct SpaceHandler {
                     }
 
                     json resp = {{"id", sp.id}, {"name", sp.name},
-                                 {"description", sp.description}, {"icon", sp.icon},
+                                 {"description", sp.description},
                                  {"is_public", sp.is_public},
                                  {"default_role", sp.default_role},
                                  {"created_at", sp.created_at},
                                  {"is_archived", sp.is_archived},
+                                 {"avatar_file_id", sp.avatar_file_id},
+                               {"profile_color", sp.profile_color},
                                  {"my_role", "owner"},
                                  {"members", members_arr}};
 
@@ -158,11 +170,13 @@ struct SpaceHandler {
             if (my_role.empty() && user && (user->role == "admin" || user->role == "owner")) my_role = "admin";
 
             json resp = {{"id", sp->id}, {"name", sp->name},
-                         {"description", sp->description}, {"icon", sp->icon},
+                         {"description", sp->description},
                          {"is_public", sp->is_public},
                          {"default_role", sp->default_role},
                          {"created_at", sp->created_at},
                          {"is_archived", sp->is_archived},
+                         {"avatar_file_id", sp->avatar_file_id},
+                         {"profile_color", sp->profile_color},
                          {"my_role", my_role},
                          {"members", members_arr}};
 
@@ -204,16 +218,18 @@ struct SpaceHandler {
                     auto j = json::parse(body);
                     std::string name = j.value("name", current->name);
                     std::string description = j.value("description", current->description);
-                    std::string icon = j.value("icon", current->icon);
                     bool is_public = j.value("is_public", current->is_public);
                     std::string default_role = j.value("default_role", current->default_role);
+                    std::string profile_color = j.value("profile_color", current->profile_color);
 
-                    auto updated = db.update_space(space_id, name, description, icon, is_public, default_role);
+                    auto updated = db.update_space(space_id, name, description, is_public, default_role, profile_color);
 
                     json resp = {{"id", updated.id}, {"name", updated.name},
-                                 {"description", updated.description}, {"icon", updated.icon},
+                                 {"description", updated.description},
                                  {"is_public", updated.is_public},
-                                 {"default_role", updated.default_role}};
+                                 {"default_role", updated.default_role},
+                                 {"avatar_file_id", updated.avatar_file_id},
+                                 {"profile_color", updated.profile_color}};
 
                     // Broadcast to space members
                     json broadcast = {{"type", "space_updated"}, {"space", resp}};
@@ -305,7 +321,6 @@ struct SpaceHandler {
                     // Send invite notification to target user
                     json invite_data = {{"id", invite_id}, {"space_id", space_id},
                                         {"space_name", sp ? sp->name : ""},
-                                        {"space_icon", sp ? sp->icon : ""},
                                         {"invited_by_username", inviter ? inviter->username : ""},
                                         {"role", member_role},
                                         {"created_at", ""}};
@@ -923,7 +938,7 @@ struct SpaceHandler {
             json arr = json::array();
             for (const auto& inv : invites) {
                 arr.push_back({{"id", inv.id}, {"space_id", inv.space_id},
-                               {"space_name", inv.space_name}, {"space_icon", inv.space_icon},
+                               {"space_name", inv.space_name},
                                {"invited_by_username", inv.invited_by_username},
                                {"role", inv.role}, {"created_at", inv.created_at}});
             }
@@ -967,11 +982,13 @@ struct SpaceHandler {
                                            {"is_online", m.is_online}, {"last_seen", m.last_seen}, {"role", m.role}});
                 }
                 json space_data = {{"id", sp->id}, {"name", sp->name},
-                                   {"description", sp->description}, {"icon", sp->icon},
+                                   {"description", sp->description},
                                    {"is_public", sp->is_public},
                                    {"default_role", sp->default_role},
                                    {"created_at", sp->created_at},
                                    {"is_archived", sp->is_archived},
+                                   {"avatar_file_id", sp->avatar_file_id},
+                         {"profile_color", sp->profile_color},
                                    {"my_role", invite->role},
                                    {"members", members_arr}};
                 json notify = {{"type", "space_added"}, {"space", space_data}};
@@ -1012,10 +1029,150 @@ struct SpaceHandler {
                 ->writeHeader("Access-Control-Allow-Origin", "*")
                 ->end(R"({"ok":true})");
         });
+
+        // --- Space avatar upload ---
+        app.post("/api/spaces/:id/avatar", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string space_id(req->getParameter("id"));
+
+            std::string content_type(req->getQuery("content_type"));
+            if (content_type.empty()) content_type = "image/png";
+
+            if (content_type.find("image/") != 0) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Only image files are allowed"})");
+                return;
+            }
+
+            auto body = std::make_shared<std::string>();
+            int64_t max_size = 50 * 1024 * 1024;
+
+            res->onData([this, res, body, max_size, user_id, space_id, content_type](std::string_view data, bool last) mutable {
+                body->append(data);
+
+                if (static_cast<int64_t>(body->size()) > max_size) {
+                    res->writeStatus("413")->writeHeader("Content-Type", "application/json")
+                        ->end(R"json({"error":"Image too large (max 20MB)"})json");
+                    return;
+                }
+
+                if (!last) return;
+
+                // Check permissions
+                std::string role = db.get_space_member_role(space_id, user_id);
+                auto user = db.find_user_by_id(user_id);
+                if (role != "admin" && role != "owner" && !(user && (user->role == "admin" || user->role == "owner"))) {
+                    res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                        ->writeHeader("Access-Control-Allow-Origin", "*")
+                        ->end(R"({"error":"Admin permission required"})");
+                    return;
+                }
+
+                try {
+                    // Delete old avatar file if exists
+                    auto current = db.find_space_by_id(space_id);
+                    if (current && !current->avatar_file_id.empty()) {
+                        std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
+                        std::filesystem::remove(old_path);
+                    }
+
+                    // Generate file ID and save
+                    std::string file_id = random_hex(32);
+                    std::string path = config.upload_dir + "/" + file_id;
+                    std::ofstream out(path, std::ios::binary);
+                    if (!out) {
+                        res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"Failed to save image"})");
+                        return;
+                    }
+                    out.write(body->data(), body->size());
+                    out.close();
+
+                    db.set_space_avatar(space_id, file_id);
+                    auto updated = db.find_space_by_id(space_id);
+
+                    json resp = {{"id", updated->id}, {"name", updated->name},
+                                 {"description", updated->description},
+                                 {"is_public", updated->is_public},
+                                 {"default_role", updated->default_role},
+                                 {"avatar_file_id", updated->avatar_file_id},
+                                 {"profile_color", updated->profile_color}};
+
+                    // Broadcast to space members
+                    json broadcast = {{"type", "space_updated"}, {"space", resp}};
+                    ws.broadcast_to_space(space_id, broadcast.dump());
+
+                    res->writeHeader("Content-Type", "application/json")
+                        ->writeHeader("Access-Control-Allow-Origin", "*")
+                        ->end(resp.dump());
+                } catch (const std::exception& e) {
+                    res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+                        ->end(json({{"error", e.what()}}).dump());
+                }
+            });
+            res->onAborted([]() {});
+        });
+
+        // --- Space avatar delete ---
+        app.del("/api/spaces/:id/avatar", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+            std::string space_id(req->getParameter("id"));
+
+            // Check permissions
+            std::string role = db.get_space_member_role(space_id, user_id);
+            auto user = db.find_user_by_id(user_id);
+            if (role != "admin" && role != "owner" && !(user && (user->role == "admin" || user->role == "owner"))) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Admin permission required"})");
+                return;
+            }
+
+            try {
+                auto current = db.find_space_by_id(space_id);
+                if (current && !current->avatar_file_id.empty()) {
+                    std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
+                    std::filesystem::remove(old_path);
+                }
+
+                db.clear_space_avatar(space_id);
+                auto updated = db.find_space_by_id(space_id);
+
+                json resp = {{"id", updated->id}, {"name", updated->name},
+                             {"description", updated->description},
+                             {"is_public", updated->is_public},
+                             {"default_role", updated->default_role},
+                             {"avatar_file_id", updated->avatar_file_id},
+                                 {"profile_color", updated->profile_color}};
+
+                // Broadcast to space members
+                json broadcast = {{"type", "space_updated"}, {"space", resp}};
+                ws.broadcast_to_space(space_id, broadcast.dump());
+
+                res->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(resp.dump());
+            } catch (const std::exception& e) {
+                res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", e.what()}}).dump());
+            }
+        });
     }
 
 private:
     std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
         return validate_session_or_401(res, req, db);
+    }
+
+    static std::string random_hex(int bytes) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 255);
+        std::ostringstream oss;
+        for (int i = 0; i < bytes; ++i)
+            oss << std::hex << std::setfill('0') << std::setw(2) << dis(gen);
+        return oss.str();
     }
 };

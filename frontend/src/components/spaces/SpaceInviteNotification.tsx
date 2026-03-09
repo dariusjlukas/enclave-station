@@ -38,9 +38,6 @@ export function SpaceInviteNotification() {
         <Card key={invite.id} shadow='lg' className='border border-primary/30'>
           <CardBody className='p-4'>
             <p className='text-sm font-semibold text-foreground'>
-              {invite.space_icon && (
-                <span className='mr-1'>{invite.space_icon}</span>
-              )}
               Space Invite
             </p>
             <p className='text-sm text-default-600 mt-1'>

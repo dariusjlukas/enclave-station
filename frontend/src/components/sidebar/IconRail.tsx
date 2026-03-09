@@ -4,6 +4,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faComment, faPlus } from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
 import type { SidebarView } from '../../types';
+import { SpaceAvatar } from '../common/SpaceAvatar';
 
 function Badge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -59,10 +60,10 @@ export function IconRail({ onBrowseSpaces }: Props) {
       <Tooltip content='Messages' placement='right'>
         <button
           onClick={() => setActiveView({ type: 'messages' })}
-          className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all ${
+          className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-content2 text-default-500 ${
             isActive({ type: 'messages' })
-              ? 'bg-primary text-primary-foreground'
-              : 'bg-content2 text-default-500 hover:bg-content3 hover:text-foreground'
+              ? 'ring-2 ring-primary text-primary'
+              : 'hover:ring-2 hover:ring-default-300 hover:text-foreground'
           }`}
         >
           <FontAwesomeIcon icon={faComment} className='text-lg' />
@@ -76,13 +77,18 @@ export function IconRail({ onBrowseSpaces }: Props) {
         <Tooltip key={space.id} content={space.name} placement='right'>
           <button
             onClick={() => setActiveView({ type: 'space', spaceId: space.id })}
-            className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all text-sm font-semibold ${
+            className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all text-sm font-semibold overflow-hidden ${
               isActive({ type: 'space', spaceId: space.id })
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-content2 text-default-500 hover:bg-content3 hover:text-foreground'
+                ? 'ring-2 ring-primary'
+                : 'hover:ring-2 hover:ring-default-300'
             }`}
           >
-            {space.icon || space.name.charAt(0).toUpperCase()}
+            <SpaceAvatar
+              name={space.name}
+              avatarFileId={space.avatar_file_id}
+              profileColor={space.profile_color}
+              size='md'
+            />
             <Badge count={spaceUnread[space.id] || 0} />
           </button>
         </Tooltip>

@@ -1,6 +1,11 @@
 #pragma once
 #include <App.h>
 #include <nlohmann/json.hpp>
+#include <fstream>
+#include <filesystem>
+#include <random>
+#include <sstream>
+#include <iomanip>
 #include "db/database.h"
 #include "ws/ws_handler.h"
 #include "auth/webauthn.h"
@@ -26,7 +31,8 @@ struct UserHandler {
                 arr.push_back({{"id", u.id}, {"username", u.username},
                                {"display_name", u.display_name}, {"role", u.role},
                                {"is_online", u.is_online}, {"last_seen", u.last_seen},
-                               {"bio", u.bio}, {"status", u.status}});
+                               {"bio", u.bio}, {"status", u.status},
+                               {"avatar_file_id", u.avatar_file_id}, {"profile_color", u.profile_color}});
             }
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
         });
@@ -45,7 +51,8 @@ struct UserHandler {
             json resp = {{"id", user->id}, {"username", user->username},
                          {"display_name", user->display_name}, {"role", user->role},
                          {"is_online", user->is_online}, {"last_seen", user->last_seen},
-                         {"bio", user->bio}, {"status", user->status}};
+                         {"bio", user->bio}, {"status", user->status},
+                         {"avatar_file_id", user->avatar_file_id}, {"profile_color", user->profile_color}};
             res->writeHeader("Content-Type", "application/json")->end(resp.dump());
         });
 
@@ -69,13 +76,15 @@ struct UserHandler {
                     std::string display_name = j.value("display_name", current->display_name);
                     std::string bio = j.value("bio", current->bio);
                     std::string status = j.value("status", current->status);
+                    std::string profile_color = j.value("profile_color", current->profile_color);
 
-                    auto updated = db.update_user_profile(user_id, display_name, bio, status);
+                    auto updated = db.update_user_profile(user_id, display_name, bio, status, profile_color);
 
                     json user_json = {{"id", updated.id}, {"username", updated.username},
                                  {"display_name", updated.display_name}, {"role", updated.role},
                                  {"is_online", updated.is_online}, {"last_seen", updated.last_seen},
-                                 {"bio", updated.bio}, {"status", updated.status}};
+                                 {"bio", updated.bio}, {"status", updated.status},
+                                 {"avatar_file_id", updated.avatar_file_id}, {"profile_color", updated.profile_color}};
                     res->writeHeader("Content-Type", "application/json")->end(user_json.dump());
 
                     // Broadcast profile change to all connected users
@@ -100,6 +109,136 @@ struct UserHandler {
                 res->writeStatus("500")->writeHeader("Content-Type", "application/json")
                     ->end(json({{"error", e.what()}}).dump());
             }
+        });
+
+        // --- Avatar upload ---
+
+        app.post("/api/users/me/avatar", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+
+            std::string content_type(req->getQuery("content_type"));
+            if (content_type.empty()) content_type = "image/png";
+
+            // Only allow image types
+            if (content_type.find("image/") != 0) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Only image files are allowed for avatars"})");
+                return;
+            }
+
+            auto body = std::make_shared<std::string>();
+            int64_t max_size = 50 * 1024 * 1024; // 50MB max for avatars
+
+            res->onData([this, res, body, max_size, user_id, content_type](std::string_view data, bool last) mutable {
+                body->append(data);
+
+                if (static_cast<int64_t>(body->size()) > max_size) {
+                    res->writeStatus("413")->writeHeader("Content-Type", "application/json")
+                        ->end(R"json({"error":"Avatar too large (max 20MB)"})json");
+                    return;
+                }
+
+                if (!last) return;
+
+                try {
+                    // Delete old avatar file if exists
+                    auto current = db.find_user_by_id(user_id);
+                    if (current && !current->avatar_file_id.empty()) {
+                        std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
+                        std::filesystem::remove(old_path);
+                    }
+
+                    // Generate file ID and save
+                    std::string file_id = random_hex(32);
+                    std::string path = config.upload_dir + "/" + file_id;
+                    std::ofstream out(path, std::ios::binary);
+                    if (!out) {
+                        res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"Failed to save avatar"})");
+                        return;
+                    }
+                    out.write(body->data(), body->size());
+                    out.close();
+
+                    db.set_user_avatar(user_id, file_id);
+                    auto updated = db.find_user_by_id(user_id);
+
+                    json user_json = {{"id", updated->id}, {"username", updated->username},
+                                 {"display_name", updated->display_name}, {"role", updated->role},
+                                 {"is_online", updated->is_online}, {"last_seen", updated->last_seen},
+                                 {"bio", updated->bio}, {"status", updated->status},
+                                 {"avatar_file_id", updated->avatar_file_id}, {"profile_color", updated->profile_color}};
+                    res->writeHeader("Content-Type", "application/json")->end(user_json.dump());
+
+                    json broadcast = {{"type", "user_updated"}, {"user", user_json}};
+                    ws.broadcast_to_presence(broadcast.dump());
+                } catch (const std::exception& e) {
+                    res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+                        ->end(json({{"error", e.what()}}).dump());
+                }
+            });
+            res->onAborted([]() {});
+        });
+
+        app.del("/api/users/me/avatar", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+
+            try {
+                auto current = db.find_user_by_id(user_id);
+                if (current && !current->avatar_file_id.empty()) {
+                    std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
+                    std::filesystem::remove(old_path);
+                }
+
+                db.clear_user_avatar(user_id);
+                auto updated = db.find_user_by_id(user_id);
+
+                json user_json = {{"id", updated->id}, {"username", updated->username},
+                             {"display_name", updated->display_name}, {"role", updated->role},
+                             {"is_online", updated->is_online}, {"last_seen", updated->last_seen},
+                             {"bio", updated->bio}, {"status", updated->status},
+                             {"avatar_file_id", updated->avatar_file_id}, {"profile_color", updated->profile_color}};
+                res->writeHeader("Content-Type", "application/json")->end(user_json.dump());
+
+                json broadcast = {{"type", "user_updated"}, {"user", user_json}};
+                ws.broadcast_to_presence(broadcast.dump());
+            } catch (const std::exception& e) {
+                res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", e.what()}}).dump());
+            }
+        });
+
+        // Serve avatar files (public, no auth needed for displaying in chat)
+        app.get("/api/avatars/:id", [this](auto* res, auto* req) {
+            std::string file_id(req->getParameter("id"));
+
+            // Validate file_id is hex-only (prevent path traversal)
+            for (char c : file_id) {
+                if (!std::isxdigit(static_cast<unsigned char>(c))) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(R"({"error":"Invalid file ID"})");
+                    return;
+                }
+            }
+
+            std::string path = config.upload_dir + "/" + file_id;
+            std::ifstream in(path, std::ios::binary | std::ios::ate);
+            if (!in) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Avatar not found"})");
+                return;
+            }
+
+            auto size = in.tellg();
+            in.seekg(0);
+            std::string content(size, '\0');
+            in.read(content.data(), size);
+
+            res->writeHeader("Content-Type", "image/png")
+                ->writeHeader("Cache-Control", "public, max-age=31536000, immutable")
+                ->end(content);
         });
 
         // --- Passkey management ---
@@ -406,5 +545,15 @@ struct UserHandler {
 private:
     std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
         return validate_session_or_401(res, req, db);
+    }
+
+    static std::string random_hex(int bytes) {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 255);
+        std::ostringstream oss;
+        for (int i = 0; i < bytes; ++i)
+            oss << std::hex << std::setfill('0') << std::setw(2) << dis(gen);
+        return oss.str();
     }
 };

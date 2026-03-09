@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Popover,
   PopoverTrigger,
@@ -10,6 +11,7 @@ import { faMessage } from '@fortawesome/free-solid-svg-icons';
 import type { User } from '../../types';
 import { useChatStore } from '../../stores/chatStore';
 import { OnlineStatusDot } from './OnlineStatusDot';
+import { UserAvatar } from './UserAvatar';
 import { relativeTime } from '../../utils/time';
 import * as api from '../../services/api';
 
@@ -39,6 +41,8 @@ export function UserPopoverCard({
     if (!channel?.space_id) return undefined;
     return s.spaces.find((sp) => sp.id === channel.space_id);
   });
+
+  const [isOpen, setIsOpen] = useState(false);
 
   if (!user) return children;
 
@@ -84,26 +88,43 @@ export function UserPopoverCard({
       useChatStore.getState().setChannels(channels);
       useChatStore.getState().setActiveView({ type: 'messages' });
       useChatStore.getState().setActiveChannel(dm.id);
+      setIsOpen(false);
     } catch (e) {
       console.error('Failed to start DM:', e);
     }
   };
 
   return (
-    <Popover placement='bottom-start' showArrow offset={6}>
+    <Popover
+      placement='bottom-start'
+      showArrow
+      offset={6}
+      isOpen={isOpen}
+      onOpenChange={setIsOpen}
+    >
       <PopoverTrigger>{children}</PopoverTrigger>
-      <PopoverContent className='p-3 max-w-[240px]'>
+      <PopoverContent className='p-3 max-w-[260px]'>
         <div className='flex flex-col gap-1.5'>
-          <div className='flex items-center gap-2'>
-            <OnlineStatusDot
-              isOnline={user.is_online}
-              lastSeen={user.last_seen}
+          <div className='flex items-center gap-3'>
+            <UserAvatar
+              username={user.username}
+              avatarFileId={user.avatar_file_id}
+              profileColor={user.profile_color}
+              size='lg'
             />
-            <span className='font-semibold text-sm text-foreground truncate'>
-              {user.display_name}
-            </span>
+            <div className='flex flex-col min-w-0'>
+              <div className='flex items-center gap-1.5'>
+                <OnlineStatusDot
+                  isOnline={user.is_online}
+                  lastSeen={user.last_seen}
+                />
+                <span className='font-semibold text-sm text-foreground truncate'>
+                  {user.display_name}
+                </span>
+              </div>
+              <p className='text-xs text-default-400'>@{user.username}</p>
+            </div>
           </div>
-          <p className='text-xs text-default-400'>@{user.username}</p>
           {roleBadges.length > 0 && (
             <div className='flex flex-wrap gap-1'>
               {roleBadges.map((badge) => (

@@ -18,8 +18,9 @@ import type {
   ChannelSearchResult,
 } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
-import { OnlineStatusDot } from '../common/OnlineStatusDot';
 import { UserPopoverCard } from '../common/UserPopoverCard';
+import { UserAvatar } from '../common/UserAvatar';
+import { SpaceAvatar } from '../common/SpaceAvatar';
 import { relativeTime } from '../../utils/time';
 
 type SearchTab = 'messages' | 'users' | 'files' | 'channels' | 'spaces';
@@ -589,7 +590,12 @@ function UserResultItem({
 }) {
   return (
     <div className='flex items-center gap-2 p-2 mx-1 rounded-lg hover:bg-content2/50 transition-colors'>
-      <OnlineStatusDot isOnline={user.is_online} lastSeen={user.last_seen} />
+      <UserAvatar
+        username={user.username}
+        avatarFileId={user.avatar_file_id}
+        profileColor={user.profile_color}
+        size='sm'
+      />
       <div className='flex-1 min-w-0'>
         <UserPopoverCard user={user}>
           <span className='text-sm font-medium cursor-pointer hover:underline truncate'>
@@ -738,13 +744,12 @@ function SpaceResultItem({
       className='flex items-center gap-2 p-2 mx-1 rounded-lg hover:bg-content2/50 transition-colors cursor-pointer'
       onClick={onNavigate}
     >
-      {result.icon ? (
-        <span className='text-sm flex-shrink-0'>{result.icon}</span>
-      ) : (
-        <span className='w-5 h-5 rounded bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0'>
-          {result.name[0]?.toUpperCase()}
-        </span>
-      )}
+      <SpaceAvatar
+        name={result.name}
+        avatarFileId={result.avatar_file_id}
+        profileColor={result.profile_color}
+        size='sm'
+      />
       <div className='flex-1 min-w-0'>
         <p className='text-sm font-medium truncate'>{result.name}</p>
         {result.description && (

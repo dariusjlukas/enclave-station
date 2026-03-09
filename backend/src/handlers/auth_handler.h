@@ -202,7 +202,9 @@ private:
             {"display_name", user.display_name},
             {"role", user.role},
             {"bio", user.bio},
-            {"status", user.status}
+            {"status", user.status},
+            {"avatar_file_id", user.avatar_file_id},
+            {"profile_color", user.profile_color}
         };
     }
 

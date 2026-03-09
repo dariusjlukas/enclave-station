@@ -11,6 +11,7 @@ import {
   faListCheck,
 } from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
+import { SpaceAvatar } from '../common/SpaceAvatar';
 
 interface Props {
   spaceId: string;
@@ -59,10 +60,17 @@ export function SpacePanel({
     <div className='flex flex-col h-full'>
       <div className='p-3 border-b border-default-100'>
         <div className='flex items-center justify-between'>
-          <h3 className='text-sm font-semibold text-foreground truncate'>
-            {space.icon && <span className='mr-1'>{space.icon}</span>}
-            {space.name}
-          </h3>
+          <div className='flex items-center gap-2 min-w-0'>
+            <SpaceAvatar
+              name={space.name}
+              avatarFileId={space.avatar_file_id}
+              profileColor={space.profile_color}
+              size='sm'
+            />
+            <h3 className='text-sm font-semibold text-foreground truncate'>
+              {space.name}
+            </h3>
+          </div>
           <Button
             isIconOnly
             variant='light'

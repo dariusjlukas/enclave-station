@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Button } from '@heroui/react';
 import { useChatStore } from '../../stores/chatStore';
 import { OnlineStatusDot } from '../common/OnlineStatusDot';
+import { UserAvatar } from '../common/UserAvatar';
 import { UserPopoverCard } from '../common/UserPopoverCard';
 
 interface Props {
@@ -14,6 +15,7 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
   const activeChannelId = useChatStore((s) => s.activeChannelId);
   const setActiveChannel = useChatStore((s) => s.setActiveChannel);
   const currentUser = useChatStore((s) => s.user);
+  const users = useChatStore((s) => s.users);
   const unreadCounts = useChatStore((s) => s.unreadCounts);
 
   const conversations = useMemo(
@@ -52,6 +54,12 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
 
   const isGroupChat = (channel: (typeof conversations)[0]) => {
     return (channel.members?.length || 0) > 2;
+  };
+
+  const getOtherUser = (channel: (typeof conversations)[0]) => {
+    const otherId = getOtherUserId(channel);
+    if (!otherId) return undefined;
+    return users.find((u) => u.id === otherId);
   };
 
   const getOnlineInfo = (channel: (typeof conversations)[0]) => {
@@ -108,6 +116,17 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
             }`}
           >
             <OnlineStatusDot {...getOnlineInfo(ch)} />
+            {(() => {
+              const other = getOtherUser(ch);
+              return other ? (
+                <UserAvatar
+                  username={other.username}
+                  avatarFileId={other.avatar_file_id}
+                  profileColor={other.profile_color}
+                  size='sm'
+                />
+              ) : null;
+            })()}
             {getOtherUserId(ch) ? (
               <UserPopoverCard userId={getOtherUserId(ch)}>
                 <span
@@ -164,6 +183,17 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
                   }`}
                 >
                   <OnlineStatusDot {...getOnlineInfo(ch)} />
+                  {(() => {
+                    const other = getOtherUser(ch);
+                    return other ? (
+                      <UserAvatar
+                        username={other.username}
+                        avatarFileId={other.avatar_file_id}
+                        profileColor={other.profile_color}
+                        size='sm'
+                      />
+                    ) : null;
+                  })()}
                   <span className='truncate'>{getConversationName(ch)}</span>
                   {isGroupChat(ch) && (
                     <span className='text-xs text-default-400 flex-shrink-0'>

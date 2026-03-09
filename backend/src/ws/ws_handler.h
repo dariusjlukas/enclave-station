@@ -108,11 +108,13 @@ public:
                 // Subscribe to presence before broadcasting so other users' events are received
                 ws->subscribe("presence");
 
-                // Broadcast online status
+                // Broadcast online status (publish sends to others, send to self)
                 json online_msg = {{"type", "user_online"},
                                     {"user_id", data->user_id},
                                     {"username", data->username}};
-                ws->publish("presence", online_msg.dump());
+                auto online_str = online_msg.dump();
+                ws->publish("presence", online_str);
+                ws->send(online_str, uWS::OpCode::TEXT);
             },
 
             .message = [this](auto* ws, std::string_view message, uWS::OpCode) {
@@ -211,9 +213,15 @@ public:
 
     void broadcast_to_channel(const std::string& channel_id, const std::string& message) {
         std::lock_guard<std::mutex> lock(mutex_);
+        std::string topic = "channel:" + channel_id;
         for (auto& [uid, sockets] : user_sockets_) {
             if (!sockets.empty()) {
-                (*sockets.begin())->publish("channel:" + channel_id, message);
+                auto* ws = *sockets.begin();
+                ws->publish(topic, message);
+                // publish() excludes the publishing socket, so send to it directly
+                if (ws->isSubscribed(topic)) {
+                    ws->send(message, uWS::OpCode::TEXT);
+                }
                 return;
             }
         }
@@ -265,9 +273,15 @@ public:
 
     void broadcast_to_space(const std::string& space_id, const std::string& message) {
         std::lock_guard<std::mutex> lock(mutex_);
+        std::string topic = "space:" + space_id;
         for (auto& [uid, sockets] : user_sockets_) {
             if (!sockets.empty()) {
-                (*sockets.begin())->publish("space:" + space_id, message);
+                auto* ws = *sockets.begin();
+                ws->publish(topic, message);
+                // publish() excludes the publishing socket, so send to it directly
+                if (ws->isSubscribed(topic)) {
+                    ws->send(message, uWS::OpCode::TEXT);
+                }
                 return;
             }
         }

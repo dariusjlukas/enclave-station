@@ -37,6 +37,82 @@ class TestUserProfile:
         assert r.status_code == 200
 
 
+class TestUserAvatarFields:
+    def test_profile_has_avatar_fields(self, client, admin_user):
+        r = client.get("/api/users/me", headers=admin_user["headers"])
+        assert r.status_code == 200
+        data = r.json()
+        assert "avatar_file_id" in data
+        assert "profile_color" in data
+
+    def test_update_profile_color(self, client, admin_user):
+        r = client.put("/api/users/me", json={
+            "display_name": "Admin User",
+            "profile_color": "#3182ce",
+        }, headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert r.json()["profile_color"] == "#3182ce"
+
+    def test_user_list_has_avatar_fields(self, client, admin_user, regular_user):
+        r = client.get("/api/users", headers=admin_user["headers"])
+        assert r.status_code == 200
+        for u in r.json():
+            assert "avatar_file_id" in u
+            assert "profile_color" in u
+
+
+class TestUserAvatar:
+    def test_upload_avatar(self, client, admin_user):
+        import struct, zlib
+        def make_png():
+            raw = b'\x00\x00\x00\x00'
+            data = zlib.compress(raw)
+            def chunk(ctype, body):
+                c = ctype + body
+                return struct.pack('>I', len(body)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+            ihdr = struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0)
+            return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', data) + chunk(b'IEND', b'')
+        png_data = make_png()
+        r = client.post("/api/users/me/avatar",
+                        content=png_data,
+                        headers={
+                            **admin_user["headers"],
+                            "Content-Type": "image/png",
+                        })
+        assert r.status_code == 200
+        assert r.json()["avatar_file_id"] != ""
+
+    def test_delete_avatar(self, client, admin_user):
+        r = client.delete("/api/users/me/avatar",
+                          headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert r.json()["avatar_file_id"] == ""
+
+    def test_avatar_served_publicly(self, client, admin_user):
+        import struct, zlib
+        def make_png():
+            raw = b'\x00\x00\x00\x00'
+            data = zlib.compress(raw)
+            def chunk(ctype, body):
+                c = ctype + body
+                return struct.pack('>I', len(body)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+            ihdr = struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0)
+            return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', data) + chunk(b'IEND', b'')
+        png_data = make_png()
+        r = client.post("/api/users/me/avatar",
+                        content=png_data,
+                        headers={
+                            **admin_user["headers"],
+                            "Content-Type": "image/png",
+                        })
+        file_id = r.json()["avatar_file_id"]
+        # Fetch without auth
+        r = client.get(f"/api/avatars/{file_id}")
+        assert r.status_code == 200
+        assert r.headers.get("content-type") == "image/png"
+        assert "immutable" in r.headers.get("cache-control", "")
+
+
 class TestPKIKeys:
     def test_list_keys(self, client, admin_user):
         r = client.get("/api/users/me/keys", headers=admin_user["headers"])

@@ -12,4 +12,6 @@ struct User {
     std::string created_at;
     std::string bio;
     std::string status;
+    std::string avatar_file_id;
+    std::string profile_color;
 };

@@ -44,7 +44,8 @@ struct SearchHandler {
                         arr.push_back({{"id", u.id}, {"username", u.username},
                                        {"display_name", u.display_name}, {"role", u.role},
                                        {"is_online", u.is_online}, {"last_seen", u.last_seen},
-                                       {"bio", u.bio}, {"status", u.status}});
+                                       {"bio", u.bio}, {"status", u.status},
+                                       {"avatar_file_id", u.avatar_file_id}, {"profile_color", u.profile_color}});
                     }
                     json resp = {{"type", "users"}, {"results", arr}};
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
@@ -102,8 +103,9 @@ struct SearchHandler {
                     for (const auto& s : results) {
                         arr.push_back({{"id", s.id}, {"name", s.name},
                                        {"description", s.description},
-                                       {"icon", s.icon},
-                                       {"is_public", s.is_public}});
+                                       {"is_public", s.is_public},
+                                       {"avatar_file_id", s.avatar_file_id},
+                                       {"profile_color", s.profile_color}});
                     }
                     json resp = {{"type", "spaces"}, {"results", arr}};
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
@@ -184,7 +186,8 @@ struct SearchHandler {
                         arr.push_back({{"id", u.id}, {"username", u.username},
                                        {"display_name", u.display_name}, {"role", u.role},
                                        {"is_online", u.is_online}, {"last_seen", u.last_seen},
-                                       {"bio", u.bio}, {"status", u.status}});
+                                       {"bio", u.bio}, {"status", u.status},
+                                       {"avatar_file_id", u.avatar_file_id}, {"profile_color", u.profile_color}});
                     }
                     json resp = {{"type", "users"}, {"results", arr}};
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
@@ -206,8 +209,9 @@ struct SearchHandler {
                     for (const auto& s : results) {
                         arr.push_back({{"id", s.id}, {"name", s.name},
                                        {"description", s.description},
-                                       {"icon", s.icon},
-                                       {"is_public", s.is_public}});
+                                       {"is_public", s.is_public},
+                                       {"avatar_file_id", s.avatar_file_id},
+                                       {"profile_color", s.profile_color}});
                     }
                     json resp = {{"type", "spaces"}, {"results", arr}};
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());

@@ -7,6 +7,8 @@ export interface User {
   last_seen?: string;
   bio: string;
   status: string;
+  avatar_file_id: string;
+  profile_color: string;
 }
 
 export type ChannelRole = 'owner' | 'admin' | 'write' | 'read';
@@ -39,10 +41,11 @@ export interface Space {
   id: string;
   name: string;
   description: string;
-  icon: string;
   is_public: boolean;
   default_role: ChannelRole;
   is_archived?: boolean;
+  avatar_file_id?: string;
+  profile_color?: string;
   my_role: ChannelRole;
   created_at: string;
   members: ChannelMemberInfo[];
@@ -88,7 +91,6 @@ export interface SpaceInvite {
   id: string;
   space_id: string;
   space_name: string;
-  space_icon: string;
   invited_by_username: string;
   role: ChannelRole;
   created_at: string;

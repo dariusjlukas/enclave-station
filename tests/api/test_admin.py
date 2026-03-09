@@ -36,6 +36,81 @@ class TestAdminInvites:
         data = pki_register(client, "invited", "Invited User", token=token)
         assert data["user"]["username"] == "invited"
 
+    def test_revoke_invite(self, client, admin_user):
+        r = client.post("/api/admin/invites", json={},
+                        headers=admin_user["headers"])
+        token_val = r.json()["token"]
+        # Get invite id
+        r = client.get("/api/admin/invites", headers=admin_user["headers"])
+        invite = next(i for i in r.json() if i["token"] == token_val)
+        # Revoke it
+        r = client.delete(f"/api/admin/invites/{invite['id']}",
+                          headers=admin_user["headers"])
+        assert r.status_code == 200
+        # Should no longer appear as active
+        r = client.get("/api/admin/invites", headers=admin_user["headers"])
+        remaining_ids = [i["id"] for i in r.json()]
+        assert invite["id"] not in remaining_ids
+
+    def test_revoke_used_invite_fails(self, client, admin_user):
+        # Set to invite mode and create an invite
+        client.put("/api/admin/settings", json={
+            "registration_mode": "invite",
+        }, headers=admin_user["headers"])
+        r = client.post("/api/admin/invites", json={},
+                        headers=admin_user["headers"])
+        token_val = r.json()["token"]
+        # Use it by registering
+        pki_register(client, "invitee", "Invitee", token=token_val)
+        # Get the invite id
+        r = client.get("/api/admin/invites", headers=admin_user["headers"])
+        invite = next(i for i in r.json() if i["token"] == token_val)
+        assert invite["used"] is True
+        # Revoking a used invite should fail
+        r = client.delete(f"/api/admin/invites/{invite['id']}",
+                          headers=admin_user["headers"])
+        assert r.status_code == 404
+
+    def test_revoke_nonexistent_invite_returns_404(self, client, admin_user):
+        r = client.delete("/api/admin/invites/00000000-0000-0000-0000-000000000000",
+                          headers=admin_user["headers"])
+        assert r.status_code == 404
+
+    def test_non_admin_cannot_revoke_invite(self, client, admin_user, regular_user):
+        r = client.post("/api/admin/invites", json={},
+                        headers=admin_user["headers"])
+        r2 = client.get("/api/admin/invites", headers=admin_user["headers"])
+        invite_id = r2.json()[0]["id"]
+        r = client.delete(f"/api/admin/invites/{invite_id}",
+                          headers=regular_user["headers"])
+        assert r.status_code == 403
+
+    def test_register_with_revoked_invite_rejected(self, client, admin_user):
+        client.put("/api/admin/settings", json={
+            "registration_mode": "invite",
+        }, headers=admin_user["headers"])
+        # Create and revoke an invite
+        r = client.post("/api/admin/invites", json={},
+                        headers=admin_user["headers"])
+        token_val = r.json()["token"]
+        r = client.get("/api/admin/invites", headers=admin_user["headers"])
+        invite = next(i for i in r.json() if i["token"] == token_val)
+        client.delete(f"/api/admin/invites/{invite['id']}",
+                      headers=admin_user["headers"])
+        # Try to register with the revoked token
+        identity = PKIIdentity()
+        r = client.post("/api/auth/pki/challenge", json={})
+        challenge = r.json()["challenge"]
+        r = client.post("/api/auth/pki/register", json={
+            "username": "blocked",
+            "display_name": "Blocked",
+            "public_key": identity.public_key_b64url,
+            "challenge": challenge,
+            "signature": identity.sign(challenge),
+            "invite_token": token_val,
+        })
+        assert r.status_code == 403
+
     def test_register_without_invite_rejected(self, client, admin_user):
         client.put("/api/admin/settings", json={
             "registration_mode": "invite",

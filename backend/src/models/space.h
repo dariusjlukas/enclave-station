@@ -6,12 +6,13 @@ struct Space {
     std::string id;
     std::string name;
     std::string description;
-    std::string icon;
     bool is_public = true;
     std::string default_role = "write";
     std::string created_by;
     std::string created_at;
     bool is_archived = false;
+    std::string avatar_file_id;
+    std::string profile_color;
 };
 
 struct SpaceMember {

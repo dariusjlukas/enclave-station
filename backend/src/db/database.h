@@ -24,9 +24,13 @@ public:
                      const std::string& public_key, const std::string& role = "user");
     std::vector<User> list_users();
     void set_user_online(const std::string& user_id, bool online);
+    void set_all_users_offline();
     int count_users();
     User update_user_profile(const std::string& user_id, const std::string& display_name,
-                              const std::string& bio, const std::string& status);
+                              const std::string& bio, const std::string& status,
+                              const std::string& profile_color = "");
+    void set_user_avatar(const std::string& user_id, const std::string& avatar_file_id);
+    void clear_user_avatar(const std::string& user_id);
     void delete_user(const std::string& user_id);
     void update_user_role(const std::string& user_id, const std::string& role);
 
@@ -42,17 +46,19 @@ public:
 
     // Spaces
     Space create_space(const std::string& name, const std::string& description,
-                       const std::string& icon, bool is_public,
-                       const std::string& created_by,
+                       bool is_public, const std::string& created_by,
                        const std::string& default_role = "write");
     std::vector<Space> list_user_spaces(const std::string& user_id);
     std::optional<Space> find_space_by_id(const std::string& id);
     Space update_space(const std::string& space_id, const std::string& name,
-                       const std::string& description, const std::string& icon,
-                       bool is_public, const std::string& default_role);
+                       const std::string& description, bool is_public,
+                       const std::string& default_role,
+                       const std::string& profile_color = "");
     std::vector<Space> list_public_spaces(const std::string& user_id,
                                            const std::string& search = "");
     std::vector<Space> list_all_spaces();
+    void set_space_avatar(const std::string& space_id, const std::string& avatar_file_id);
+    void clear_space_avatar(const std::string& space_id);
 
     // Space membership
     bool is_space_member(const std::string& space_id, const std::string& user_id);
@@ -162,6 +168,7 @@ public:
         std::string expires_at, created_at;
     };
     std::vector<InviteInfo> list_invites();
+    bool revoke_invite(const std::string& id);
 
     // Join requests
     std::string create_join_request(const std::string& username, const std::string& display_name,
@@ -180,7 +187,7 @@ public:
 
     // Space invites
     struct SpaceInvite {
-        std::string id, space_id, space_name, space_icon;
+        std::string id, space_id, space_name;
         std::string invited_user_id, invited_by, invited_by_username;
         std::string role, status, created_at;
     };
@@ -261,8 +268,9 @@ public:
         int64_t file_size;
     };
     struct SpaceSearchResult {
-        std::string id, name, description, icon;
+        std::string id, name, description;
         bool is_public;
+        std::string avatar_file_id, profile_color;
     };
     struct ChannelSearchResult {
         std::string id, name, description, space_name, space_id;

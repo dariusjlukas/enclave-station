@@ -54,6 +54,20 @@ struct AdminHandler {
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
         });
 
+        app.del("/api/admin/invites/:id", [this](auto* res, auto* req) {
+            auto user_id = get_admin_id(res, req);
+            if (user_id.empty()) return;
+
+            std::string invite_id(req->getParameter("id"));
+            bool deleted = db.revoke_invite(invite_id);
+            if (!deleted) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invite not found or already used"})");
+                return;
+            }
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+
         app.get("/api/admin/requests", [this](auto* res, auto* req) {
             auto user_id = get_admin_id(res, req);
             if (user_id.empty()) return;
