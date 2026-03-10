@@ -4,3 +4,6 @@
 [submodule "backend/libs/json"]
 	path = backend/libs/json
 	url = https://github.com/nlohmann/json.git
+[submodule "backend/libs/argon2"]
+	path = backend/libs/argon2
+	url = https://github.com/P-H-C/phc-winner-argon2.git
