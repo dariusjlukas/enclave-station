@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include "db/database.h"
 #include "auth/webauthn.h"
+#include "auth/password.h"
 #include "config.h"
 #include "ws/ws_handler.h"
 #include "handlers/handler_utils.h"
@@ -335,7 +336,14 @@ private:
             {"session_expiry_hours", std::stoi(get_setting_or("session_expiry_hours",
                                      std::to_string(config.session_expiry_hours)))},
             {"setup_completed", get_setting_or("setup_completed", "false") == "true"},
-            {"server_archived", db.is_server_archived()}
+            {"server_archived", db.is_server_archived()},
+            {"password_min_length", std::stoi(get_setting_or("password_min_length", "8"))},
+            {"password_require_uppercase", get_setting_or("password_require_uppercase", "true") == "true"},
+            {"password_require_lowercase", get_setting_or("password_require_lowercase", "true") == "true"},
+            {"password_require_number", get_setting_or("password_require_number", "true") == "true"},
+            {"password_require_special", get_setting_or("password_require_special", "false") == "true"},
+            {"password_max_age_days", std::stoi(get_setting_or("password_max_age_days", "0"))},
+            {"password_history_count", std::stoi(get_setting_or("password_history_count", "0"))}
         };
     }
 
@@ -356,7 +364,7 @@ private:
                 }
                 for (const auto& m : arr) {
                     auto s = m.get<std::string>();
-                    if (s != "passkey" && s != "pki") {
+                    if (s != "passkey" && s != "pki" && s != "password") {
                         throw std::runtime_error("Invalid auth method: " + s);
                     }
                 }
@@ -367,7 +375,7 @@ private:
             }
             if (j.contains("registration_mode")) {
                 auto mode = j["registration_mode"].get<std::string>();
-                if (mode != "invite" && mode != "approval" && mode != "open") {
+                if (mode != "invite" && mode != "invite_only" && mode != "approval" && mode != "open") {
                     throw std::runtime_error("Invalid registration mode: " + mode);
                 }
                 db.set_setting("registration_mode", mode);
@@ -380,6 +388,35 @@ private:
                 int hours = j["session_expiry_hours"].get<int>();
                 if (hours <= 0) throw std::runtime_error("Session expiry must be positive");
                 db.set_setting("session_expiry_hours", std::to_string(hours));
+            }
+
+            // Password policy settings
+            if (j.contains("password_min_length")) {
+                int v = j["password_min_length"].get<int>();
+                if (v < 1) throw std::runtime_error("Minimum password length must be at least 1");
+                db.set_setting("password_min_length", std::to_string(v));
+            }
+            if (j.contains("password_require_uppercase"))
+                db.set_setting("password_require_uppercase",
+                               j["password_require_uppercase"].get<bool>() ? "true" : "false");
+            if (j.contains("password_require_lowercase"))
+                db.set_setting("password_require_lowercase",
+                               j["password_require_lowercase"].get<bool>() ? "true" : "false");
+            if (j.contains("password_require_number"))
+                db.set_setting("password_require_number",
+                               j["password_require_number"].get<bool>() ? "true" : "false");
+            if (j.contains("password_require_special"))
+                db.set_setting("password_require_special",
+                               j["password_require_special"].get<bool>() ? "true" : "false");
+            if (j.contains("password_max_age_days")) {
+                int v = j["password_max_age_days"].get<int>();
+                if (v < 0) throw std::runtime_error("Password max age must be non-negative");
+                db.set_setting("password_max_age_days", std::to_string(v));
+            }
+            if (j.contains("password_history_count")) {
+                int v = j["password_history_count"].get<int>();
+                if (v < 0) throw std::runtime_error("Password history count must be non-negative");
+                db.set_setting("password_history_count", std::to_string(v));
             }
 
             if (mark_setup) {
@@ -433,6 +470,10 @@ private:
                 uint32_t sign_count = cred.value("sign_count", 0);
                 std::string transports = cred.value("transports", "[]");
                 db.store_webauthn_credential(user.id, credential_id, pk_bytes, sign_count, "Passkey", transports);
+            } else if (request->auth_method == "password" && !request->credential_data.empty()) {
+                auto cred = json::parse(request->credential_data);
+                std::string password_hash = cred.at("password_hash");
+                db.store_password(user.id, password_hash);
             }
 
             // Create session token for polling pickup

@@ -255,6 +255,19 @@ public:
     // Count total auth credentials for a user (passkeys + PKI keys)
     int count_user_credentials(const std::string& user_id);
 
+    // Password credentials
+    std::optional<User> find_user_by_username(const std::string& username);
+    void store_password(const std::string& user_id, const std::string& password_hash);
+    std::optional<std::string> get_password_hash(const std::string& user_id);
+    std::string get_password_created_at(const std::string& user_id);
+    bool has_password(const std::string& user_id);
+    void delete_password(const std::string& user_id);
+    bool is_password_expired(const std::string& user_id, int max_age_days);
+
+    // Password history
+    void add_password_history(const std::string& user_id, const std::string& password_hash);
+    std::vector<std::string> get_password_history(const std::string& user_id, int count);
+
     // Search
     struct MessageSearchResult {
         std::string id, channel_id, channel_name, space_name;

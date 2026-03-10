@@ -9,6 +9,7 @@ export interface User {
   status: string;
   avatar_file_id: string;
   profile_color: string;
+  has_password?: boolean;
 }
 
 export type ChannelRole = 'owner' | 'admin' | 'write' | 'read';

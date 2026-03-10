@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Button, Card, CardBody, Alert, Divider } from '@heroui/react';
+import { Button, Card, CardBody, Input, Alert, Divider } from '@heroui/react';
 import { useChatStore } from '../../stores/chatStore';
 import { browserSupportsWebAuthn, authenticate } from '../../services/webauthn';
 import * as pki from '../../services/pki';
@@ -18,6 +18,8 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
   const [loading, setLoading] = useState('');
   const [authMethods, setAuthMethods] = useState<string[]>([]);
   const [hasLocalKey, setHasLocalKey] = useState(false);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [serverName, setServerName] = useState('Isle Chat');
   const [configLoading, setConfigLoading] = useState(true);
   const [serverDown, setServerDown] = useState(false);
@@ -89,8 +91,30 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
     }
   };
 
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginUsername.trim() || !loginPassword) {
+      setError('Username and password are required');
+      return;
+    }
+    setLoading('password');
+    setError('');
+    try {
+      const result = await api.passwordLogin({
+        username: loginUsername.trim(),
+        password: loginPassword,
+      });
+      setAuth(result.user, result.token);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Login failed');
+    } finally {
+      setLoading('');
+    }
+  };
+
   const passkeysEnabled = authMethods.includes('passkey');
   const pkiEnabled = authMethods.includes('pki') && pki.isWebCryptoAvailable();
+  const passwordEnabled = authMethods.includes('password');
   const webauthnSupported = browserSupportsWebAuthn();
 
   return (
@@ -168,6 +192,50 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
                 <p className='text-sm text-default-400 text-center'>
                   No browser key on this device
                 </p>
+              )}
+
+              {passwordEnabled && (passkeysEnabled || pkiEnabled) && (
+                <div className='relative my-2'>
+                  <Divider />
+                  <span className='absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-content1 px-2 text-xs text-default-400'>
+                    or
+                  </span>
+                </div>
+              )}
+
+              {passwordEnabled && (
+                <form onSubmit={handlePasswordLogin} className='space-y-3'>
+                  <Input
+                    label='Username'
+                    variant='bordered'
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    size='sm'
+                  />
+                  <Input
+                    label='Password'
+                    type='password'
+                    variant='bordered'
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    size='sm'
+                  />
+                  <Button
+                    type='submit'
+                    color='primary'
+                    variant={
+                      passkeysEnabled || pkiEnabled ? 'bordered' : 'solid'
+                    }
+                    fullWidth
+                    isLoading={loading === 'password'}
+                    isDisabled={!!loading}
+                    size='lg'
+                  >
+                    {loading === 'password'
+                      ? 'Signing in...'
+                      : 'Sign in with Password'}
+                  </Button>
+                </form>
               )}
             </div>
           )}

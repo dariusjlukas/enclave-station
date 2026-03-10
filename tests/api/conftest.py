@@ -123,6 +123,34 @@ def pki_login(client: httpx.Client, identity: PKIIdentity) -> dict:
     return r.json()
 
 
+def password_register(client: httpx.Client, username: str, display_name: str,
+                      password: str = "TestPass123!",
+                      token: str | None = None) -> dict:
+    """Register a new user via password and return {token, user}."""
+    body: dict = {
+        "username": username,
+        "display_name": display_name,
+        "password": password,
+    }
+    if token is not None:
+        body["token"] = token
+
+    r = client.post("/api/auth/password/register", json=body)
+    r.raise_for_status()
+    return r.json()
+
+
+def password_login(client: httpx.Client, username: str,
+                   password: str = "TestPass123!") -> dict:
+    """Login via password and return {token, user}."""
+    r = client.post("/api/auth/password/login", json={
+        "username": username,
+        "password": password,
+    })
+    r.raise_for_status()
+    return r.json()
+
+
 def auth_header(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 

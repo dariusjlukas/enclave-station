@@ -375,6 +375,28 @@ void Database::run_migrations() {
         ALTER TABLE spaces ADD COLUMN IF NOT EXISTS profile_color VARCHAR(7) DEFAULT '';
     )SQL");
 
+    // Password credentials
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS password_credentials (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_password_credentials_user ON password_credentials(user_id);
+    )SQL");
+
+    // Password history (for preventing reuse)
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS password_history (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_password_history_user ON password_history(user_id);
+    )SQL");
+
     txn.commit();
     std::cout << "[DB] Migrations complete" << std::endl;
 }
@@ -2856,4 +2878,112 @@ int Database::count_channel_members(const std::string& channel_id) {
         "SELECT COUNT(*) FROM channel_members WHERE channel_id = $1", channel_id);
     txn.commit();
     return r[0][0].as<int>();
+}
+
+// --- Password credentials ---
+
+std::optional<User> Database::find_user_by_username(const std::string& username) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
+        "FROM users u WHERE u.username = $1", username);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    return User{
+        r[0][0].as<std::string>(), r[0][1].as<std::string>(),
+        r[0][2].as<std::string>(), r[0][3].as<std::string>(),
+        r[0][4].as<std::string>(), r[0][5].as<bool>(),
+        r[0][6].is_null() ? "" : r[0][6].as<std::string>(),
+        r[0][7].as<std::string>(),
+        r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
+        r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
+        r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
+        r[0][11].is_null() ? "" : r[0][11].as<std::string>()
+    };
+}
+
+void Database::store_password(const std::string& user_id, const std::string& password_hash) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    // Remove any existing password for this user (one password per user)
+    txn.exec_params("DELETE FROM password_credentials WHERE user_id = $1", user_id);
+    txn.exec_params(
+        "INSERT INTO password_credentials (user_id, password_hash) VALUES ($1, $2)",
+        user_id, password_hash);
+    txn.commit();
+}
+
+std::optional<std::string> Database::get_password_hash(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT password_hash FROM password_credentials WHERE user_id = $1", user_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    return r[0][0].as<std::string>();
+}
+
+std::string Database::get_password_created_at(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT created_at::text FROM password_credentials WHERE user_id = $1", user_id);
+    txn.commit();
+    if (r.empty()) return "";
+    return r[0][0].as<std::string>();
+}
+
+void Database::add_password_history(const std::string& user_id, const std::string& password_hash) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO password_history (user_id, password_hash) VALUES ($1, $2)",
+        user_id, password_hash);
+    txn.commit();
+}
+
+std::vector<std::string> Database::get_password_history(const std::string& user_id, int count) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT password_hash FROM password_history WHERE user_id = $1 "
+        "ORDER BY created_at DESC LIMIT $2",
+        user_id, count);
+    txn.commit();
+    std::vector<std::string> hashes;
+    for (const auto& row : r) {
+        hashes.push_back(row[0].as<std::string>());
+    }
+    return hashes;
+}
+
+bool Database::has_password(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT COUNT(*) FROM password_credentials WHERE user_id = $1", user_id);
+    txn.commit();
+    return r[0][0].as<int>() > 0;
+}
+
+void Database::delete_password(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM password_credentials WHERE user_id = $1", user_id);
+    txn.exec_params("DELETE FROM password_history WHERE user_id = $1", user_id);
+    txn.commit();
+}
+
+bool Database::is_password_expired(const std::string& user_id, int max_age_days) {
+    if (max_age_days <= 0) return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT COUNT(*) FROM password_credentials "
+        "WHERE user_id = $1 AND created_at < NOW() - INTERVAL '1 day' * $2",
+        user_id, max_age_days);
+    txn.commit();
+    return r[0][0].as<int>() > 0;
 }

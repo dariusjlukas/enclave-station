@@ -29,8 +29,12 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [inviteToken, setInviteToken] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [passwordPolicy, setPasswordPolicy] =
+    useState<api.PasswordPolicy | null>(null);
   const [authMethods, setAuthMethods] = useState<string[]>([]);
   const [registrationMode, setRegistrationMode] = useState('invite');
   const [selectedMethod, setSelectedMethod] = useState<string>('passkey');
@@ -52,6 +56,7 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
       .then((config) => {
         setAuthMethods(config.auth_methods);
         setRegistrationMode(config.registration_mode);
+        if (config.password_policy) setPasswordPolicy(config.password_policy);
         if (config.auth_methods.length === 1) {
           setSelectedMethod(config.auth_methods[0]);
         }
@@ -138,13 +143,38 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
     }
   };
 
+  const handlePasswordRegister = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      if (password !== confirmPassword) {
+        setError('Passwords do not match');
+        setLoading(false);
+        return;
+      }
+      const result = await api.passwordRegister({
+        username: username.trim(),
+        display_name: displayName.trim(),
+        password,
+        token: inviteToken.trim() || undefined,
+      });
+      setAuth(result.user, result.token);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Registration failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleDirectRegister = (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !displayName.trim()) {
       setError('Username and display name are required');
       return;
     }
-    if (selectedMethod === 'pki') {
+    if (selectedMethod === 'password') {
+      handlePasswordRegister();
+    } else if (selectedMethod === 'pki') {
       handlePkiRegister();
     } else {
       handlePasskeyRegister();
@@ -162,7 +192,21 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
     setLoading(true);
     setError('');
     try {
-      if (selectedMethod === 'pki') {
+      if (selectedMethod === 'password') {
+        if (password !== confirmPassword) {
+          setError('Passwords do not match');
+          setLoading(false);
+          return;
+        }
+        const result = await api.requestAccess({
+          username: username.trim(),
+          display_name: displayName.trim(),
+          auth_method: 'password',
+          password,
+        });
+        setPhase('waiting');
+        startPolling(result.request_id);
+      } else if (selectedMethod === 'pki') {
         // PKI: generate key, get challenge, sign, submit
         const { challenge } = await api.getPkiChallenge();
         const publicKey = await pki.generateKeyPair();
@@ -222,13 +266,21 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
   const passkeysAvailable = authMethods.includes('passkey');
   const pkiAvailable =
     authMethods.includes('pki') && pki.isWebCryptoAvailable();
-  const showTabs = passkeysAvailable && pkiAvailable;
+  const passwordAvailable = authMethods.includes('password');
+  const availableMethods = [
+    passkeysAvailable && 'passkey',
+    pkiAvailable && 'pki',
+    passwordAvailable && 'password',
+  ].filter(Boolean) as string[];
+  const showTabs = availableMethods.length > 1;
 
-  // Can user register directly? (with invite token in invite mode, or always in open mode)
+  // Can user register directly? (with invite token in invite/invite_only mode, or always in open mode)
   const canDirectRegister =
-    registrationMode === 'open' || registrationMode === 'invite';
+    registrationMode === 'open' ||
+    registrationMode === 'invite' ||
+    registrationMode === 'invite_only';
 
-  // Can user request access? (invite or approval mode)
+  // Can user request access? (invite or approval mode, but not invite_only)
   const canRequestAccess =
     registrationMode === 'invite' || registrationMode === 'approval';
 
@@ -292,8 +344,9 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
                   variant='bordered'
                   fullWidth
                 >
-                  <Tab key='passkey' title='Passkey' />
-                  <Tab key='pki' title='Browser Key' />
+                  {passkeysAvailable && <Tab key='passkey' title='Passkey' />}
+                  {pkiAvailable && <Tab key='pki' title='Browser Key' />}
+                  {passwordAvailable && <Tab key='password' title='Password' />}
                 </Tabs>
               )}
 
@@ -324,6 +377,35 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
                   />
                 )}
 
+                {selectedMethod === 'password' && (
+                  <>
+                    <Input
+                      label='Password'
+                      type='password'
+                      variant='bordered'
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <Input
+                      label='Confirm Password'
+                      type='password'
+                      variant='bordered'
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                    />
+                    {passwordPolicy && (
+                      <p className='text-xs text-default-400'>
+                        {`Min ${passwordPolicy.min_length} chars`}
+                        {passwordPolicy.require_uppercase && ', uppercase'}
+                        {passwordPolicy.require_lowercase && ', lowercase'}
+                        {passwordPolicy.require_number && ', number'}
+                        {passwordPolicy.require_special &&
+                          ', special character'}
+                      </p>
+                    )}
+                  </>
+                )}
+
                 {canDirectRegister && (
                   <Button
                     type='submit'
@@ -335,9 +417,11 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
                   >
                     {loading
                       ? 'Creating account...'
-                      : selectedMethod === 'pki'
-                        ? 'Create Account with Browser Key'
-                        : 'Create Account with Passkey'}
+                      : selectedMethod === 'password'
+                        ? 'Create Account'
+                        : selectedMethod === 'pki'
+                          ? 'Create Account with Browser Key'
+                          : 'Create Account with Passkey'}
                   </Button>
                 )}
 
@@ -357,11 +441,13 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
                 )}
               </form>
 
-              <p className='mt-4 text-center text-sm text-default-500'>
-                {selectedMethod === 'pki'
-                  ? 'A cryptographic key will be generated and stored securely in your browser.'
-                  : 'A passkey will be created and stored securely by your device.'}
-              </p>
+              {selectedMethod !== 'password' && (
+                <p className='mt-4 text-center text-sm text-default-500'>
+                  {selectedMethod === 'pki'
+                    ? 'A cryptographic key will be generated and stored securely in your browser.'
+                    : 'A passkey will be created and stored securely by your device.'}
+                </p>
+              )}
 
               <Button
                 variant='light'

@@ -69,6 +69,15 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
   const [fileUploadsEnabled, setFileUploadsEnabled] = useState(true);
   const [sessionExpiryHours, setSessionExpiryHours] = useState('168');
 
+  // Password policy
+  const [pwMinLength, setPwMinLength] = useState('8');
+  const [pwRequireUpper, setPwRequireUpper] = useState(true);
+  const [pwRequireLower, setPwRequireLower] = useState(true);
+  const [pwRequireNumber, setPwRequireNumber] = useState(true);
+  const [pwRequireSpecial, setPwRequireSpecial] = useState(false);
+  const [pwMaxAgeDays, setPwMaxAgeDays] = useState('0');
+  const [pwHistoryCount, setPwHistoryCount] = useState('0');
+
   const applySettings = (data: api.AdminSettings) => {
     setStorageUsed(data.storage_used);
 
@@ -92,6 +101,14 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
     setFileUploadsEnabled(data.file_uploads_enabled);
     setSessionExpiryHours(String(data.session_expiry_hours));
     setServerArchived(data.server_archived);
+
+    setPwMinLength(String(data.password_min_length));
+    setPwRequireUpper(data.password_require_uppercase);
+    setPwRequireLower(data.password_require_lowercase);
+    setPwRequireNumber(data.password_require_number);
+    setPwRequireSpecial(data.password_require_special);
+    setPwMaxAgeDays(String(data.password_max_age_days));
+    setPwHistoryCount(String(data.password_history_count));
   };
 
   useEffect(() => {
@@ -121,6 +138,13 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
       session_expiry_hours: parseInt(sessionExpiryHours) || 168,
       max_file_size: Math.round(fileBytes),
       max_storage_size: Math.round(storageBytes),
+      password_min_length: parseInt(pwMinLength) || 8,
+      password_require_uppercase: pwRequireUpper,
+      password_require_lowercase: pwRequireLower,
+      password_require_number: pwRequireNumber,
+      password_require_special: pwRequireSpecial,
+      password_max_age_days: parseInt(pwMaxAgeDays) || 0,
+      password_history_count: parseInt(pwHistoryCount) || 0,
     };
   };
 
@@ -182,6 +206,7 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
         >
           <Checkbox value='passkey'>Passkeys (WebAuthn)</Checkbox>
           <Checkbox value='pki'>Browser Keys (PKI)</Checkbox>
+          <Checkbox value='password'>Password</Checkbox>
         </CheckboxGroup>
       </div>
 
@@ -197,9 +222,15 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
           onValueChange={setRegistrationMode}
         >
           <Radio value='invite'>
-            Invite Tokens
+            Invite Token or Approval
             <span className='text-xs text-default-400 ml-1'>
-              - Users may use an invite token to join
+              - Users may join with an invite token or request access
+            </span>
+          </Radio>
+          <Radio value='invite_only'>
+            Invite Token Only
+            <span className='text-xs text-default-400 ml-1'>
+              - Users must have an invite token to register
             </span>
           </Radio>
           <Radio value='approval'>
@@ -234,6 +265,85 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
           min='1'
         />
       </div>
+
+      {authMethods.includes('password') && (
+        <>
+          <Divider />
+
+          {/* Password Policy */}
+          <div>
+            <p className='text-sm font-medium text-foreground mb-2'>
+              Password Policy
+            </p>
+            <div className='space-y-3 pl-1'>
+              <div>
+                <p className='text-xs text-default-500 mb-1'>Minimum Length</p>
+                <Input
+                  type='number'
+                  value={pwMinLength}
+                  onValueChange={setPwMinLength}
+                  variant='bordered'
+                  size='sm'
+                  className='w-32'
+                  min='1'
+                />
+              </div>
+              <CheckboxGroup
+                label='Require'
+                value={
+                  [
+                    pwRequireUpper && 'upper',
+                    pwRequireLower && 'lower',
+                    pwRequireNumber && 'number',
+                    pwRequireSpecial && 'special',
+                  ].filter(Boolean) as string[]
+                }
+                onValueChange={(v) => {
+                  setPwRequireUpper(v.includes('upper'));
+                  setPwRequireLower(v.includes('lower'));
+                  setPwRequireNumber(v.includes('number'));
+                  setPwRequireSpecial(v.includes('special'));
+                }}
+                size='sm'
+              >
+                <Checkbox value='upper'>Uppercase letter</Checkbox>
+                <Checkbox value='lower'>Lowercase letter</Checkbox>
+                <Checkbox value='number'>Number</Checkbox>
+                <Checkbox value='special'>Special character</Checkbox>
+              </CheckboxGroup>
+              <div>
+                <p className='text-xs text-default-500 mb-1'>
+                  Maximum Password Age (days, 0 = no expiry)
+                </p>
+                <Input
+                  type='number'
+                  value={pwMaxAgeDays}
+                  onValueChange={setPwMaxAgeDays}
+                  variant='bordered'
+                  size='sm'
+                  className='w-32'
+                  min='0'
+                />
+              </div>
+              <div>
+                <p className='text-xs text-default-500 mb-1'>
+                  Password History (0 = no restriction)
+                </p>
+                <Input
+                  type='number'
+                  value={pwHistoryCount}
+                  onValueChange={setPwHistoryCount}
+                  variant='bordered'
+                  size='sm'
+                  className='w-32'
+                  min='0'
+                  description='Number of previous passwords that cannot be reused'
+                />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       <Divider />
 

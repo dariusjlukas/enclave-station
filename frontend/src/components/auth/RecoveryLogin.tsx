@@ -91,6 +91,8 @@ export function RecoveryLogin({ onSwitchToLogin }: Props) {
               setError('');
             }}
             className='mb-4'
+            color='primary'
+            variant='bordered'
             fullWidth
           >
             <Tab key='key' title='Recovery Key' />

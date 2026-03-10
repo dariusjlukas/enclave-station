@@ -127,6 +127,50 @@ class TestAdminInvites:
         })
         assert r.status_code == 403
 
+    def test_invite_only_register_with_token(self, client, admin_user):
+        """In invite_only mode, registration with a valid token succeeds."""
+        client.put("/api/admin/settings", json={
+            "registration_mode": "invite_only",
+        }, headers=admin_user["headers"])
+        r = client.post("/api/admin/invites", json={},
+                        headers=admin_user["headers"])
+        token = r.json()["token"]
+        data = pki_register(client, "invited2", "Invited User 2", token=token)
+        assert data["user"]["username"] == "invited2"
+
+    def test_invite_only_register_without_token_rejected(self, client, admin_user):
+        """In invite_only mode, registration without a token is rejected."""
+        client.put("/api/admin/settings", json={
+            "registration_mode": "invite_only",
+        }, headers=admin_user["headers"])
+        identity = PKIIdentity()
+        r = client.post("/api/auth/pki/challenge", json={})
+        challenge = r.json()["challenge"]
+        r = client.post("/api/auth/pki/register", json={
+            "username": "noinvite",
+            "display_name": "No Invite",
+            "public_key": identity.public_key_b64url,
+            "challenge": challenge,
+            "signature": identity.sign(challenge),
+        })
+        assert r.status_code == 403
+
+    def test_invite_only_request_access_rejected(self, client, admin_user):
+        """In invite_only mode, requesting access is not allowed."""
+        client.put("/api/admin/settings", json={
+            "registration_mode": "invite_only",
+        }, headers=admin_user["headers"])
+        identity = PKIIdentity()
+        r = client.post("/api/auth/request-access", json={
+            "username": "requester",
+            "display_name": "Requester",
+            "auth_method": "pki",
+            "public_key": identity.public_key_b64url,
+            "challenge": "dummy",
+            "signature": identity.sign("dummy"),
+        })
+        assert r.status_code == 403
+
 
 class TestAdminSettings:
     def test_get_settings(self, client, admin_user):
@@ -146,6 +190,23 @@ class TestAdminSettings:
         r = client.get("/api/admin/settings", headers=admin_user["headers"])
         assert r.json()["server_name"] == "Test Server"
         assert r.json()["registration_mode"] == "open"
+
+    def test_set_invite_only_mode(self, client, admin_user):
+        r = client.put("/api/admin/settings", json={
+            "registration_mode": "invite_only",
+        }, headers=admin_user["headers"])
+        assert r.status_code == 200
+        r = client.get("/api/admin/settings", headers=admin_user["headers"])
+        assert r.json()["registration_mode"] == "invite_only"
+
+    def test_all_registration_modes_accepted(self, client, admin_user):
+        for mode in ("invite", "invite_only", "approval", "open"):
+            r = client.put("/api/admin/settings", json={
+                "registration_mode": mode,
+            }, headers=admin_user["headers"])
+            assert r.status_code == 200, f"Mode '{mode}' should be accepted"
+            r = client.get("/api/admin/settings", headers=admin_user["headers"])
+            assert r.json()["registration_mode"] == mode
 
     def test_invalid_registration_mode_rejected(self, client, admin_user):
         r = client.put("/api/admin/settings", json={

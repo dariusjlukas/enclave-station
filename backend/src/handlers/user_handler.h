@@ -52,7 +52,8 @@ struct UserHandler {
                          {"display_name", user->display_name}, {"role", user->role},
                          {"is_online", user->is_online}, {"last_seen", user->last_seen},
                          {"bio", user->bio}, {"status", user->status},
-                         {"avatar_file_id", user->avatar_file_id}, {"profile_color", user->profile_color}};
+                         {"avatar_file_id", user->avatar_file_id}, {"profile_color", user->profile_color},
+                         {"has_password", db.has_password(user->id)}};
             res->writeHeader("Content-Type", "application/json")->end(resp.dump());
         });
 

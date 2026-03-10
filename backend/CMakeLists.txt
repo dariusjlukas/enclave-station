@@ -33,6 +33,7 @@ set(JSON_DIR ${CMAKE_SOURCE_DIR}/libs/json/single_include)
 set(LIB_SOURCES
     src/auth/pki.cpp
     src/auth/webauthn.cpp
+    src/auth/password.cpp
     src/db/database.cpp
 )
 
@@ -50,6 +51,7 @@ target_link_libraries(chat-lib PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     PkgConfig::LIBPQXX
+    argon2
     z
     pthread
 )

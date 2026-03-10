@@ -90,6 +90,7 @@ export function requestAccess(data: {
   challenge?: string;
   signature?: string;
   credential?: RegistrationResponseJSON;
+  password?: string;
 }) {
   return request<{ request_id: string; status: string }>(
     '/auth/request-access',
@@ -493,6 +494,13 @@ export interface AdminSettings {
   session_expiry_hours: number;
   setup_completed: boolean;
   server_archived: boolean;
+  password_min_length: number;
+  password_require_uppercase: boolean;
+  password_require_lowercase: boolean;
+  password_require_number: boolean;
+  password_require_special: boolean;
+  password_max_age_days: number;
+  password_history_count: number;
 }
 
 export function getAdminSettings() {
@@ -518,6 +526,14 @@ export function completeSetup(
 }
 
 // Config
+export interface PasswordPolicy {
+  min_length: number;
+  require_uppercase: boolean;
+  require_lowercase: boolean;
+  require_number: boolean;
+  require_special: boolean;
+}
+
 export interface PublicConfig {
   public_url: string;
   auth_methods: string[];
@@ -526,6 +542,7 @@ export interface PublicConfig {
   setup_completed: boolean;
   file_uploads_enabled: boolean;
   server_archived: boolean;
+  password_policy?: PasswordPolicy;
 }
 
 export function getPublicConfig() {
@@ -778,6 +795,53 @@ export function renameConversation(channelId: string, name: string) {
   return request<{ ok: boolean }>(`/conversations/${channelId}`, {
     method: 'PUT',
     body: JSON.stringify({ name }),
+  });
+}
+
+// Password auth
+export function passwordRegister(data: {
+  username: string;
+  display_name: string;
+  password: string;
+  token?: string;
+}) {
+  return request<{ token: string; user: User }>('/auth/password/register', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function passwordLogin(data: { username: string; password: string }) {
+  return request<{
+    token: string;
+    user: User;
+    must_change_password?: boolean;
+  }>('/auth/password/login', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function changePassword(data: {
+  current_password: string;
+  new_password: string;
+}) {
+  return request<{ ok: boolean }>('/auth/password/change', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function setPassword(password: string) {
+  return request<{ ok: boolean }>('/auth/password/set', {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  });
+}
+
+export function deletePassword() {
+  return request<{ ok: boolean }>('/auth/password', {
+    method: 'DELETE',
   });
 }
 

@@ -83,6 +83,26 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
 
         resp["server_archived"] = db.is_server_archived();
 
+        // Password policy (public so registration form can validate client-side)
+        auto auth_methods = resp["auth_methods"];
+        bool password_enabled = false;
+        for (const auto& m : auth_methods) {
+            if (m.get<std::string>() == "password") { password_enabled = true; break; }
+        }
+        if (password_enabled) {
+            auto get_or = [&db](const std::string& key, const std::string& def) -> std::string {
+                auto v = db.get_setting(key);
+                return v.value_or(def);
+            };
+            resp["password_policy"] = {
+                {"min_length", std::stoi(get_or("password_min_length", "8"))},
+                {"require_uppercase", get_or("password_require_uppercase", "true") == "true"},
+                {"require_lowercase", get_or("password_require_lowercase", "true") == "true"},
+                {"require_number", get_or("password_require_number", "true") == "true"},
+                {"require_special", get_or("password_require_special", "false") == "true"},
+            };
+        }
+
         res->writeHeader("Content-Type", "application/json")
             ->writeHeader("Access-Control-Allow-Origin", "*")
             ->end(resp.dump());

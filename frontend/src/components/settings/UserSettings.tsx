@@ -3,6 +3,7 @@ import {
   faPalette,
   faFingerprint,
   faKey,
+  faLock,
   faTriangleExclamation,
 } from '@fortawesome/free-solid-svg-icons';
 import {
@@ -13,6 +14,7 @@ import { ProfileSettings } from './ProfileSettings';
 import { AppearanceSettings } from './AppearanceSettings';
 import { PasskeyManager } from './PasskeyManager';
 import { PkiKeyManager } from './PkiKeyManager';
+import { PasswordSettings } from './PasswordSettings';
 import { DangerZone } from './DangerZone';
 
 interface Props {
@@ -43,6 +45,12 @@ const categories: SettingsCategory[] = [
     label: 'Browser Keys',
     icon: faKey,
     content: <PkiKeyManager />,
+  },
+  {
+    key: 'password',
+    label: 'Password',
+    icon: faLock,
+    content: <PasswordSettings />,
   },
   {
     key: 'danger',

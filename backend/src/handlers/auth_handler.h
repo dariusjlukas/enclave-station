@@ -4,6 +4,7 @@
 #include <openssl/rand.h>
 #include "db/database.h"
 #include "auth/webauthn.h"
+#include "auth/password.h"
 #include "config.h"
 #include "ws/ws_handler.h"
 #include "handlers/handler_utils.h"
@@ -137,6 +138,57 @@ struct AuthHandler {
             handle_request_status(res, request_id);
         });
 
+        // Password auth routes
+        app.post("/api/auth/password/register", [this](auto* res, auto* req) {
+            std::string body;
+            res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                handle_password_register(res, body);
+            });
+            res->onAborted([]() {});
+        });
+
+        app.post("/api/auth/password/login", [this](auto* res, auto* req) {
+            std::string body;
+            res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                handle_password_login(res, body);
+            });
+            res->onAborted([]() {});
+        });
+
+        app.post("/api/auth/password/change", [this](auto* res, auto* req) {
+            auto token = std::string(req->getHeader("authorization"));
+            if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
+            std::string body;
+            res->onData([this, res, token, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                handle_password_change(res, body, token);
+            });
+            res->onAborted([]() {});
+        });
+
+        app.post("/api/auth/password/set", [this](auto* res, auto* req) {
+            auto token = std::string(req->getHeader("authorization"));
+            if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
+            std::string body;
+            res->onData([this, res, token, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                handle_password_set(res, body, token);
+            });
+            res->onAborted([]() {});
+        });
+
+        app.del("/api/auth/password", [this](auto* res, auto* req) {
+            auto token = std::string(req->getHeader("authorization"));
+            if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
+            handle_password_delete(res, token);
+        });
+
         app.post("/api/auth/logout", [this](auto* res, auto* req) {
             std::string token(req->getHeader("authorization"));
             if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
@@ -172,12 +224,16 @@ private:
             return "This server requires admin approval. Please request access instead.";
         }
 
-        // Default: "invite" — require invite token
+        // "invite" or "invite_only" — require invite token
         if (!invite_token.empty()) {
             if (!db.validate_invite(invite_token)) {
                 return "Invalid or expired invite token";
             }
             return "";
+        }
+
+        if (reg_mode == "invite_only") {
+            return "This server requires an invite token to register.";
         }
         return "Invite token required. You can also request access below.";
     }
@@ -670,6 +726,14 @@ private:
     // Generate WebAuthn options for a join request (passkey method)
     void handle_request_access_options(uWS::HttpResponse<SSL>* res, const std::string& body) {
         try {
+            auto mode = db.get_setting("registration_mode");
+            std::string reg_mode = mode.value_or("invite");
+            if (reg_mode == "open" || reg_mode == "invite_only") {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Requesting access is not available on this server"})");
+                return;
+            }
+
             if (!is_method_enabled("passkey")) {
                 res->writeStatus("403")->writeHeader("Content-Type", "application/json")
                     ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
@@ -724,6 +788,14 @@ private:
     // Submit a join request with pre-generated credentials
     void handle_request_access(uWS::HttpResponse<SSL>* res, const std::string& body) {
         try {
+            auto mode = db.get_setting("registration_mode");
+            std::string reg_mode = mode.value_or("invite");
+            if (reg_mode == "open" || reg_mode == "invite_only") {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Requesting access is not available on this server"})");
+                return;
+            }
+
             auto j = json::parse(body);
             std::string username = j.at("username");
             std::string display_name = j.at("display_name");
@@ -818,9 +890,31 @@ private:
                     {"transports", transports_str}
                 }).dump();
 
+            } else if (auth_method == "password") {
+                if (!is_method_enabled("password")) {
+                    res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                        ->end(R"({"error":"Password authentication is not enabled"})");
+                    return;
+                }
+
+                std::string password = j.at("password");
+
+                // Validate password complexity
+                auto policy = get_password_policy();
+                auto validation_error = password_auth::validate_password(password, policy);
+                if (!validation_error.empty()) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(json({{"error", validation_error}}).dump());
+                    return;
+                }
+
+                // Hash password and store in credential_data
+                auto hash = password_auth::hash_password(password);
+                credential_data = json({{"password_hash", hash}}).dump();
+
             } else {
                 res->writeStatus("400")->writeHeader("Content-Type", "application/json")
-                    ->end(R"({"error":"Invalid auth_method. Use 'passkey' or 'pki'."})");
+                    ->end(R"({"error":"Invalid auth_method. Use 'passkey', 'pki', or 'password'."})");
                 return;
             }
 
@@ -837,6 +931,271 @@ private:
 
             json resp = {{"request_id", id}, {"status", "pending"}};
             res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    // --- Password auth handlers ---
+
+    password_auth::PasswordPolicy get_password_policy() {
+        password_auth::PasswordPolicy policy;
+        auto v = db.get_setting("password_min_length");
+        if (v) { try { policy.min_length = std::stoi(*v); } catch (...) {} }
+        v = db.get_setting("password_require_uppercase");
+        if (v) policy.require_uppercase = (*v == "true");
+        v = db.get_setting("password_require_lowercase");
+        if (v) policy.require_lowercase = (*v == "true");
+        v = db.get_setting("password_require_number");
+        if (v) policy.require_number = (*v == "true");
+        v = db.get_setting("password_require_special");
+        if (v) policy.require_special = (*v == "true");
+        v = db.get_setting("password_max_age_days");
+        if (v) { try { policy.max_age_days = std::stoi(*v); } catch (...) {} }
+        v = db.get_setting("password_history_count");
+        if (v) { try { policy.history_count = std::stoi(*v); } catch (...) {} }
+        return policy;
+    }
+
+    void handle_password_register(uWS::HttpResponse<SSL>* res, const std::string& body) {
+        try {
+            if (!is_method_enabled("password")) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Password authentication is not enabled on this server"})");
+                return;
+            }
+
+            auto j = json::parse(body);
+            std::string username = j.at("username");
+            std::string display_name = j.at("display_name");
+            std::string password = j.at("password");
+            std::string invite_token = j.value("token", "");
+
+            // Validate password complexity
+            auto policy = get_password_policy();
+            auto validation_error = password_auth::validate_password(password, policy);
+            if (!validation_error.empty()) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", validation_error}}).dump());
+                return;
+            }
+
+            // Check registration eligibility
+            auto eligibility_error = check_registration_eligibility(username, invite_token);
+            if (!eligibility_error.empty()) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", eligibility_error}}).dump());
+                return;
+            }
+
+            // Create user
+            bool is_first_user = (db.count_users() == 0);
+            std::string role = is_first_user ? "admin" : "user";
+            auto user = db.create_user(username, display_name, "", role);
+
+            // Hash and store password
+            auto hash = password_auth::hash_password(password);
+            db.store_password(user.id, hash);
+
+            // Use invite token if provided
+            complete_user_creation(user, invite_token);
+
+            // Create session
+            auto token = db.create_session(user.id, get_session_expiry());
+
+            json resp = {{"token", token}, {"user", make_user_json(user)}};
+            res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+        } catch (const pqxx::unique_violation&) {
+            res->writeStatus("409")->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Username already taken"})");
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    void handle_password_login(uWS::HttpResponse<SSL>* res, const std::string& body) {
+        try {
+            if (!is_method_enabled("password")) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Password authentication is not enabled on this server"})");
+                return;
+            }
+
+            auto j = json::parse(body);
+            std::string username = j.at("username");
+            std::string password = j.at("password");
+
+            // Find user by username
+            auto user = db.find_user_by_username(username);
+            if (!user) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invalid username or password"})");
+                return;
+            }
+
+            // Get stored password hash
+            auto stored_hash = db.get_password_hash(user->id);
+            if (!stored_hash) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invalid username or password"})");
+                return;
+            }
+
+            // Verify password
+            if (!password_auth::verify_password(password, *stored_hash)) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invalid username or password"})");
+                return;
+            }
+
+            // Create session
+            auto token = db.create_session(user->id, get_session_expiry());
+
+            // Check password expiry
+            auto policy = get_password_policy();
+            json resp = {{"token", token}, {"user", make_user_json(*user)}};
+            if (policy.max_age_days > 0) {
+                resp["must_change_password"] = db.is_password_expired(user->id, policy.max_age_days);
+            }
+            res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    void handle_password_change(uWS::HttpResponse<SSL>* res, const std::string& body,
+                                 const std::string& session_token) {
+        try {
+            auto user_id = db.validate_session(session_token);
+            if (!user_id) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Unauthorized"})");
+                return;
+            }
+
+            auto j = json::parse(body);
+            std::string current_password = j.at("current_password");
+            std::string new_password = j.at("new_password");
+
+            // Verify current password
+            auto stored_hash = db.get_password_hash(*user_id);
+            if (!stored_hash || !password_auth::verify_password(current_password, *stored_hash)) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Current password is incorrect"})");
+                return;
+            }
+
+            // Validate new password complexity
+            auto policy = get_password_policy();
+            auto validation_error = password_auth::validate_password(new_password, policy);
+            if (!validation_error.empty()) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", validation_error}}).dump());
+                return;
+            }
+
+            // Check password history
+            if (policy.history_count > 0) {
+                auto history = db.get_password_history(*user_id, policy.history_count);
+                // Also include the current password in history check
+                history.push_back(*stored_hash);
+                if (password_auth::matches_history(new_password, history)) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(json({{"error", "Cannot reuse a recent password"}}).dump());
+                    return;
+                }
+            }
+
+            // Save old password to history
+            db.add_password_history(*user_id, *stored_hash);
+
+            // Hash and store new password
+            auto new_hash = password_auth::hash_password(new_password);
+            db.store_password(*user_id, new_hash);
+
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    void handle_password_set(uWS::HttpResponse<SSL>* res, const std::string& body,
+                              const std::string& session_token) {
+        try {
+            auto user_id = db.validate_session(session_token);
+            if (!user_id) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Unauthorized"})");
+                return;
+            }
+
+            // Check that password auth is enabled
+            auto methods_str = db.get_setting("auth_methods").value_or("");
+            if (methods_str.find("password") == std::string::npos) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Password authentication is not enabled"})");
+                return;
+            }
+
+            // User must NOT already have a password
+            if (db.has_password(*user_id)) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Password already set. Use the change password endpoint instead."})");
+                return;
+            }
+
+            auto j = json::parse(body);
+            std::string new_password = j.at("password");
+
+            // Validate password complexity
+            auto policy = get_password_policy();
+            auto validation_error = password_auth::validate_password(new_password, policy);
+            if (!validation_error.empty()) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", validation_error}}).dump());
+                return;
+            }
+
+            // Hash and store
+            auto hash = password_auth::hash_password(new_password);
+            db.store_password(*user_id, hash);
+
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    void handle_password_delete(uWS::HttpResponse<SSL>* res, const std::string& session_token) {
+        try {
+            auto user_id = db.validate_session(session_token);
+            if (!user_id) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Unauthorized"})");
+                return;
+            }
+
+            if (!db.has_password(*user_id)) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"No password is set"})");
+                return;
+            }
+
+            // Ensure the user has at least one other auth credential
+            int other_creds = db.count_user_credentials(*user_id);
+            if (other_creds < 1) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Cannot remove password — no other login method configured. Add a passkey or browser key first."})");
+                return;
+            }
+
+            db.delete_password(*user_id);
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
         } catch (const std::exception& e) {
             res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                 ->end(json({{"error", e.what()}}).dump());
