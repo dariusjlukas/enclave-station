@@ -10,7 +10,10 @@ import {
   Spinner,
 } from '@heroui/react';
 import { useChatStore } from '../../stores/chatStore';
-import { register as webauthnRegister } from '../../services/webauthn';
+import {
+  browserSupportsWebAuthn,
+  register as webauthnRegister,
+} from '../../services/webauthn';
 import type { User } from '../../types';
 import * as pki from '../../services/pki';
 import * as api from '../../services/api';
@@ -20,15 +23,16 @@ import logoLargeDark from '../../assets/isle-chat-logo-large-dark.png';
 
 interface Props {
   onSwitchToLogin: () => void;
+  initialInviteToken?: string;
 }
 
 type Phase = 'form' | 'waiting' | 'recovery-keys';
 
-export function RegisterPage({ onSwitchToLogin }: Props) {
+export function RegisterPage({ onSwitchToLogin, initialInviteToken }: Props) {
   const setAuth = useChatStore((s) => s.setAuth);
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [inviteToken, setInviteToken] = useState('');
+  const [inviteToken, setInviteToken] = useState(initialInviteToken || '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -37,6 +41,7 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
     useState<api.PasswordPolicy | null>(null);
   const [authMethods, setAuthMethods] = useState<string[]>([]);
   const [registrationMode, setRegistrationMode] = useState('invite');
+  const [hasUsers, setHasUsers] = useState(true);
   const [selectedMethod, setSelectedMethod] = useState<string>('passkey');
   const [configLoading, setConfigLoading] = useState(true);
   const [phase, setPhase] = useState<Phase>('form');
@@ -58,9 +63,16 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
       .then((config) => {
         setAuthMethods(config.auth_methods);
         setRegistrationMode(config.registration_mode);
+        setHasUsers(config.has_users);
         if (config.password_policy) setPasswordPolicy(config.password_policy);
-        if (config.auth_methods.length === 1) {
-          setSelectedMethod(config.auth_methods[0]);
+        // Select first method that's actually available on this device
+        const available = config.auth_methods.filter((m: string) => {
+          if (m === 'passkey') return browserSupportsWebAuthn();
+          if (m === 'pki') return pki.isWebCryptoAvailable();
+          return true;
+        });
+        if (available.length > 0) {
+          setSelectedMethod(available[0]);
         }
       })
       .finally(() => setConfigLoading(false));
@@ -292,7 +304,8 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
     );
   }
 
-  const passkeysAvailable = authMethods.includes('passkey');
+  const passkeysAvailable =
+    authMethods.includes('passkey') && browserSupportsWebAuthn();
   const pkiAvailable =
     authMethods.includes('pki') && pki.isWebCryptoAvailable();
   const passwordAvailable = authMethods.includes('password');
@@ -395,16 +408,18 @@ export function RegisterPage({ onSwitchToLogin }: Props) {
                   placeholder='John Doe'
                 />
 
-                {canDirectRegister && registrationMode === 'invite' && (
-                  <Input
-                    label='Invite Token'
-                    description='Not needed for first user'
-                    variant='bordered'
-                    value={inviteToken}
-                    onChange={(e) => setInviteToken(e.target.value)}
-                    placeholder='Paste invite token here'
-                  />
-                )}
+                {canDirectRegister &&
+                  (registrationMode === 'invite' ||
+                    registrationMode === 'invite_only') &&
+                  hasUsers && (
+                    <Input
+                      label='Invite Token'
+                      variant='bordered'
+                      value={inviteToken}
+                      onChange={(e) => setInviteToken(e.target.value)}
+                      placeholder='Paste invite token here'
+                    />
+                  )}
 
                 {selectedMethod === 'password' && (
                   <>

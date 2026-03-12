@@ -33,6 +33,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
+    // If the server rejects our session (expired, banned, etc.), clear auth
+    if (res.status === 401 && token) {
+      const { useChatStore } = await import('../stores/chatStore');
+      const store = useChatStore.getState();
+      if (store.isAuthenticated) {
+        store.clearAuth(
+          body.error === 'Unauthorized'
+            ? 'Your session is no longer valid. Please sign in again.'
+            : body.error ||
+                'Your session is no longer valid. Please sign in again.',
+        );
+      }
+    }
     throw new Error(body.error || res.statusText);
   }
 
@@ -264,24 +277,32 @@ export function updateChannelSettings(
 }
 
 // Admin
-export function createInvite(expiryHours = 24) {
+export function createInvite(expiryHours = 24, maxUses = 1) {
   return request<{ token: string }>('/admin/invites', {
     method: 'POST',
-    body: JSON.stringify({ expiry_hours: expiryHours }),
+    body: JSON.stringify({ expiry_hours: expiryHours, max_uses: maxUses }),
   });
 }
 
+export interface InviteUse {
+  username: string;
+  used_at: string;
+}
+
+export interface Invite {
+  id: string;
+  token: string;
+  created_by: string;
+  used: boolean;
+  expires_at: string;
+  created_at: string;
+  max_uses: number;
+  use_count: number;
+  uses: InviteUse[];
+}
+
 export function listInvites() {
-  return request<
-    Array<{
-      id: string;
-      token: string;
-      created_by: string;
-      used: boolean;
-      expires_at: string;
-      created_at: string;
-    }>
-  >('/admin/invites');
+  return request<Invite[]>('/admin/invites');
 }
 
 export function revokeInvite(id: string) {
@@ -334,8 +355,15 @@ export function listRecoveryTokens() {
       used: boolean;
       expires_at: string;
       created_at: string;
+      used_at?: string;
     }>
   >('/admin/recovery-tokens');
+}
+
+export function revokeRecoveryToken(id: string) {
+  return request<{ ok: boolean }>(`/admin/recovery-tokens/${id}`, {
+    method: 'DELETE',
+  });
 }
 
 // Auth: recovery token redemption
@@ -343,6 +371,66 @@ export function recoverAccount(token: string) {
   return request<{ token: string; user: User; must_setup_key: boolean }>(
     '/auth/recover-account',
     { method: 'POST', body: JSON.stringify({ token }) },
+  );
+}
+
+// Device linking
+export function createDeviceToken() {
+  return request<{ token: string }>('/users/me/device-tokens', {
+    method: 'POST',
+  });
+}
+
+export function listDevices() {
+  return request<
+    Array<{ id: string; device_name: string; created_at: string }>
+  >('/users/me/devices');
+}
+
+export function removeDevice(id: string) {
+  return request<{ ok: boolean }>(`/users/me/devices/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export function addDevicePkiChallenge(deviceToken: string) {
+  return request<{ challenge: string }>('/auth/add-device/pki/challenge', {
+    method: 'POST',
+    body: JSON.stringify({ device_token: deviceToken }),
+  });
+}
+
+export function addDevicePki(data: {
+  device_token: string;
+  public_key: string;
+  challenge: string;
+  signature: string;
+  device_name: string;
+}) {
+  return request<{ token: string; user: User }>('/auth/add-device/pki', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function addDevicePasskeyOptions(deviceToken: string) {
+  return request<Record<string, unknown>>('/auth/add-device/passkey/options', {
+    method: 'POST',
+    body: JSON.stringify({ device_token: deviceToken }),
+  });
+}
+
+export function addDevicePasskeyVerify(data: {
+  id: string;
+  response: Record<string, unknown>;
+  device_name: string;
+}) {
+  return request<{ token: string; user: User }>(
+    '/auth/add-device/passkey/verify',
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    },
   );
 }
 
@@ -560,6 +648,7 @@ export interface PublicConfig {
   server_name: string;
   registration_mode: string;
   setup_completed: boolean;
+  has_users: boolean;
   file_uploads_enabled: boolean;
   server_archived: boolean;
   password_policy?: PasswordPolicy;
@@ -760,6 +849,7 @@ export function listAdminUsers() {
       role: string;
       is_online: boolean;
       last_seen: string;
+      is_banned: boolean;
     }>
   >('/admin/users');
 }
@@ -768,6 +858,19 @@ export function changeUserRole(userId: string, role: string) {
   return request<{ ok: boolean }>(`/admin/users/${userId}/role`, {
     method: 'PUT',
     body: JSON.stringify({ role }),
+  });
+}
+
+export function banUser(userId: string) {
+  return request<{ ok: boolean }>(`/admin/users/${userId}/ban`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export function unbanUser(userId: string) {
+  return request<{ ok: boolean }>(`/admin/users/${userId}/ban`, {
+    method: 'DELETE',
   });
 }
 

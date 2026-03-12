@@ -102,6 +102,14 @@ struct SpaceHandler {
                 if (!last) return;
                 if (user_id.empty()) return;
                 try {
+                    // Only server admins/owners can create spaces
+                    auto creator = db.find_user_by_id(user_id);
+                    if (!creator || (creator->role != "admin" && creator->role != "owner")) {
+                        res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"Only server admins can create spaces"})");
+                        return;
+                    }
+
                     auto j = json::parse(body);
                     std::string name = j.at("name");
                     std::string description = j.value("description", "");

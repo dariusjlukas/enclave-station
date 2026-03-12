@@ -6,6 +6,7 @@ import { test, expect } from "../fixtures.js";
 import { resetDatabase } from "../helpers/db.js";
 import {
   setupAdminUser,
+  setupRegularUser,
   loginViaToken,
   type TestUser,
 } from "../helpers/auth.js";
@@ -41,6 +42,28 @@ test.describe("Space creation via UI", () => {
     await expect(
       page.getByRole("heading", { name: "Engineering" }),
     ).toBeVisible({ timeout: 10_000 });
+  });
+});
+
+test.describe("Space creation permissions", () => {
+  test("regular user does not see Create New Space button", async ({
+    page,
+    workerConfig,
+  }) => {
+    const regular = await setupRegularUser(
+      "regular",
+      "Regular User",
+      workerConfig.apiConfig,
+    );
+    await loginViaToken(page, regular.token);
+
+    // Open the space browser
+    await page.locator("button.border-dashed").click();
+
+    // The modal should be open but "Create New Space" should not be visible
+    await expect(
+      page.getByRole("button", { name: /create new space/i }),
+    ).not.toBeVisible();
   });
 });
 

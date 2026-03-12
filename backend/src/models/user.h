@@ -14,4 +14,5 @@ struct User {
     std::string status;
     std::string avatar_file_id;
     std::string profile_color;
+    bool is_banned = false;
 };

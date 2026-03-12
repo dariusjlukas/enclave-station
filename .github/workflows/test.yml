@@ -93,6 +93,8 @@ jobs:
             https://github.com/uNetworking/uWebSockets.git libs/uWebSockets
           git clone --depth 1 --branch v3.11.3 \
             https://github.com/nlohmann/json.git libs/json
+          git clone --depth 1 \
+            https://github.com/P-H-C/phc-winner-argon2.git libs/argon2
 
       - name: Configure CMake
         working-directory: backend

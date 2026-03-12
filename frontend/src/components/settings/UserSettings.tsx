@@ -6,6 +6,7 @@ import {
   faLock,
   faShieldHalved,
   faTriangleExclamation,
+  faLaptop,
 } from '@fortawesome/free-solid-svg-icons';
 import {
   SettingsLayout,
@@ -17,6 +18,7 @@ import { PasskeyManager } from './PasskeyManager';
 import { PkiKeyManager } from './PkiKeyManager';
 import { PasswordSettings } from './PasswordSettings';
 import { TotpSettings } from './TotpSettings';
+import { DeviceManager } from './DeviceManager';
 import { DangerZone } from './DangerZone';
 
 interface Props {
@@ -47,6 +49,12 @@ const categories: SettingsCategory[] = [
     label: 'Browser Keys',
     icon: faKey,
     content: <PkiKeyManager />,
+  },
+  {
+    key: 'devices',
+    label: 'Linked Devices',
+    icon: faLaptop,
+    content: <DeviceManager />,
   },
   {
     key: 'password',

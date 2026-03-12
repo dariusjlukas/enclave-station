@@ -11,7 +11,7 @@ class TestPKIRegistration:
         data = pki_register(client, "first", "First User")
         assert data["token"]
         assert data["user"]["username"] == "first"
-        assert data["user"]["role"] in ("admin", "owner")
+        assert data["user"]["role"] == "owner"
         assert "recovery_keys" in data
         assert len(data["recovery_keys"]) == 8
 

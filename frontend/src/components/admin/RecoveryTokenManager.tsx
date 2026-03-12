@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button, Card, CardBody } from '@heroui/react';
 import * as api from '../../services/api';
+import { useChatStore } from '../../stores/chatStore';
 import { UserPicker } from '../common/UserPicker';
 
 export function RecoveryTokenManager() {
@@ -14,26 +15,41 @@ export function RecoveryTokenManager() {
       used: boolean;
       expires_at: string;
       created_at: string;
+      used_at?: string;
     }>
   >([]);
   const [selectedUserId, setSelectedUserId] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+  const setUsers = useChatStore((s) => s.setUsers);
 
-  const loadTokens = async () => {
+  const loadTokens = useCallback(async () => {
     try {
       const data = await api.listRecoveryTokens();
       setTokens(data);
     } catch (e) {
       console.error('Recovery token operation failed:', e);
     }
-  };
+  }, []);
 
   useEffect(() => {
     api
       .listRecoveryTokens()
       .then(setTokens)
       .catch(() => {});
-  }, []);
+    api
+      .listUsers()
+      .then(setUsers)
+      .catch(() => {});
+
+    // Refresh tokens periodically and on window focus
+    const interval = setInterval(loadTokens, 30_000);
+    const onFocus = () => loadTokens();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [loadTokens, setUsers]);
 
   const handleCreate = async () => {
     if (selectedUserId.length === 0) return;
@@ -50,6 +66,15 @@ export function RecoveryTokenManager() {
 
   const copyToken = (token: string) => {
     navigator.clipboard.writeText(token);
+  };
+
+  const handleRevoke = async (id: string) => {
+    try {
+      await api.revokeRecoveryToken(id);
+      await loadTokens();
+    } catch (e) {
+      console.error('Failed to revoke token:', e);
+    }
   };
 
   return (
@@ -87,19 +112,29 @@ export function RecoveryTokenManager() {
                 </code>
                 <p className='text-xs text-default-500 mt-1'>
                   {t.used
-                    ? 'Used'
+                    ? `Used${t.used_at ? `: ${new Date(t.used_at).toLocaleString()}` : ''}`
                     : `Expires: ${new Date(t.expires_at).toLocaleString()}`}
                 </p>
               </div>
               {!t.used && (
-                <Button
-                  variant='light'
-                  color='primary'
-                  size='sm'
-                  onPress={() => copyToken(t.token)}
-                >
-                  Copy
-                </Button>
+                <div className='flex gap-1'>
+                  <Button
+                    variant='light'
+                    color='primary'
+                    size='sm'
+                    onPress={() => copyToken(t.token)}
+                  >
+                    Copy
+                  </Button>
+                  <Button
+                    variant='light'
+                    color='danger'
+                    size='sm'
+                    onPress={() => handleRevoke(t.id)}
+                  >
+                    Revoke
+                  </Button>
+                </div>
               )}
             </CardBody>
           </Card>

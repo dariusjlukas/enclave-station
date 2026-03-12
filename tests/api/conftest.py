@@ -345,16 +345,8 @@ def admin_user(client, worker_db):
     """Register the first user and promote to owner via DB. Return auth info."""
     data = pki_register(client, "admin", "Admin User")
     headers = auth_header(data["token"])
-    # The first PKI user gets role "admin", promote to "owner" via DB
-    # so tests can exercise owner-only endpoints.
-    conn = psycopg2.connect(_get_pg_dsn(worker_db))
-    conn.autocommit = True
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET role = 'owner' WHERE id = %s",
-                (data["user"]["id"],))
-    cur.close()
-    conn.close()
-    data["user"]["role"] = "owner"
+    # The first user should automatically get the "owner" role
+    assert data["user"]["role"] == "owner"
     # Set registration mode to open so subsequent users can register freely
     client.put("/api/admin/settings",
                json={"registration_mode": "open"}, headers=headers)

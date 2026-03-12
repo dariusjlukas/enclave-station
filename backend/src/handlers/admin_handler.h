@@ -27,12 +27,17 @@ struct AdminHandler {
                 if (user_id.empty()) return;
 
                 int expiry = defaults::INVITE_EXPIRY_HOURS;
+                int max_uses = 1;
                 try {
                     auto j = json::parse(body);
                     expiry = j.value("expiry_hours", defaults::INVITE_EXPIRY_HOURS);
+                    if (expiry < 1) expiry = 1;
+                    if (expiry > defaults::MAX_INVITE_EXPIRY_HOURS) expiry = defaults::MAX_INVITE_EXPIRY_HOURS;
+                    max_uses = j.value("max_uses", 1);
+                    if (max_uses < 0) max_uses = 0;
                 } catch (...) {}
 
-                auto token = db.create_invite(user_id, expiry);
+                auto token = db.create_invite(user_id, expiry, max_uses);
                 json resp = {{"token", token}};
                 res->writeHeader("Content-Type", "application/json")->end(resp.dump());
             });
@@ -46,11 +51,19 @@ struct AdminHandler {
             auto invites = db.list_invites();
             json arr = json::array();
             for (const auto& inv : invites) {
-                arr.push_back({{"id", inv.id}, {"token", inv.token},
-                               {"created_by", inv.created_by_username},
-                               {"used", inv.used},
-                               {"expires_at", inv.expires_at},
-                               {"created_at", inv.created_at}});
+                json obj = {{"id", inv.id}, {"token", inv.token},
+                            {"created_by", inv.created_by_username},
+                            {"used", inv.used},
+                            {"expires_at", inv.expires_at},
+                            {"created_at", inv.created_at},
+                            {"max_uses", inv.max_uses},
+                            {"use_count", inv.use_count}};
+                json uses_arr = json::array();
+                for (const auto& u : inv.uses) {
+                    uses_arr.push_back({{"username", u.username}, {"used_at", u.used_at}});
+                }
+                obj["uses"] = uses_arr;
+                arr.push_back(obj);
             }
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
         });
@@ -102,7 +115,7 @@ struct AdminHandler {
         });
 
         app.get("/api/admin/settings", [this](auto* res, auto* req) {
-            auto user_id = get_admin_id(res, req);
+            auto user_id = get_owner_id(res, req);
             if (user_id.empty()) return;
 
             json resp = build_settings_response();
@@ -110,7 +123,7 @@ struct AdminHandler {
         });
 
         app.put("/api/admin/settings", [this](auto* res, auto* req) {
-            auto admin_id_copy = get_admin_id(res, req);
+            auto admin_id_copy = get_owner_id(res, req);
             std::string body;
             res->onData([this, res, admin_id = std::move(admin_id_copy), body = std::move(body)](
                 std::string_view data, bool last) mutable {
@@ -123,7 +136,7 @@ struct AdminHandler {
         });
 
         app.post("/api/admin/setup", [this](auto* res, auto* req) {
-            auto admin_id_copy = get_admin_id(res, req);
+            auto admin_id_copy = get_owner_id(res, req);
             std::string body;
             res->onData([this, res, admin_id = std::move(admin_id_copy), body = std::move(body)](
                 std::string_view data, bool last) mutable {
@@ -182,15 +195,31 @@ struct AdminHandler {
             auto tokens = db.list_recovery_tokens();
             json arr = json::array();
             for (const auto& t : tokens) {
-                arr.push_back({{"id", t.id}, {"token", t.token},
-                               {"created_by", t.created_by_username},
-                               {"for_user", t.for_username},
-                               {"for_user_id", t.for_user_id},
-                               {"used", t.used},
-                               {"expires_at", t.expires_at},
-                               {"created_at", t.created_at}});
+                json obj = {{"id", t.id}, {"token", t.token},
+                            {"created_by", t.created_by_username},
+                            {"for_user", t.for_username},
+                            {"for_user_id", t.for_user_id},
+                            {"used", t.used},
+                            {"expires_at", t.expires_at},
+                            {"created_at", t.created_at}};
+                if (!t.used_at.empty()) obj["used_at"] = t.used_at;
+                arr.push_back(obj);
             }
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
+        });
+
+        app.del("/api/admin/recovery-tokens/:id", [this](auto* res, auto* req) {
+            auto admin_id = get_admin_id(res, req);
+            if (admin_id.empty()) return;
+
+            std::string token_id(req->getParameter("id"));
+            if (db.delete_recovery_token(token_id)) {
+                res->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"ok":true})");
+            } else {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Token not found or already used"})");
+            }
         });
 
         // Archive server (owner only)
@@ -222,7 +251,8 @@ struct AdminHandler {
             for (const auto& u : users) {
                 arr.push_back({{"id", u.id}, {"username", u.username},
                                {"display_name", u.display_name}, {"role", u.role},
-                               {"is_online", u.is_online}, {"last_seen", u.last_seen}});
+                               {"is_online", u.is_online}, {"last_seen", u.last_seen},
+                               {"is_banned", u.is_banned}});
             }
             res->writeHeader("Content-Type", "application/json")->end(arr.dump());
         });
@@ -301,6 +331,112 @@ struct AdminHandler {
                 }
             });
             res->onAborted([]() {});
+        });
+
+        // Ban user (admin or owner, with hierarchy enforcement)
+        app.post("/api/admin/users/:userId/ban", [this](auto* res, auto* req) {
+            auto actor_id_copy = get_admin_id(res, req);
+            std::string target_user_id(req->getParameter("userId"));
+            std::string body;
+            res->onData([this, res, actor_id = std::move(actor_id_copy),
+                         target_user_id = std::move(target_user_id), body = std::move(body)](
+                std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                if (actor_id.empty()) return;
+
+                try {
+                    auto actor = db.find_user_by_id(actor_id);
+                    auto target = db.find_user_by_id(target_user_id);
+                    if (!actor || !target) {
+                        res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"User not found"})");
+                        return;
+                    }
+
+                    if (target->is_banned) {
+                        res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"User is already banned"})");
+                        return;
+                    }
+
+                    int actor_rank = server_role_rank(actor->role);
+                    int target_rank = server_role_rank(target->role);
+
+                    // Cannot ban someone of equal or higher rank
+                    if (target_rank >= actor_rank) {
+                        res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"Cannot ban a user of equal or higher rank"})");
+                        return;
+                    }
+
+                    // Cannot ban yourself
+                    if (actor_id == target_user_id) {
+                        res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"Cannot ban yourself"})");
+                        return;
+                    }
+
+                    db.ban_user(target_user_id, actor_id);
+
+                    // Notify the banned user before disconnecting
+                    json notify = {{"type", "banned"}};
+                    ws.send_to_user(target_user_id, notify.dump());
+
+                    // Force disconnect the banned user's WebSocket connections
+                    ws.disconnect_user(target_user_id);
+
+                    // Broadcast to all connected users
+                    json broadcast = {{"type", "user_banned"}, {"user_id", target_user_id}};
+                    ws.broadcast_to_presence(broadcast.dump());
+
+                    res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+                } catch (const std::exception& e) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(json({{"error", e.what()}}).dump());
+                }
+            });
+            res->onAborted([]() {});
+        });
+
+        // Unban user (admin or owner, with hierarchy enforcement)
+        app.del("/api/admin/users/:userId/ban", [this](auto* res, auto* req) {
+            auto actor_id = get_admin_id(res, req);
+            if (actor_id.empty()) return;
+
+            std::string target_user_id(req->getParameter("userId"));
+
+            auto actor = db.find_user_by_id(actor_id);
+            auto target = db.find_user_by_id(target_user_id);
+            if (!actor || !target) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"User not found"})");
+                return;
+            }
+
+            if (!target->is_banned) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"User is not banned"})");
+                return;
+            }
+
+            int actor_rank = server_role_rank(actor->role);
+            int target_rank = server_role_rank(target->role);
+
+            // Cannot unban someone of equal or higher rank
+            if (target_rank >= actor_rank) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Cannot unban a user of equal or higher rank"})");
+                return;
+            }
+
+            db.unban_user(target_user_id);
+
+            // Broadcast to all connected users
+            json broadcast = {{"type", "user_unbanned"}, {"user_id", target_user_id}};
+            ws.broadcast_to_presence(broadcast.dump());
+
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
         });
     }
 

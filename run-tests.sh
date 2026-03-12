@@ -502,6 +502,7 @@ if [ "$RUN_E2E" = true ]; then
                     FAILED=1
                 else
                     run_check "E2E Tests" bash -c "
+                        export TEST_WORKERS=1
                         export TEST_BACKEND_PORT=$E2E_BACKEND_PORT
                         export TEST_FRONTEND_PORT=$E2E_FRONTEND_PORT
                         export TEST_PG_CONTAINER=$TEST_PG_CONTAINER

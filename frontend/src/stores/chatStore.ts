@@ -15,6 +15,7 @@ interface ChatState {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
+  authError: string | null;
 
   // Chat
   channels: Channel[];
@@ -44,7 +45,7 @@ interface ChatState {
 
   // Actions
   setAuth: (user: User, token: string) => void;
-  clearAuth: () => void;
+  clearAuth: (reason?: string) => void;
   setChannels: (channels: Channel[]) => void;
   setActiveChannel: (channelId: string | null) => void;
   addChannel: (channel: Channel) => void;
@@ -103,6 +104,7 @@ export const useChatStore = create<ChatState>((set) => ({
   user: null,
   token: null,
   isAuthenticated: false,
+  authError: null,
   channels: [],
   activeChannelId: null,
   messages: {},
@@ -122,15 +124,16 @@ export const useChatStore = create<ChatState>((set) => ({
 
   setAuth: (user, token) => {
     localStorage.setItem('session_token', token);
-    set({ user, token, isAuthenticated: true });
+    set({ user, token, isAuthenticated: true, authError: null });
   },
 
-  clearAuth: () => {
+  clearAuth: (reason?) => {
     localStorage.removeItem('session_token');
     set({
       user: null,
       token: null,
       isAuthenticated: false,
+      authError: reason || null,
       channels: [],
       messages: {},
       activeChannelId: null,

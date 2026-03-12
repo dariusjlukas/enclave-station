@@ -12,6 +12,7 @@ import { useChatStore } from './stores/chatStore';
 import { LoginPage } from './components/auth/LoginPage';
 import { RegisterPage } from './components/auth/RegisterPage';
 import { RecoveryLogin } from './components/auth/RecoveryLogin';
+import { AddDevice } from './components/auth/AddDevice';
 import { NewSidebar } from './components/sidebar/NewSidebar';
 import { Header } from './components/layout/Header';
 import { ChatArea } from './components/layout/ChatArea';
@@ -39,11 +40,17 @@ import { useConnectionState } from './hooks/useConnectionState';
 import { wsService } from './services/websocket';
 import * as api from './services/api';
 
-type AuthPage = 'login' | 'register' | 'recovery';
+type AuthPage = 'login' | 'register' | 'recovery' | 'add-device';
 
 function App() {
   const { isAuthenticated, loading } = useAuth();
-  const [authPage, setAuthPage] = useState<AuthPage>('login');
+  // Check for device_token or invite in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlDeviceToken = urlParams.get('device_token');
+  const urlInviteToken = urlParams.get('invite');
+  const [authPage, setAuthPage] = useState<AuthPage>(
+    urlDeviceToken ? 'add-device' : urlInviteToken ? 'register' : 'login',
+  );
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showCreateConversation, setShowCreateConversation] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);
@@ -57,14 +64,38 @@ function App() {
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const pendingRequestCount = useChatStore((s) => s.pendingRequestCount);
   const setPendingRequestCount = useChatStore((s) => s.setPendingRequestCount);
+  const [serverSettingsDirty, setServerSettingsDirty] = useState(false);
+  const [showBuildTime, setShowBuildTime] = useState(false);
+  const [showConnectionCard, setShowConnectionCard] = useState(false);
+  const [heartbeatInfo, setHeartbeatInfo] = useState<{
+    lastHeartbeat: Date | null;
+    lastPingMs: number | null;
+  }>({ lastHeartbeat: null, lastPingMs: null });
+  const connectionCardRef = useRef<HTMLDivElement>(null);
+  const connectionState = useConnectionState();
+  const setChannels = useChatStore((s) => s.setChannels);
+  const setUsers = useChatStore((s) => s.setUsers);
+  const setSpaces = useChatStore((s) => s.setSpaces);
+  const setSpaceInvites = useChatStore((s) => s.setSpaceInvites);
+  const setActiveView = useChatStore((s) => s.setActiveView);
+  const user = useChatStore((s) => s.user);
+  const activeChannelId = useChatStore((s) => s.activeChannelId);
+  const channels = useChatStore((s) => s.channels);
+  const spaces = useChatStore((s) => s.spaces);
+  const activeView = useChatStore((s) => s.activeView);
 
+  const isOwner = user?.role === 'owner';
   const adminCategories: SettingsCategory[] = [
-    {
-      key: 'server-settings',
-      label: 'Server Settings',
-      icon: faGear,
-      content: <ServerSettings />,
-    },
+    ...(isOwner
+      ? [
+          {
+            key: 'server-settings',
+            label: 'Server Settings',
+            icon: faGear,
+            content: <ServerSettings onDirtyChange={setServerSettingsDirty} />,
+          },
+        ]
+      : []),
     {
       key: 'user-management',
       label: 'User Management',
@@ -91,24 +122,6 @@ function App() {
       content: <JoinRequests />,
     },
   ];
-  const [showBuildTime, setShowBuildTime] = useState(false);
-  const [showConnectionCard, setShowConnectionCard] = useState(false);
-  const [heartbeatInfo, setHeartbeatInfo] = useState<{
-    lastHeartbeat: Date | null;
-    lastPingMs: number | null;
-  }>({ lastHeartbeat: null, lastPingMs: null });
-  const connectionCardRef = useRef<HTMLDivElement>(null);
-  const connectionState = useConnectionState();
-  const setChannels = useChatStore((s) => s.setChannels);
-  const setUsers = useChatStore((s) => s.setUsers);
-  const setSpaces = useChatStore((s) => s.setSpaces);
-  const setSpaceInvites = useChatStore((s) => s.setSpaceInvites);
-  const setActiveView = useChatStore((s) => s.setActiveView);
-  const user = useChatStore((s) => s.user);
-  const activeChannelId = useChatStore((s) => s.activeChannelId);
-  const channels = useChatStore((s) => s.channels);
-  const spaces = useChatStore((s) => s.spaces);
-  const activeView = useChatStore((s) => s.activeView);
 
   const activeChannel = channels.find((c) => c.id === activeChannelId);
   const activeSpace =
@@ -137,7 +150,7 @@ function App() {
           }
         }
       }),
-    ]);
+    ]).catch(() => {});
 
     // Load server status (archived, setup)
     api.getPublicConfig().then((config) => {
@@ -215,14 +228,27 @@ function App() {
   if (!isAuthenticated) {
     switch (authPage) {
       case 'register':
-        return <RegisterPage onSwitchToLogin={() => setAuthPage('login')} />;
+        return (
+          <RegisterPage
+            onSwitchToLogin={() => setAuthPage('login')}
+            initialInviteToken={urlInviteToken || undefined}
+          />
+        );
       case 'recovery':
         return <RecoveryLogin onSwitchToLogin={() => setAuthPage('login')} />;
+      case 'add-device':
+        return (
+          <AddDevice
+            initialToken={urlDeviceToken || ''}
+            onSwitchToLogin={() => setAuthPage('login')}
+          />
+        );
       default:
         return (
           <LoginPage
             onSwitchToRegister={() => setAuthPage('register')}
             onSwitchToRecovery={() => setAuthPage('recovery')}
+            onSwitchToAddDevice={() => setAuthPage('add-device')}
           />
         );
     }
@@ -303,6 +329,7 @@ function App() {
         onClose={() => setShowAdmin(false)}
         title='Admin Panel'
         categories={adminCategories}
+        warning={isOwner && serverSettingsDirty ? 'Unsaved changes' : undefined}
       />
 
       {showSettings && <UserSettings onClose={() => setShowSettings(false)} />}

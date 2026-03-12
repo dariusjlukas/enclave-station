@@ -10,6 +10,7 @@ using json = nlohmann::json;
 // Shared constants
 namespace defaults {
     constexpr int INVITE_EXPIRY_HOURS = 24;
+    constexpr int MAX_INVITE_EXPIRY_HOURS = 720; // 30 days
     constexpr int RECOVERY_TOKEN_EXPIRY_HOURS = 24;
     constexpr int SEARCH_MAX_RESULTS = 50;
     constexpr int MESSAGE_DEFAULT_LIMIT = 50;

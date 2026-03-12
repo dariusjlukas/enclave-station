@@ -220,6 +220,67 @@ struct AuthHandler {
             res->onAborted([]() {});
         });
 
+        // Device linking - get challenge for PKI device linking
+        app.post("/api/auth/add-device/pki/challenge", [this](auto* res, auto* req) {
+            std::string body;
+            res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                try {
+                    auto j = json::parse(body);
+                    std::string device_token = j.at("device_token");
+                    auto user_id = db.validate_device_token(device_token);
+                    if (!user_id) {
+                        res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                            ->end(R"({"error":"Invalid or expired device token"})");
+                        return;
+                    }
+                    std::string challenge = webauthn::generate_challenge();
+                    json extra = {{"type", "device_pki"}};
+                    db.store_webauthn_challenge(challenge, extra.dump());
+                    json resp = {{"challenge", challenge}};
+                    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+                } catch (const std::exception& e) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(json({{"error", e.what()}}).dump());
+                }
+            });
+            res->onAborted([]() {});
+        });
+
+        // Device linking - add browser key via device token
+        app.post("/api/auth/add-device/pki", [this](auto* res, auto* req) {
+            std::string body;
+            res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                handle_add_device_pki(res, body);
+            });
+            res->onAborted([]() {});
+        });
+
+        // Device linking - passkey registration options
+        app.post("/api/auth/add-device/passkey/options", [this](auto* res, auto* req) {
+            std::string body;
+            res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                handle_add_device_passkey_options(res, body);
+            });
+            res->onAborted([]() {});
+        });
+
+        // Device linking - passkey registration verify
+        app.post("/api/auth/add-device/passkey/verify", [this](auto* res, auto* req) {
+            std::string body;
+            res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
+                body.append(data);
+                if (!last) return;
+                handle_add_device_passkey_verify(res, body);
+            });
+            res->onAborted([]() {});
+        });
+
         app.post("/api/auth/logout", [this](auto* res, auto* req) {
             std::string token(req->getHeader("authorization"));
             if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
@@ -436,7 +497,7 @@ private:
             std::string display_name = extra.at("display_name");
             std::string invite_token = extra.value("invite_token", "");
             bool is_first_user = (db.count_users() == 0);
-            std::string role = is_first_user ? "admin" : "user";
+            std::string role = is_first_user ? "owner" : "user";
 
             auto user = db.create_user(username, display_name, "", role);
             db.store_webauthn_credential(user.id, result->credential_id,
@@ -546,6 +607,12 @@ private:
                 return;
             }
 
+            if (user->is_banned) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Your account has been banned"})");
+                return;
+            }
+
             if (check_and_handle_mfa(res, *user, "passkey")) return;
 
             std::string token = db.create_session(user->id, get_session_expiry());
@@ -633,7 +700,7 @@ private:
             }
 
             bool is_first_user = (db.count_users() == 0);
-            std::string role = is_first_user ? "admin" : "user";
+            std::string role = is_first_user ? "owner" : "user";
 
             auto user = db.create_user(username, display_name, "", role);
             db.store_pki_credential(user.id, public_key);
@@ -704,10 +771,231 @@ private:
                 return;
             }
 
+            if (user->is_banned) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Your account has been banned"})");
+                return;
+            }
+
             if (check_and_handle_mfa(res, *user, "pki")) return;
 
             std::string token = db.create_session(user->id, get_session_expiry());
             json resp = {{"token", token}, {"user", make_user_json(*user)}};
+            res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    // --- Device linking handlers ---
+
+    void handle_add_device_pki(uWS::HttpResponse<SSL>* res, const std::string& body) {
+        try {
+            if (!is_method_enabled("pki")) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Browser key authentication is not enabled"})");
+                return;
+            }
+
+            auto j = json::parse(body);
+            std::string device_token = j.at("device_token");
+            std::string public_key = j.at("public_key");
+            std::string challenge = j.at("challenge");
+            std::string signature = j.at("signature");
+            std::string device_name = j.value("device_name", "Browser Key");
+
+            auto user_id = db.validate_device_token(device_token);
+            if (!user_id) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invalid or expired device token"})");
+                return;
+            }
+
+            // Verify the challenge
+            auto stored = db.get_webauthn_challenge(challenge);
+            if (!stored) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invalid or expired challenge"})");
+                return;
+            }
+            auto extra = json::parse(stored->extra_data);
+            if (extra.at("type") != "device_pki") {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Challenge mismatch"})");
+                return;
+            }
+
+            if (!webauthn::verify_pki_signature(public_key, challenge, signature)) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Signature verification failed"})");
+                return;
+            }
+
+            db.delete_webauthn_challenge(challenge);
+            db.mark_device_token_used(device_token);
+            db.store_pki_credential(*user_id, public_key, device_name);
+
+            auto user = db.find_user_by_id(*user_id);
+            if (!user) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"User not found"})");
+                return;
+            }
+
+            std::string session = db.create_session(user->id, get_session_expiry());
+            json resp = {{"token", session}, {"user", make_user_json(*user)}};
+            res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    void handle_add_device_passkey_options(uWS::HttpResponse<SSL>* res, const std::string& body) {
+        try {
+            if (!is_method_enabled("passkey")) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Passkey authentication is not enabled"})");
+                return;
+            }
+
+            auto j = json::parse(body);
+            std::string device_token = j.at("device_token");
+
+            auto user_id = db.validate_device_token(device_token);
+            if (!user_id) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invalid or expired device token"})");
+                return;
+            }
+
+            auto user = db.find_user_by_id(*user_id);
+            if (!user) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"User not found"})");
+                return;
+            }
+
+            std::string challenge = webauthn::generate_challenge();
+
+            auto existing = db.list_webauthn_credentials(*user_id);
+            json exclude = json::array();
+            for (const auto& c : existing) {
+                json cred_desc = {{"type", "public-key"}, {"id", c.credential_id}};
+                if (!c.transports.empty() && c.transports != "[]") {
+                    cred_desc["transports"] = json::parse(c.transports);
+                }
+                exclude.push_back(cred_desc);
+            }
+
+            auto uid_bytes = std::vector<unsigned char>(user_id->begin(), user_id->end());
+            std::string user_handle = webauthn::base64url_encode(uid_bytes);
+
+            json extra = {{"type", "device_passkey"}, {"user_id", *user_id},
+                          {"device_token", device_token}};
+            db.store_webauthn_challenge(challenge, extra.dump());
+
+            json options = {
+                {"rp", {
+                    {"name", config.webauthn_rp_name},
+                    {"id", config.webauthn_rp_id}
+                }},
+                {"user", {
+                    {"id", user_handle},
+                    {"name", user->username},
+                    {"displayName", user->display_name}
+                }},
+                {"challenge", challenge},
+                {"pubKeyCredParams", json::array({
+                    {{"type", "public-key"}, {"alg", -7}},
+                    {{"type", "public-key"}, {"alg", -257}}
+                })},
+                {"excludeCredentials", exclude},
+                {"authenticatorSelection", {
+                    {"residentKey", "required"},
+                    {"userVerification", "preferred"}
+                }},
+                {"attestation", "none"},
+                {"timeout", defaults::WEBAUTHN_TIMEOUT_MS}
+            };
+
+            res->writeHeader("Content-Type", "application/json")->end(options.dump());
+        } catch (const std::exception& e) {
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                ->end(json({{"error", e.what()}}).dump());
+        }
+    }
+
+    void handle_add_device_passkey_verify(uWS::HttpResponse<SSL>* res, const std::string& body) {
+        try {
+            auto j = json::parse(body);
+            std::string credential_id = j.at("id");
+            auto response = j.at("response");
+            std::string attestation_object = response.at("attestationObject");
+            std::string client_data_json = response.at("clientDataJSON");
+            std::string device_name = j.value("device_name", "Passkey");
+
+            std::string transports_str = "[]";
+            if (response.contains("transports")) {
+                transports_str = response["transports"].dump();
+            }
+
+            auto cd_bytes = webauthn::base64url_decode(client_data_json);
+            std::string cd_str(cd_bytes.begin(), cd_bytes.end());
+            auto cd_json = json::parse(cd_str);
+            std::string challenge = cd_json.at("challenge");
+
+            auto stored = db.get_webauthn_challenge(challenge);
+            if (!stored) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Invalid or expired challenge"})");
+                return;
+            }
+
+            auto extra = json::parse(stored->extra_data);
+            if (extra.at("type") != "device_passkey") {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Challenge mismatch"})");
+                return;
+            }
+
+            std::string user_id = extra.at("user_id");
+            std::string device_token = extra.at("device_token");
+
+            // Validate device token is still valid
+            auto token_user = db.validate_device_token(device_token);
+            if (!token_user || *token_user != user_id) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Device token expired"})");
+                return;
+            }
+
+            auto result = webauthn::verify_registration(
+                attestation_object, client_data_json, challenge,
+                config.webauthn_origin, config.webauthn_rp_id);
+
+            if (!result) {
+                res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"WebAuthn verification failed"})");
+                return;
+            }
+
+            db.delete_webauthn_challenge(challenge);
+            db.mark_device_token_used(device_token);
+            db.store_webauthn_credential(user_id, result->credential_id,
+                                          result->public_key, result->sign_count,
+                                          device_name, transports_str);
+
+            auto user = db.find_user_by_id(user_id);
+            if (!user) {
+                res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"User not found"})");
+                return;
+            }
+
+            std::string session = db.create_session(user->id, get_session_expiry());
+            json resp = {{"token", session}, {"user", make_user_json(*user)}};
             res->writeHeader("Content-Type", "application/json")->end(resp.dump());
         } catch (const std::exception& e) {
             res->writeStatus("400")->writeHeader("Content-Type", "application/json")
@@ -734,6 +1022,12 @@ private:
             if (!user) {
                 res->writeStatus("404")->writeHeader("Content-Type", "application/json")
                     ->end(R"({"error":"User not found"})");
+                return;
+            }
+
+            if (user->is_banned) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Your account has been banned"})");
                 return;
             }
 
@@ -768,6 +1062,12 @@ private:
             if (!user) {
                 res->writeStatus("404")->writeHeader("Content-Type", "application/json")
                     ->end(R"({"error":"User not found"})");
+                return;
+            }
+
+            if (user->is_banned) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Your account has been banned"})");
                 return;
             }
 
@@ -1056,7 +1356,7 @@ private:
 
             // Create user
             bool is_first_user = (db.count_users() == 0);
-            std::string role = is_first_user ? "admin" : "user";
+            std::string role = is_first_user ? "owner" : "user";
             auto user = db.create_user(username, display_name, "", role);
 
             // Hash and store password
@@ -1112,6 +1412,12 @@ private:
             if (!password_auth::verify_password(password, *stored_hash)) {
                 res->writeStatus("401")->writeHeader("Content-Type", "application/json")
                     ->end(R"({"error":"Invalid username or password"})");
+                return;
+            }
+
+            if (user->is_banned) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Your account has been banned"})");
                 return;
             }
 
@@ -1307,6 +1613,12 @@ private:
                 return;
             }
 
+            if (user->is_banned) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Your account has been banned"})");
+                return;
+            }
+
             auto token = db.create_session(user->id, get_session_expiry());
             json resp = {{"token", token}, {"user", make_user_json(*user)}};
 
@@ -1396,6 +1708,12 @@ private:
             if (!user) {
                 res->writeStatus("404")->writeHeader("Content-Type", "application/json")
                     ->end(R"({"error":"User not found"})");
+                return;
+            }
+
+            if (user->is_banned) {
+                res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Your account has been banned"})");
                 return;
             }
 

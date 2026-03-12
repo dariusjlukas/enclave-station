@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Button,
   Input,
@@ -39,9 +39,10 @@ function formatSize(bytes: number): string {
 interface Props {
   isSetup?: boolean;
   onComplete?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function ServerSettings({ isSetup, onComplete }: Props) {
+export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [storageUsed, setStorageUsed] = useState(0);
@@ -82,6 +83,86 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
   const [pwRequireSpecial, setPwRequireSpecial] = useState(false);
   const [pwMaxAgeDays, setPwMaxAgeDays] = useState('0');
   const [pwHistoryCount, setPwHistoryCount] = useState('0');
+
+  const savedPayloadRef = useRef<string>('');
+
+  const currentPayload = useMemo(
+    () =>
+      JSON.stringify({
+        serverName,
+        authMethods,
+        registrationMode,
+        fileUploadsEnabled,
+        sessionExpiryHours,
+        maxFileValue,
+        maxFileUnit,
+        maxStorageValue,
+        maxStorageUnit,
+        pwMinLength,
+        pwRequireUpper,
+        pwRequireLower,
+        pwRequireNumber,
+        pwRequireSpecial,
+        pwMaxAgeDays,
+        pwHistoryCount,
+        mfaRequiredPassword,
+        mfaRequiredPki,
+        mfaRequiredPasskey,
+      }),
+    [
+      serverName,
+      authMethods,
+      registrationMode,
+      fileUploadsEnabled,
+      sessionExpiryHours,
+      maxFileValue,
+      maxFileUnit,
+      maxStorageValue,
+      maxStorageUnit,
+      pwMinLength,
+      pwRequireUpper,
+      pwRequireLower,
+      pwRequireNumber,
+      pwRequireSpecial,
+      pwMaxAgeDays,
+      pwHistoryCount,
+      mfaRequiredPassword,
+      mfaRequiredPki,
+      mfaRequiredPasskey,
+    ],
+  );
+
+  const isDirty =
+    savedPayloadRef.current !== '' &&
+    currentPayload !== savedPayloadRef.current;
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  const snapshotSavedState = () => {
+    savedPayloadRef.current = JSON.stringify({
+      serverName,
+      authMethods,
+      registrationMode,
+      fileUploadsEnabled,
+      sessionExpiryHours,
+      maxFileValue,
+      maxFileUnit,
+      maxStorageValue,
+      maxStorageUnit,
+      pwMinLength,
+      pwRequireUpper,
+      pwRequireLower,
+      pwRequireNumber,
+      pwRequireSpecial,
+      pwMaxAgeDays,
+      pwHistoryCount,
+      mfaRequiredPassword,
+      mfaRequiredPki,
+      mfaRequiredPasskey,
+    });
+  };
 
   const applySettings = (data: api.AdminSettings) => {
     setStorageUsed(data.storage_used);
@@ -129,6 +210,14 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Snapshot saved state once loading completes (state has settled)
+  useEffect(() => {
+    if (!loading) {
+      snapshotSavedState();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
   const buildSettingsPayload = () => {
     const fileBytes =
       parseFloat(maxFileValue) *
@@ -170,6 +259,8 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
         await api.updateAdminSettings(buildSettingsPayload());
         const data = await api.getAdminSettings();
         applySettings(data);
+        // Use setTimeout to snapshot after React state updates have flushed
+        setTimeout(() => snapshotSavedState(), 0);
       }
     } catch (e) {
       console.error('Settings operation failed:', e);
@@ -526,13 +617,17 @@ export function ServerSettings({ isSetup, onComplete }: Props) {
       </div>
 
       <Button
-        color='primary'
+        color={isDirty ? 'warning' : 'primary'}
         size='sm'
         isLoading={saving}
         onPress={handleSave}
         fullWidth={isSetup}
       >
-        {isSetup ? 'Complete Setup' : 'Save Settings'}
+        {isSetup
+          ? 'Complete Setup'
+          : isDirty
+            ? 'Save Settings (unsaved changes)'
+            : 'Save Settings'}
       </Button>
 
       {!isSetup && isOwner && (

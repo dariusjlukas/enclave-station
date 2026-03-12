@@ -12,11 +12,17 @@ import logoLargeDark from '../../assets/isle-chat-logo-large-dark.png';
 interface Props {
   onSwitchToRegister: () => void;
   onSwitchToRecovery: () => void;
+  onSwitchToAddDevice: () => void;
 }
 
-export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
+export function LoginPage({
+  onSwitchToRegister,
+  onSwitchToRecovery,
+  onSwitchToAddDevice,
+}: Props) {
   const setAuth = useChatStore((s) => s.setAuth);
-  const [error, setError] = useState('');
+  const authError = useChatStore((s) => s.authError);
+  const [error, setError] = useState(authError || '');
   const [loading, setLoading] = useState('');
   const [authMethods, setAuthMethods] = useState<string[]>([]);
   const [hasLocalKey, setHasLocalKey] = useState(false);
@@ -578,6 +584,16 @@ export function LoginPage({ onSwitchToRegister, onSwitchToRecovery }: Props) {
               size='sm'
             >
               Create an account
+            </Button>
+            <Button
+              variant='light'
+              color='default'
+              fullWidth
+              onPress={onSwitchToAddDevice}
+              isDisabled={serverDown || configLoading}
+              size='sm'
+            >
+              Link existing account to this device
             </Button>
             <Button
               variant='light'

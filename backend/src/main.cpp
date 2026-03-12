@@ -78,6 +78,8 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db) {
         auto setup = db.get_setting("setup_completed");
         resp["setup_completed"] = (setup && *setup == "true");
 
+        resp["has_users"] = (db.count_users() > 0);
+
         auto uploads = db.get_setting("file_uploads_enabled");
         resp["file_uploads_enabled"] = (!uploads || *uploads == "true");
 

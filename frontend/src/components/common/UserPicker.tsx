@@ -3,6 +3,7 @@ import { Input, Checkbox, Chip } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCircleInfo } from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
+import { UserAvatar } from './UserAvatar';
 import { OnlineStatusDot } from './OnlineStatusDot';
 import { UserPopoverCard } from './UserPopoverCard';
 
@@ -107,6 +108,12 @@ export function UserPicker({
               />
             )}
             <OnlineStatusDot isOnline={u.is_online} lastSeen={u.last_seen} />
+            <UserAvatar
+              username={u.username}
+              avatarFileId={u.avatar_file_id}
+              profileColor={u.profile_color}
+              size='sm'
+            />
             <span className='text-sm truncate'>
               {u.display_name}{' '}
               <span className='text-default-400'>@{u.username}</span>

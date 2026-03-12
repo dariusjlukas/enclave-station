@@ -23,7 +23,7 @@ public:
 
     void register_routes(uWS::TemplatedApp<SSL>& app) {
         app.template ws<WsUserData>("/ws", {
-            .compression = uWS::SHARED_COMPRESSOR,
+            .compression = uWS::DISABLED,
             .maxPayloadLength = 64 * 1024,
             .idleTimeout = 120,
             .maxBackpressure = 1 * 1024 * 1024,
@@ -173,11 +173,33 @@ public:
     }
 
     void close_all() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (auto& [uid, sockets] : user_sockets_) {
-            for (auto* ws : sockets) {
-                ws->close();
+        std::vector<uWS::WebSocket<SSL, true, WsUserData>*> to_close;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& [uid, sockets] : user_sockets_) {
+                for (auto* ws : sockets) {
+                    to_close.push_back(ws);
+                }
             }
+        }
+        for (auto* ws : to_close) {
+            ws->close();
+        }
+    }
+
+    void disconnect_user(const std::string& user_id) {
+        std::vector<uWS::WebSocket<SSL, true, WsUserData>*> to_close;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            auto it = user_sockets_.find(user_id);
+            if (it != user_sockets_.end()) {
+                for (auto* ws : it->second) {
+                    to_close.push_back(ws);
+                }
+            }
+        }
+        for (auto* ws : to_close) {
+            ws->close();
         }
     }
 

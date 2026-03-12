@@ -38,6 +38,30 @@ async function clickHeaderButton(
 
 const ADMIN_BTN = 0;
 
+/** Open admin panel → User Management. */
+async function openUserManagement(page: import("@playwright/test").Page) {
+  await clickHeaderButton(page, ADMIN_BTN);
+  await expect(page.getByText("Admin Panel").first()).toBeVisible({
+    timeout: 10_000,
+  });
+  await page.getByRole("button", { name: "User Management" }).click();
+}
+
+/** Select a user by their username in the UserPicker. */
+async function selectUser(
+  page: import("@playwright/test").Page,
+  username: string,
+) {
+  await expect(page.getByText(`@${username}`).first()).toBeVisible({
+    timeout: 5_000,
+  });
+  await page
+    .locator(".cursor-pointer")
+    .filter({ hasText: `@${username}` })
+    .first()
+    .click();
+}
+
 test.describe("Server-level self-demotion", () => {
   test("owner can see role dropdown for themselves in User Management", async ({
     page,
@@ -57,27 +81,17 @@ test.describe("Server-level self-demotion", () => {
     );
 
     await loginViaToken(page, admin.token);
+    await openUserManagement(page);
+    await selectUser(page, "admin");
 
-    // Open admin panel
-    await clickHeaderButton(page, ADMIN_BTN);
-    await expect(page.getByText("Admin Panel").first()).toBeVisible({
-      timeout: 10_000,
-    });
+    // The user card should have a role dropdown (HeroUI Select trigger button)
+    // that shows the current role
+    const roleCell = page.locator("td").filter({ hasText: "Role" }).first();
+    await expect(roleCell).toBeVisible({ timeout: 5_000 });
 
-    // Expand User Management section
-    await page.getByRole("button", { name: "User Management" }).click();
-
-    // Wait for users to load - find our own username
-    await expect(page.getByText("@admin").first()).toBeVisible({
-      timeout: 5_000,
-    });
-
-    // The admin user's row should have a role Select (not just a text label)
-    const adminRow = page
-      .locator(".rounded-lg.bg-content1")
-      .filter({ hasText: "@admin" });
-    const roleSelect = adminRow.locator("select");
-    await expect(roleSelect.first()).toBeAttached();
+    // The role trigger button should exist (indicates an editable Select, not a plain label)
+    const roleTrigger = page.getByRole("button", { name: /Owner/i });
+    await expect(roleTrigger).toBeVisible();
   });
 
   test("owner can demote themselves to admin via UI", async ({
@@ -98,25 +112,18 @@ test.describe("Server-level self-demotion", () => {
     );
 
     await loginViaToken(page, admin.token);
+    await openUserManagement(page);
+    await selectUser(page, "admin");
 
-    // Open admin panel
-    await clickHeaderButton(page, ADMIN_BTN);
-    await expect(page.getByText("Admin Panel").first()).toBeVisible({
-      timeout: 10_000,
-    });
+    // Click the role trigger button to open the dropdown
+    const roleTrigger = page.getByRole("button", { name: /Owner Role/i });
+    await expect(roleTrigger).toBeVisible({ timeout: 5_000 });
+    await roleTrigger.click();
 
-    // Expand User Management section
-    await page.getByRole("button", { name: "User Management" }).click();
-    await expect(page.getByText("@admin").first()).toBeVisible({
-      timeout: 5_000,
-    });
-
-    // Find the admin user's row and change the role via the hidden native <select>
-    const adminRow = page
-      .locator(".rounded-lg.bg-content1")
-      .filter({ hasText: "@admin" });
-    const nativeSelect = adminRow.locator("select");
-    await nativeSelect.selectOption("admin", { force: true });
+    // Wait for the popover/dropdown to appear and click the Admin option
+    // HeroUI renders the listbox in a portal; use a CSS selector for the option
+    const adminOption = page.locator("li").filter({ hasText: /^Admin$/ });
+    await adminOption.click({ timeout: 5_000 });
 
     // Verify the role changed via the API
     const users = await apiGetAdminUsers(

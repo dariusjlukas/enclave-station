@@ -32,6 +32,8 @@ export function SpaceBrowser({ onClose, onCreateSpace }: Props) {
   >([]);
   const [loading, setLoading] = useState(true);
   const setActiveView = useChatStore((s) => s.setActiveView);
+  const user = useChatStore((s) => s.user);
+  const isServerAdmin = user?.role === 'admin' || user?.role === 'owner';
 
   useEffect(() => {
     let cancelled = false;
@@ -114,16 +116,18 @@ export function SpaceBrowser({ onClose, onCreateSpace }: Props) {
           <Button variant='light' color='default' onPress={onClose}>
             Close
           </Button>
-          <Button
-            color='primary'
-            variant='ghost'
-            onPress={() => {
-              onClose();
-              onCreateSpace();
-            }}
-          >
-            Create New Space
-          </Button>
+          {isServerAdmin && (
+            <Button
+              color='primary'
+              variant='ghost'
+              onPress={() => {
+                onClose();
+                onCreateSpace();
+              }}
+            >
+              Create New Space
+            </Button>
+          )}
         </ModalFooter>
       </ModalContent>
     </Modal>

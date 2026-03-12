@@ -17,7 +17,6 @@ import {
   apiEnablePasswordAuth,
   apiSetupTotp,
   apiVerifyTotpSetup,
-  promoteToOwner,
   setRegistrationOpen,
   completeSetup,
   type ApiConfig,
@@ -47,7 +46,7 @@ export async function setupAdminUser(
   config?: ApiConfig,
 ): Promise<TestUser> {
   const data = await apiRegisterUser("admin", "Admin User", config);
-  promoteToOwner(data.userId, config);
+  // First user automatically gets "owner" role
   await setRegistrationOpen(data.token, config);
   await completeSetup(data.token, config);
   return {

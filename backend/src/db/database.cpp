@@ -243,9 +243,41 @@ void Database::run_migrations() {
             created_by UUID REFERENCES users(id),
             for_user_id UUID NOT NULL REFERENCES users(id),
             used BOOLEAN DEFAULT FALSE,
+            used_at TIMESTAMPTZ,
             expires_at TIMESTAMPTZ NOT NULL,
             created_at TIMESTAMPTZ DEFAULT NOW()
         );
+    )SQL");
+    txn.exec(R"SQL(
+        ALTER TABLE recovery_tokens ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;
+    )SQL");
+    txn.exec(R"SQL(
+        ALTER TABLE invite_tokens ADD COLUMN IF NOT EXISTS used_at TIMESTAMPTZ;
+    )SQL");
+    // Multi-use invite tokens
+    txn.exec(R"SQL(
+        ALTER TABLE invite_tokens ADD COLUMN IF NOT EXISTS max_uses INTEGER NOT NULL DEFAULT 1;
+        ALTER TABLE invite_tokens ADD COLUMN IF NOT EXISTS use_count INTEGER NOT NULL DEFAULT 0;
+    )SQL");
+    // Backfill use_count for already-used single-use tokens
+    txn.exec(R"SQL(
+        UPDATE invite_tokens SET use_count = 1 WHERE used_by IS NOT NULL AND use_count = 0;
+    )SQL");
+    // Track individual uses of multi-use tokens
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS invite_uses (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            invite_id UUID NOT NULL REFERENCES invite_tokens(id) ON DELETE CASCADE,
+            used_by UUID NOT NULL REFERENCES users(id),
+            used_at TIMESTAMPTZ DEFAULT NOW()
+        );
+    )SQL");
+
+    // User bans
+    txn.exec(R"SQL(
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN NOT NULL DEFAULT FALSE;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_at TIMESTAMPTZ;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS banned_by UUID REFERENCES users(id);
     )SQL");
 
     // Spaces
@@ -432,7 +464,7 @@ std::optional<User> Database::find_user_by_public_key(const std::string& public_
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
-        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color, u.is_banned "
         "FROM users u JOIN user_keys uk ON u.id = uk.user_id "
         "WHERE uk.public_key = $1",
         public_key);
@@ -446,7 +478,8 @@ std::optional<User> Database::find_user_by_public_key(const std::string& public_
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
                 r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
                 r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
-                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>(),
+                r[0][12].as<bool>()};
 }
 
 std::optional<User> Database::find_user_by_id(const std::string& id) {
@@ -454,7 +487,7 @@ std::optional<User> Database::find_user_by_id(const std::string& id) {
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color FROM users WHERE id = $1",
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color, is_banned FROM users WHERE id = $1",
         id);
     txn.commit();
     if (r.empty()) return std::nullopt;
@@ -466,7 +499,8 @@ std::optional<User> Database::find_user_by_id(const std::string& id) {
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
                 r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
                 r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
-                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>(),
+                r[0][12].as<bool>()};
 }
 
 User Database::create_user(const std::string& username, const std::string& display_name,
@@ -477,7 +511,7 @@ User Database::create_user(const std::string& username, const std::string& displ
         "INSERT INTO users (username, display_name, public_key, role) "
         "VALUES ($1, $2, $3, $4) "
         "RETURNING id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color",
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color, is_banned",
         username, display_name, public_key, role);
 
     // Also register in user_keys table (only if using legacy PKI auth)
@@ -496,7 +530,8 @@ User Database::create_user(const std::string& username, const std::string& displ
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
                 r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
                 r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
-                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>(),
+                r[0][12].as<bool>()};
 }
 
 std::vector<User> Database::list_users() {
@@ -504,7 +539,7 @@ std::vector<User> Database::list_users() {
     pqxx::work txn(get_conn());
     auto r = txn.exec(
         "SELECT id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color FROM users ORDER BY username");
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color, is_banned FROM users ORDER BY username");
     txn.commit();
     std::vector<User> users;
     for (const auto& row : r) {
@@ -516,7 +551,8 @@ std::vector<User> Database::list_users() {
                          row[8].is_null() ? "" : row[8].as<std::string>(),
                          row[9].is_null() ? "" : row[9].as<std::string>(),
                          row[10].is_null() ? "" : row[10].as<std::string>(),
-                         row[11].is_null() ? "" : row[11].as<std::string>()});
+                         row[11].is_null() ? "" : row[11].as<std::string>(),
+                         row[12].as<bool>()});
     }
     return users;
 }
@@ -555,7 +591,7 @@ User Database::update_user_profile(const std::string& user_id, const std::string
     auto r = txn.exec_params(
         "UPDATE users SET display_name = $2, bio = $3, status = $4, profile_color = $5 WHERE id = $1 "
         "RETURNING id, username, display_name, public_key, role, is_online, "
-        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color",
+        "last_seen::text, created_at::text, bio, status, avatar_file_id, profile_color, is_banned",
         user_id, display_name, bio, status, profile_color);
     txn.commit();
     if (r.empty()) throw std::runtime_error("User not found");
@@ -567,7 +603,8 @@ User Database::update_user_profile(const std::string& user_id, const std::string
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
                 r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
                 r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
-                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>(),
+                r[0][12].as<bool>()};
 }
 
 void Database::set_user_avatar(const std::string& user_id, const std::string& avatar_file_id) {
@@ -591,6 +628,26 @@ void Database::update_user_role(const std::string& user_id, const std::string& r
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     txn.exec_params("UPDATE users SET role = $2 WHERE id = $1", user_id, role);
+    txn.commit();
+}
+
+void Database::ban_user(const std::string& user_id, const std::string& banned_by) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "UPDATE users SET is_banned = true, banned_at = NOW(), banned_by = $2 WHERE id = $1",
+        user_id, banned_by);
+    // Delete all active sessions so the banned user is immediately logged out
+    txn.exec_params("DELETE FROM sessions WHERE user_id = $1", user_id);
+    txn.commit();
+}
+
+void Database::unban_user(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "UPDATE users SET is_banned = false, banned_at = NULL, banned_by = NULL WHERE id = $1",
+        user_id);
     txn.commit();
 }
 
@@ -622,7 +679,9 @@ std::optional<std::string> Database::validate_session(const std::string& token) 
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
-        "SELECT user_id FROM sessions WHERE token = $1 AND expires_at > NOW()",
+        "SELECT s.user_id FROM sessions s "
+        "JOIN users u ON s.user_id = u.id "
+        "WHERE s.token = $1 AND s.expires_at > NOW() AND u.is_banned = false",
         token);
     txn.commit();
     if (r.empty()) return std::nullopt;
@@ -1471,14 +1530,14 @@ std::string Database::get_message_channel_id(const std::string& message_id) {
 
 // --- Invites ---
 
-std::string Database::create_invite(const std::string& created_by, int expiry_hours) {
+std::string Database::create_invite(const std::string& created_by, int expiry_hours, int max_uses) {
     std::lock_guard<std::mutex> lock(mutex_);
     std::string token = random_hex(32);
     pqxx::work txn(get_conn());
     txn.exec_params(
-        "INSERT INTO invite_tokens (token, created_by, expires_at) "
-        "VALUES ($1, $2, NOW() + ($3 || ' hours')::interval)",
-        token, created_by, std::to_string(expiry_hours));
+        "INSERT INTO invite_tokens (token, created_by, expires_at, max_uses) "
+        "VALUES ($1, $2, NOW() + ($3 || ' hours')::interval, $4)",
+        token, created_by, std::to_string(expiry_hours), max_uses);
     txn.commit();
     return token;
 }
@@ -1487,7 +1546,8 @@ bool Database::validate_invite(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
-        "SELECT 1 FROM invite_tokens WHERE token = $1 AND used_by IS NULL AND expires_at > NOW()",
+        "SELECT 1 FROM invite_tokens WHERE token = $1 AND expires_at > NOW() "
+        "AND (max_uses = 0 OR use_count < max_uses)",
         token);
     txn.commit();
     return !r.empty();
@@ -1496,7 +1556,19 @@ bool Database::validate_invite(const std::string& token) {
 void Database::use_invite(const std::string& token, const std::string& user_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE invite_tokens SET used_by = $2 WHERE token = $1", token, user_id);
+    // Increment use count and set used_by/used_at for the most recent use
+    txn.exec_params(
+        "UPDATE invite_tokens SET use_count = use_count + 1, used_by = $2, used_at = NOW() "
+        "WHERE token = $1",
+        token, user_id);
+    // Record individual use
+    auto r = txn.exec_params(
+        "SELECT id FROM invite_tokens WHERE token = $1", token);
+    if (!r.empty()) {
+        txn.exec_params(
+            "INSERT INTO invite_uses (invite_id, used_by) VALUES ($1, $2)",
+            r[0][0].as<std::string>(), user_id);
+    }
     txn.commit();
 }
 
@@ -1505,24 +1577,47 @@ std::vector<Database::InviteInfo> Database::list_invites() {
     pqxx::work txn(get_conn());
     auto r = txn.exec(
         "SELECT i.id, i.token, COALESCE(u.username, 'system'), "
-        "i.used_by IS NOT NULL, i.expires_at::text, i.created_at::text "
+        "i.expires_at::text, i.created_at::text, "
+        "i.max_uses, i.use_count "
         "FROM invite_tokens i LEFT JOIN users u ON i.created_by = u.id "
         "ORDER BY i.created_at DESC");
-    txn.commit();
+
     std::vector<InviteInfo> invites;
     for (const auto& row : r) {
-        invites.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
-                           row[2].as<std::string>(), row[3].as<bool>(),
-                           row[4].as<std::string>(), row[5].as<std::string>()});
+        InviteInfo info;
+        info.id = row[0].as<std::string>();
+        info.token = row[1].as<std::string>();
+        info.created_by_username = row[2].as<std::string>();
+        info.expires_at = row[3].as<std::string>();
+        info.created_at = row[4].as<std::string>();
+        info.max_uses = row[5].as<int>();
+        info.use_count = row[6].as<int>();
+        info.used = (info.max_uses == 1 && info.use_count >= 1);
+
+        // Fetch individual uses for this invite
+        auto uses = txn.exec_params(
+            "SELECT COALESCE(u.username, 'unknown'), iu.used_at::text "
+            "FROM invite_uses iu LEFT JOIN users u ON iu.used_by = u.id "
+            "WHERE iu.invite_id = $1 ORDER BY iu.used_at DESC",
+            info.id);
+        for (const auto& urow : uses) {
+            info.uses.push_back({urow[0].as<std::string>(), urow[1].as<std::string>()});
+        }
+
+        invites.push_back(std::move(info));
     }
+    txn.commit();
     return invites;
 }
 
 bool Database::revoke_invite(const std::string& id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
+    // For single-use (max_uses=1): only revoke if unused
+    // For multi-use (max_uses!=1): always allow revoke (stops further uses)
     auto r = txn.exec_params(
-        "DELETE FROM invite_tokens WHERE id = $1 AND used_by IS NULL RETURNING id",
+        "DELETE FROM invite_tokens WHERE id = $1 "
+        "AND (max_uses != 1 OR use_count = 0) RETURNING id",
         id);
     txn.commit();
     return !r.empty();
@@ -1878,7 +1973,7 @@ std::optional<User> Database::find_user_by_credential_id(const std::string& cred
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
-        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color, u.is_banned "
         "FROM users u JOIN webauthn_credentials wc ON u.id = wc.user_id "
         "WHERE wc.credential_id = $1",
         credential_id);
@@ -1893,7 +1988,8 @@ std::optional<User> Database::find_user_by_credential_id(const std::string& cred
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
                 r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
                 r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
-                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>(),
+                r[0][12].as<bool>()};
 }
 
 // --- WebAuthn Challenges ---
@@ -1993,7 +2089,7 @@ std::optional<User> Database::find_user_by_pki_key(const std::string& public_key
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
-        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color, u.is_banned "
         "FROM users u JOIN pki_credentials pc ON u.id = pc.user_id "
         "WHERE pc.public_key = $1",
         public_key_spki);
@@ -2008,7 +2104,8 @@ std::optional<User> Database::find_user_by_pki_key(const std::string& public_key
                 r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
                 r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
                 r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
-                r[0][11].is_null() ? "" : r[0][11].as<std::string>()};
+                r[0][11].is_null() ? "" : r[0][11].as<std::string>(),
+                r[0][12].as<bool>()};
 }
 
 // --- Recovery Keys ---
@@ -2100,8 +2197,17 @@ std::optional<std::string> Database::get_recovery_token_user_id(const std::strin
 void Database::use_recovery_token(const std::string& token) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    txn.exec_params("UPDATE recovery_tokens SET used = TRUE WHERE token = $1", token);
+    txn.exec_params("UPDATE recovery_tokens SET used = TRUE, used_at = NOW() WHERE token = $1", token);
     txn.commit();
+}
+
+bool Database::delete_recovery_token(const std::string& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "DELETE FROM recovery_tokens WHERE id = $1 AND used = FALSE RETURNING id", id);
+    txn.commit();
+    return !r.empty();
 }
 
 std::vector<Database::RecoveryTokenInfo> Database::list_recovery_tokens() {
@@ -2110,7 +2216,8 @@ std::vector<Database::RecoveryTokenInfo> Database::list_recovery_tokens() {
     auto r = txn.exec(
         "SELECT rt.id, rt.token, COALESCE(c.username, 'system'), "
         "COALESCE(u.username, 'unknown'), rt.for_user_id, rt.used, "
-        "rt.expires_at::text, rt.created_at::text "
+        "rt.expires_at::text, rt.created_at::text, "
+        "COALESCE(rt.used_at::text, '') "
         "FROM recovery_tokens rt "
         "LEFT JOIN users c ON rt.created_by = c.id "
         "LEFT JOIN users u ON rt.for_user_id = u.id "
@@ -2121,7 +2228,8 @@ std::vector<Database::RecoveryTokenInfo> Database::list_recovery_tokens() {
         tokens.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
                           row[2].as<std::string>(), row[3].as<std::string>(),
                           row[4].as<std::string>(), row[5].as<bool>(),
-                          row[6].as<std::string>(), row[7].as<std::string>()});
+                          row[6].as<std::string>(), row[7].as<std::string>(),
+                          row[8].as<std::string>()});
     }
     return tokens;
 }
@@ -2911,7 +3019,7 @@ std::optional<User> Database::find_user_by_username(const std::string& username)
     pqxx::work txn(get_conn());
     auto r = txn.exec_params(
         "SELECT u.id, u.username, u.display_name, u.public_key, u.role, u.is_online, "
-        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color "
+        "u.last_seen::text, u.created_at::text, u.bio, u.status, u.avatar_file_id, u.profile_color, u.is_banned "
         "FROM users u WHERE u.username = $1", username);
     txn.commit();
     if (r.empty()) return std::nullopt;
@@ -2924,7 +3032,8 @@ std::optional<User> Database::find_user_by_username(const std::string& username)
         r[0][8].is_null() ? "" : r[0][8].as<std::string>(),
         r[0][9].is_null() ? "" : r[0][9].as<std::string>(),
         r[0][10].is_null() ? "" : r[0][10].as<std::string>(),
-        r[0][11].is_null() ? "" : r[0][11].as<std::string>()
+        r[0][11].is_null() ? "" : r[0][11].as<std::string>(),
+        r[0][12].as<bool>()
     };
 }
 

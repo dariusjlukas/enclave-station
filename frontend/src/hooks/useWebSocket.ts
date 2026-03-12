@@ -163,6 +163,10 @@ export function useWebSocket() {
           .updateUser({ role: role as 'owner' | 'admin' | 'user' });
       }),
 
+      wsService.on('banned', () => {
+        useChatStore.getState().clearAuth('Your account has been banned');
+      }),
+
       wsService.on('member_role_changed', (data: unknown) => {
         const { channel_id, user_id, role } = data as {
           channel_id: string;

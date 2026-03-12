@@ -26,6 +26,7 @@ interface Props {
   title: string;
   categories: SettingsCategory[];
   defaultCategory?: string;
+  warning?: string;
 }
 
 export function SettingsLayout({
@@ -34,6 +35,7 @@ export function SettingsLayout({
   title,
   categories,
   defaultCategory,
+  warning,
 }: Props) {
   const [activeKey, setActiveKey] = useState<string>(
     defaultCategory ?? categories[0]?.key ?? '',
@@ -55,7 +57,16 @@ export function SettingsLayout({
         }}
       >
         <ModalContent>
-          <ModalHeader>{title}</ModalHeader>
+          <ModalHeader>
+            <div className='flex items-center gap-3'>
+              <span>{title}</span>
+              {warning && (
+                <span className='text-xs font-normal text-warning bg-warning/10 px-2 py-0.5 rounded-full'>
+                  {warning}
+                </span>
+              )}
+            </div>
+          </ModalHeader>
           <ModalBody>
             <div className='flex h-[min(70vh,600px)]'>
               <nav className='w-48 flex-shrink-0 border-r border-default-200 p-2 hidden sm:flex flex-col gap-0.5'>

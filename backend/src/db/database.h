@@ -33,6 +33,8 @@ public:
     void clear_user_avatar(const std::string& user_id);
     void delete_user(const std::string& user_id);
     void update_user_role(const std::string& user_id, const std::string& role);
+    void ban_user(const std::string& user_id, const std::string& banned_by);
+    void unban_user(const std::string& user_id);
 
     // Sessions
     std::string create_session(const std::string& user_id, int expiry_hours);
@@ -159,13 +161,18 @@ public:
     int64_t get_total_file_size();
 
     // Invites
-    std::string create_invite(const std::string& created_by, int expiry_hours = 24);
+    std::string create_invite(const std::string& created_by, int expiry_hours = 24, int max_uses = 1);
     bool validate_invite(const std::string& token);
     void use_invite(const std::string& token, const std::string& user_id);
+    struct InviteUse {
+        std::string username, used_at;
+    };
     struct InviteInfo {
         std::string id, token, created_by_username;
         bool used;
         std::string expires_at, created_at;
+        int max_uses, use_count;
+        std::vector<InviteUse> uses;
     };
     std::vector<InviteInfo> list_invites();
     bool revoke_invite(const std::string& id);
@@ -353,12 +360,13 @@ public:
     struct RecoveryTokenInfo {
         std::string id, token, created_by_username, for_username, for_user_id;
         bool used;
-        std::string expires_at, created_at;
+        std::string expires_at, created_at, used_at;
     };
     std::string create_recovery_token(const std::string& created_by, const std::string& for_user_id,
                                        int expiry_hours = 24);
     std::optional<std::string> get_recovery_token_user_id(const std::string& token);
     void use_recovery_token(const std::string& token);
+    bool delete_recovery_token(const std::string& id);
     std::vector<RecoveryTokenInfo> list_recovery_tokens();
 
 private:

@@ -66,6 +66,16 @@ function apiGet(
   return fetch(`${config.apiBase}${path}`, { headers });
 }
 
+function apiDelete(
+  path: string,
+  token?: string,
+  config: ApiConfig = defaultConfig,
+): Promise<Response> {
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return fetch(`${config.apiBase}${path}`, { method: "DELETE", headers });
+}
+
 /**
  * Register a user via the API using PKI auth.
  */
@@ -213,13 +223,36 @@ export async function apiChangeUserRole(
 export async function apiGetAdminUsers(
   token: string,
   config: ApiConfig = defaultConfig,
-): Promise<Array<{ id: string; username: string; role: string }>> {
+): Promise<Array<{ id: string; username: string; role: string; is_banned: boolean }>> {
   const res = await apiGet("/api/admin/users", token, config);
   return (await res.json()) as Array<{
     id: string;
     username: string;
     role: string;
+    is_banned: boolean;
   }>;
+}
+
+/**
+ * Ban a user via the admin API.
+ */
+export async function apiBanUser(
+  userId: string,
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<Response> {
+  return apiPost(`/api/admin/users/${userId}/ban`, {}, token, config);
+}
+
+/**
+ * Unban a user via the admin API.
+ */
+export async function apiUnbanUser(
+  userId: string,
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<Response> {
+  return apiDelete(`/api/admin/users/${userId}/ban`, token, config);
 }
 
 /**

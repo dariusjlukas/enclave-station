@@ -29,6 +29,12 @@ class TestSpaceCreation:
         r = client.post("/api/spaces", json={"name": "test"})
         assert r.status_code == 401
 
+    def test_regular_user_cannot_create_space(self, client, admin_user, regular_user):
+        r = client.post("/api/spaces", json={
+            "name": "UserSpace",
+        }, headers=regular_user["headers"])
+        assert r.status_code == 403
+
 
 class TestSpaceListing:
     def test_list_own_spaces(self, client, admin_user):

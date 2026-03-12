@@ -517,6 +517,55 @@ struct UserHandler {
             }
         });
 
+        // --- Device linking ---
+
+        app.post("/api/users/me/device-tokens", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+
+            try {
+                std::string token = db.create_device_token(user_id);
+                json resp = {{"token", token}};
+                res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+            } catch (const std::exception& e) {
+                res->writeStatus("500")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", e.what()}}).dump());
+            }
+        });
+
+        app.get("/api/users/me/devices", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+
+            auto keys = db.list_user_keys(user_id);
+            json arr = json::array();
+            for (const auto& k : keys) {
+                arr.push_back({{"id", k.id}, {"device_name", k.device_name},
+                               {"created_at", k.created_at}});
+            }
+            res->writeHeader("Content-Type", "application/json")->end(arr.dump());
+        });
+
+        app.del("/api/users/me/devices/:id", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+
+            std::string key_id(req->getParameter(0));
+            try {
+                int total = db.count_user_credentials(user_id);
+                if (total <= 1) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->end(R"({"error":"Cannot remove your only credential"})");
+                    return;
+                }
+                db.remove_user_key(key_id, user_id);
+                res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+            } catch (const std::exception& e) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->end(json({{"error", e.what()}}).dump());
+            }
+        });
+
         // --- Recovery key management ---
 
         app.get("/api/users/me/recovery-keys/count", [this](auto* res, auto* req) {
