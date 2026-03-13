@@ -160,8 +160,8 @@ RUN_API_TESTS=false
 RUN_E2E=false
 RUN_DOCKER=false
 SKIP_BUILD=false
-E2E_WORKERS=8
-API_WORKERS=8
+E2E_WORKERS=16
+API_WORKERS=16
 ANY_FLAG=false
 NEXT_IS_WORKERS=false
 
@@ -321,8 +321,9 @@ if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_UNIT" = true ]; then
         printf "\n${BLUE}${BOLD}=== Code Coverage Report ===${NC}\n"
         GCDA_DIR="$BUILD_DIR/CMakeFiles/chat-lib.dir/src"
         if [ -d "$GCDA_DIR" ]; then
-            TOTAL_LINES=0
-            COVERED_LINES=0
+            # Collect per-file coverage, deduplicating by keeping max coverage per file
+            declare -A FILE_LINES FILE_COVERED
+            declare -a FILE_ORDER
 
             while IFS= read -r gcda_file; do
                 gcda_dir=$(dirname "$gcda_file")
@@ -330,7 +331,7 @@ if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_UNIT" = true ]; then
                 gcov_output=$(cd "$gcda_dir" && gcov -n "$gcda_base" 2>/dev/null)
                 current_file=""
                 while IFS= read -r line; do
-                    if [[ "$line" =~ ^File\ \'.*/src/ ]]; then
+                    if [[ "$line" =~ ^File\ \'.*/src/(auth|db|handlers|ws|models)/ ]]; then
                         current_file=$(echo "$line" | sed "s|.*src/|src/|; s|'$||")
                     elif [[ "$line" =~ ^Lines\ executed: ]] && [ -n "$current_file" ]; then
                         pct=$(echo "$line" | sed -n 's/Lines executed:\([0-9.]*\)% of \([0-9]*\)/\1 \2/p')
@@ -338,10 +339,14 @@ if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_UNIT" = true ]; then
                             file_pct=$(echo "$pct" | cut -d' ' -f1)
                             file_lines=$(echo "$pct" | cut -d' ' -f2)
                             file_covered=$(echo "$file_pct $file_lines" | awk '{printf "%d", ($1/100)*$2}')
-                            TOTAL_LINES=$((TOTAL_LINES + file_lines))
-                            COVERED_LINES=$((COVERED_LINES + file_covered))
-                            pct_display="${file_pct}% (${file_lines} lines)"
-                            printf "  %-40s %s\n" "$current_file" "$pct_display"
+                            prev_covered="${FILE_COVERED[$current_file]:-0}"
+                            if [ "$file_covered" -gt "$prev_covered" ] || [ -z "${FILE_LINES[$current_file]+x}" ]; then
+                                if [ -z "${FILE_LINES[$current_file]+x}" ]; then
+                                    FILE_ORDER+=("$current_file")
+                                fi
+                                FILE_LINES[$current_file]=$file_lines
+                                FILE_COVERED[$current_file]=$file_covered
+                            fi
                         fi
                         current_file=""
                     else
@@ -350,9 +355,21 @@ if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_UNIT" = true ]; then
                 done <<< "$gcov_output"
             done < <(find "$GCDA_DIR" -name '*.gcda' 2>/dev/null)
 
+            # Display deduplicated results and compute totals
+            TOTAL_LINES=0
+            COVERED_LINES=0
+            for f in "${FILE_ORDER[@]}"; do
+                fl=${FILE_LINES[$f]}
+                fc=${FILE_COVERED[$f]}
+                TOTAL_LINES=$((TOTAL_LINES + fl))
+                COVERED_LINES=$((COVERED_LINES + fc))
+                file_pct=$(awk "BEGIN {printf \"%.2f\", ($fc/$fl)*100}")
+                printf "  %-45s %s%% (%s lines)\n" "$f" "$file_pct" "$fl"
+            done
+
             if [ "$TOTAL_LINES" -gt 0 ]; then
                 COVERAGE_PCT=$(awk "BEGIN {printf \"%.1f\", ($COVERED_LINES/$TOTAL_LINES)*100}")
-                printf "\n  ${BOLD}%-40s %s${NC}\n" "Overall coverage:" "$COVERAGE_PCT% ($COVERED_LINES/$TOTAL_LINES lines)"
+                printf "\n  ${BOLD}%-45s %s${NC}\n" "Overall coverage:" "$COVERAGE_PCT% ($COVERED_LINES/$TOTAL_LINES lines)"
             fi
         fi
         printf "${BLUE}${BOLD}=============================${NC}\n"

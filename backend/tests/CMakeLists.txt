@@ -32,6 +32,14 @@ add_executable(test_handler_utils test_handler_utils.cpp)
 target_link_libraries(test_handler_utils PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME HandlerUtilsTests COMMAND test_handler_utils)
 
+add_executable(test_search_handler test_search_handler.cpp)
+target_link_libraries(test_search_handler PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME SearchHandlerTests COMMAND test_search_handler)
+
+add_executable(test_file_handler test_file_handler.cpp)
+target_link_libraries(test_file_handler PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME FileHandlerTests COMMAND test_file_handler)
+
 # Integration tests (require PostgreSQL)
 add_executable(test_database test_database.cpp)
 target_link_libraries(test_database PRIVATE chat-lib GTest::gtest_main)
@@ -39,5 +47,6 @@ add_test(NAME DatabaseTests COMMAND test_database)
 
 # Labels for selective test running
 set_tests_properties(PkiTests ConfigTests TotpTests PasswordTests WebAuthnTests HandlerUtilsTests
+    SearchHandlerTests FileHandlerTests
     PROPERTIES LABELS "unit")
 set_tests_properties(DatabaseTests PROPERTIES LABELS "integration")

@@ -212,6 +212,7 @@ export function ChannelSettings({ channel, onClose }: Props) {
                         isSelected={defaultJoin}
                         onValueChange={setDefaultJoin}
                         size='sm'
+                        aria-label='Auto-Join for New Members'
                       />
                     </div>
                   )}

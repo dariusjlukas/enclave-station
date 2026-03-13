@@ -49,6 +49,15 @@ set(LIB_SOURCES
     src/auth/password.cpp
     src/auth/totp.cpp
     src/db/database.cpp
+    src/handlers/auth_handler.cpp
+    src/handlers/admin_handler.cpp
+    src/handlers/channel_handler.cpp
+    src/handlers/file_handler.cpp
+    src/handlers/notification_handler.cpp
+    src/handlers/search_handler.cpp
+    src/handlers/user_handler.cpp
+    src/handlers/space_handler.cpp
+    src/ws/ws_handler.cpp
 )
 
 add_library(chat-lib STATIC ${LIB_SOURCES})

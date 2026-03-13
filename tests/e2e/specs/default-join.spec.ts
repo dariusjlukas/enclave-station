@@ -88,8 +88,15 @@ test.describe("Default-join channel settings toggle", () => {
     );
     await toggle.first().click();
 
-    // Save
-    await page.getByRole("button", { name: "Save Settings" }).click();
+    // Save and wait for the PUT request to complete
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/channels/") &&
+          resp.request().method() === "PUT",
+      ),
+      page.getByRole("button", { name: /Save Settings/ }).click(),
+    ]);
 
     // Verify via API that default_join is now true
     const channels = await apiGetChannels(admin.token, workerConfig.apiConfig);
