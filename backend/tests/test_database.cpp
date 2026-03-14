@@ -547,3 +547,30 @@ TEST_F(DatabaseTest, UpdateSpaceProfileColor) {
     auto updated = db_->update_space(space.id, "Team", "", true, "write", "#00ff00");
     EXPECT_EQ(updated.profile_color, "#00ff00");
 }
+
+// --- Server Lockdown ---
+
+TEST_F(DatabaseTest, ServerLockedDownDefaultsFalse) {
+    EXPECT_FALSE(db_->is_server_locked_down());
+}
+
+TEST_F(DatabaseTest, SetServerLockedDown) {
+    db_->set_server_locked_down(true);
+    EXPECT_TRUE(db_->is_server_locked_down());
+}
+
+TEST_F(DatabaseTest, LiftServerLockdown) {
+    db_->set_server_locked_down(true);
+    EXPECT_TRUE(db_->is_server_locked_down());
+    db_->set_server_locked_down(false);
+    EXPECT_FALSE(db_->is_server_locked_down());
+}
+
+TEST_F(DatabaseTest, SetServerLockedDownIdempotent) {
+    db_->set_server_locked_down(true);
+    db_->set_server_locked_down(true);
+    EXPECT_TRUE(db_->is_server_locked_down());
+    db_->set_server_locked_down(false);
+    db_->set_server_locked_down(false);
+    EXPECT_FALSE(db_->is_server_locked_down());
+}

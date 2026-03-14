@@ -20,6 +20,7 @@ TEST(AdminSettingsUtils, BuildSettingsResponseUsesDefaultsAndSafeFallbacks) {
     EXPECT_EQ(result.at("max_storage_size"), 0);
     EXPECT_EQ(result.at("storage_used"), 111);
     EXPECT_TRUE(result.at("server_archived").get<bool>());
+    EXPECT_FALSE(result.at("server_locked_down").get<bool>());
     EXPECT_EQ(result.at("server_name"), "EnclaveStation");
     EXPECT_EQ(result.at("registration_mode"), "invite");
     EXPECT_TRUE(result.at("file_uploads_enabled").get<bool>());
@@ -35,6 +36,7 @@ TEST(AdminSettingsUtils, BuildSettingsResponseUsesProvidedSettings) {
     snapshot.config_max_file_size = 4096;
     snapshot.config_session_expiry_hours = 72;
     snapshot.storage_used = 999;
+    snapshot.server_locked_down = true;
     snapshot.max_file_size = "2048";
     snapshot.max_storage_size = "8192";
     snapshot.auth_methods = R"(["password","pki"])";
@@ -61,6 +63,7 @@ TEST(AdminSettingsUtils, BuildSettingsResponseUsesProvidedSettings) {
     EXPECT_EQ(result.at("max_file_size"), 2048);
     EXPECT_EQ(result.at("max_storage_size"), 8192);
     EXPECT_EQ(result.at("storage_used"), 999);
+    EXPECT_TRUE(result.at("server_locked_down").get<bool>());
     EXPECT_EQ(result.at("server_name"), "My Server");
     EXPECT_EQ(result.at("server_icon_file_id"), "icon-1");
     EXPECT_EQ(result.at("server_icon_dark_file_id"), "icon-dark-1");

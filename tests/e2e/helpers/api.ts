@@ -707,3 +707,34 @@ export async function apiCreateCalendarEvent(
   }
   return (await res.json()) as { id: string; title: string };
 }
+
+/**
+ * Lock down the server (owner only).
+ */
+export async function apiLockdownServer(
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<Response> {
+  return apiPost("/api/admin/lockdown-server", {}, token, config);
+}
+
+/**
+ * Unlock the server (owner only).
+ */
+export async function apiUnlockServer(
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<Response> {
+  return apiPost("/api/admin/unlock-server", {}, token, config);
+}
+
+/**
+ * Get admin settings (owner only).
+ */
+export async function apiGetAdminSettings(
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<{ server_locked_down: boolean; [key: string]: unknown }> {
+  const res = await apiGet("/api/admin/settings", token, config);
+  return (await res.json()) as { server_locked_down: boolean; [key: string]: unknown };
+}
