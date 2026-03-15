@@ -36,6 +36,10 @@ export interface WorkerConfig {
   apiConfig: ApiConfig;
   dbConfig: DbConfig;
   frontendUrl: string;
+  /** PID of the backend process (multi-worker mode only). */
+  backendPid?: number;
+  /** Restart the backend process (multi-worker mode only). */
+  restartBackend?: () => Promise<void>;
 }
 
 function waitForUrl(url: string, timeoutMs = 30_000): Promise<boolean> {
@@ -112,22 +116,21 @@ export const test = base.extend<
 
       // Start backend server
       const uploadDir = execSync("mktemp -d", { encoding: "utf-8" }).trim();
-      const backendProc: ChildProcess = spawn(
+      const backendEnv = {
+        ...process.env,
+        BACKEND_PORT: String(backendPort),
+        POSTGRES_HOST: "localhost",
+        POSTGRES_PORT: PG_PORT,
+        POSTGRES_USER: PG_USER,
+        POSTGRES_PASSWORD: PG_PASS,
+        POSTGRES_DB: dbName,
+        UPLOAD_DIR: uploadDir,
+      };
+
+      let backendProc: ChildProcess = spawn(
         `${BUILD_DIR}/chat-server`,
         [],
-        {
-          env: {
-            ...process.env,
-            BACKEND_PORT: String(backendPort),
-            POSTGRES_HOST: "localhost",
-            POSTGRES_PORT: PG_PORT,
-            POSTGRES_USER: PG_USER,
-            POSTGRES_PASSWORD: PG_PASS,
-            POSTGRES_DB: dbName,
-            UPLOAD_DIR: uploadDir,
-          },
-          stdio: "pipe",
-        },
+        { env: backendEnv, stdio: "pipe" },
       );
 
       const backendReady = await waitForUrl(
@@ -180,6 +183,26 @@ export const test = base.extend<
           pgContainer: PG_CONTAINER,
         },
         frontendUrl: `http://localhost:${frontendPort}`,
+        backendPid: backendProc.pid,
+        restartBackend: async () => {
+          backendProc.kill();
+          backendProc = spawn(
+            `${BUILD_DIR}/chat-server`,
+            [],
+            { env: backendEnv, stdio: "pipe" },
+          );
+          config.backendPid = backendProc.pid;
+          const ready = await waitForUrl(
+            `http://127.0.0.1:${backendPort}/api/health`,
+            15_000,
+          );
+          if (!ready) {
+            backendProc.kill();
+            throw new Error(
+              `Worker ${idx}: backend failed to restart on port ${backendPort}`,
+            );
+          }
+        },
       };
 
       await use(config);

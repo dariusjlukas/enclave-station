@@ -68,12 +68,12 @@ test.describe("Lockdown via admin panel UI", () => {
     // Click the БЛОК button via dispatchEvent (cover overlay blocks mouse)
     await lockdownBtn.dispatchEvent("click");
 
-    // After lockdown, should show "Lift Lockdown" button and locked-down description
-    await expect(
-      page.getByRole("button", { name: "Lift Lockdown" }),
-    ).toBeVisible({ timeout: 5_000 });
+    // After lockdown, should show locked-down description and the LIFT button
     await expect(
       page.getByText("The server is currently in lockdown"),
+    ).toBeVisible({ timeout: 5_000 });
+    await expect(
+      page.locator("button").filter({ hasText: "LIFT" }),
     ).toBeVisible();
 
     // Verify via API
@@ -91,13 +91,16 @@ test.describe("Lockdown via admin panel UI", () => {
     await loginViaToken(page, admin.token);
     await openDangerZone(page);
 
-    // Should show locked-down state
+    // Should show locked-down state with LIFT emergency button
     await expect(
-      page.getByRole("button", { name: "Lift Lockdown" }),
+      page.getByText("The server is currently in lockdown"),
     ).toBeVisible({ timeout: 5_000 });
 
-    // Click lift lockdown
-    await page.getByRole("button", { name: "Lift Lockdown" }).click();
+    // Open the cover, then click the LIFT button (same dispatchEvent pattern)
+    await page.getByText("Lift cover to arm").first().dispatchEvent("click");
+    const liftBtn = page.locator("button").filter({ hasText: "LIFT" });
+    await expect(liftBtn).toBeEnabled({ timeout: 2_000 });
+    await liftBtn.dispatchEvent("click");
 
     // Should show the lockdown button again (not locked down)
     await expect(

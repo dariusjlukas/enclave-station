@@ -8,8 +8,12 @@ import {
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faBars,
+  faBook,
+  faCalendar,
+  faFolderOpen,
   faGear,
   faHashtag,
+  faListCheck,
   faLock,
   faRightFromBracket,
   faShieldHalved,
@@ -47,10 +51,22 @@ export function Header({
   const serverIconFileId = useChatStore((s) => s.serverIconFileId);
   const serverIconDarkFileId = useChatStore((s) => s.serverIconDarkFileId);
 
+  const activeToolView = useChatStore((s) => s.activeToolView);
+
   const activeChannel = channels.find((c) => c.id === activeChannelId);
   const activeSpace = activeChannel?.space_id
     ? spaces.find((s) => s.id === activeChannel.space_id)
     : null;
+  const toolSpace = activeToolView
+    ? spaces.find((s) => s.id === activeToolView.spaceId)
+    : null;
+
+  const toolLabels: Record<string, { label: string; icon: typeof faGear }> = {
+    files: { label: 'Files', icon: faFolderOpen },
+    calendar: { label: 'Calendar', icon: faCalendar },
+    tasks: { label: 'Tasks', icon: faListCheck },
+    wiki: { label: 'Wiki', icon: faBook },
+  };
 
   const showChannelSettings = activeChannel && !activeChannel.is_direct;
 
@@ -125,18 +141,45 @@ export function Header({
                 <span className='mx-1.5'>/</span>
               </span>
             )}
-            {!activeChannel.is_direct && (
-              <FontAwesomeIcon
-                icon={activeChannel.is_public ? faHashtag : faLock}
-                className='text-xs mr-1.5'
-              />
-            )}
-            {getChannelDisplayName()}
+            <span className='inline-flex items-center'>
+              {!activeChannel.is_direct && (
+                <FontAwesomeIcon
+                  icon={activeChannel.is_public ? faHashtag : faLock}
+                  className='text-xs mr-1.5'
+                />
+              )}
+              {getChannelDisplayName()}
+            </span>
             {activeChannel?.description && !activeChannel.is_direct && (
               <span className='ml-1 text-default-500 text-sm'>
                 | {activeChannel.description}
               </span>
             )}
+          </h2>
+        )}
+        {!activeChannel && activeToolView && toolSpace && (
+          <h2 className='text-foreground font-semibold truncate'>
+            <span className='text-default-400 font-normal'>
+              <button
+                className='hover:text-default-600 transition-colors cursor-pointer'
+                onClick={() =>
+                  useChatStore.getState().setActiveView({
+                    type: 'space',
+                    spaceId: toolSpace.id,
+                  })
+                }
+              >
+                {toolSpace.name}
+              </button>
+              <span className='mx-1.5'>/</span>
+            </span>
+            <span className='inline-flex items-center'>
+              <FontAwesomeIcon
+                icon={toolLabels[activeToolView.type].icon}
+                className='text-xs mr-1.5'
+              />
+              {toolLabels[activeToolView.type].label}
+            </span>
           </h2>
         )}
         {showChannelSettings && (

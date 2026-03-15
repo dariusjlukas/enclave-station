@@ -362,6 +362,56 @@ TEST_F(SpaceFileTest, GetAllSpaceStorage) {
     EXPECT_EQ(total, 2000);
 }
 
+// --- Recursive listing (for zip download) ---
+
+TEST_F(SpaceFileTest, ListFilesRecursiveFlat) {
+    auto [user, space] = create_user_and_space();
+    auto folder = db_->create_space_folder(space.id, "", "Docs", user.id);
+    db_->create_space_file(space.id, folder.id, "a.txt", "d1", 10, "text/plain", user.id);
+    db_->create_space_file(space.id, folder.id, "b.txt", "d2", 20, "text/plain", user.id);
+
+    auto entries = db_->list_space_files_recursive(space.id, folder.id);
+    ASSERT_EQ(entries.size(), 2u);
+    // Sorted by relative_path
+    EXPECT_EQ(entries[0].relative_path, "a.txt");
+    EXPECT_EQ(entries[1].relative_path, "b.txt");
+    EXPECT_EQ(entries[0].disk_file_id, "d1");
+    EXPECT_EQ(entries[1].disk_file_id, "d2");
+}
+
+TEST_F(SpaceFileTest, ListFilesRecursiveNested) {
+    auto [user, space] = create_user_and_space();
+    auto root = db_->create_space_folder(space.id, "", "Root", user.id);
+    auto sub = db_->create_space_folder(space.id, root.id, "Sub", user.id);
+    db_->create_space_file(space.id, root.id, "top.txt", "d1", 10, "text/plain", user.id);
+    db_->create_space_file(space.id, sub.id, "deep.txt", "d2", 20, "text/plain", user.id);
+
+    auto entries = db_->list_space_files_recursive(space.id, root.id);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].relative_path, "Sub/deep.txt");
+    EXPECT_EQ(entries[1].relative_path, "top.txt");
+}
+
+TEST_F(SpaceFileTest, ListFilesRecursiveEmpty) {
+    auto [user, space] = create_user_and_space();
+    auto folder = db_->create_space_folder(space.id, "", "Empty", user.id);
+
+    auto entries = db_->list_space_files_recursive(space.id, folder.id);
+    EXPECT_EQ(entries.size(), 0u);
+}
+
+TEST_F(SpaceFileTest, ListFilesRecursiveExcludesDeleted) {
+    auto [user, space] = create_user_and_space();
+    auto folder = db_->create_space_folder(space.id, "", "Mixed", user.id);
+    db_->create_space_file(space.id, folder.id, "keep.txt", "d1", 10, "text/plain", user.id);
+    auto del = db_->create_space_file(space.id, folder.id, "gone.txt", "d2", 10, "text/plain", user.id);
+    db_->soft_delete_space_file(del.id);
+
+    auto entries = db_->list_space_files_recursive(space.id, folder.id);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].relative_path, "keep.txt");
+}
+
 TEST_F(SpaceFileTest, DeleteOldestVersions) {
     auto [user, space] = create_user_and_space();
     auto file = db_->create_space_file(space.id, "", "big.bin",

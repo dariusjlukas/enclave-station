@@ -12,6 +12,8 @@
 #include "models/space.h"
 #include "models/space_file.h"
 #include "models/calendar_event.h"
+#include "models/task_board.h"
+#include "models/wiki_page.h"
 
 class Database {
 public:
@@ -385,10 +387,20 @@ public:
     void rename_space_file(const std::string& file_id, const std::string& new_name);
     void move_space_file(const std::string& file_id, const std::string& new_parent_id);
     void soft_delete_space_file(const std::string& file_id);
+    void set_space_file_tool_source(const std::string& file_id, const std::string& tool_source);
     int64_t get_space_storage_used(const std::string& space_id);
     std::vector<SpaceFile> get_space_file_path(const std::string& file_id);
     bool space_file_name_exists(const std::string& space_id, const std::string& parent_id,
                                  const std::string& name, const std::string& exclude_id = "");
+
+    // Recursive listing for zip download (files only, with relative path)
+    struct SpaceFileEntry {
+        std::string disk_file_id;
+        std::string relative_path;  // e.g. "subfolder/file.txt"
+        int64_t file_size;
+    };
+    std::vector<SpaceFileEntry> list_space_files_recursive(const std::string& space_id,
+                                                            const std::string& folder_id);
 
     // Space file permissions
     void set_file_permission(const std::string& file_id, const std::string& user_id,
@@ -488,6 +500,139 @@ public:
     void remove_calendar_permission(const std::string& space_id, const std::string& user_id);
     std::vector<CalendarPermission> get_calendar_permissions(const std::string& space_id);
     std::string get_calendar_permission(const std::string& space_id, const std::string& user_id);
+
+    // Task boards
+    TaskBoard create_task_board(const std::string& space_id, const std::string& name,
+                                const std::string& description, const std::string& created_by);
+    std::vector<TaskBoard> list_task_boards(const std::string& space_id);
+    std::optional<TaskBoard> find_task_board(const std::string& board_id);
+    TaskBoard update_task_board(const std::string& board_id, const std::string& name,
+                                const std::string& description);
+    void delete_task_board(const std::string& board_id);
+
+    // Task columns
+    TaskColumn create_task_column(const std::string& board_id, const std::string& name,
+                                   int position, int wip_limit, const std::string& color);
+    std::vector<TaskColumn> list_task_columns(const std::string& board_id);
+    TaskColumn update_task_column(const std::string& column_id, const std::string& name,
+                                   int wip_limit, const std::string& color);
+    void reorder_task_columns(const std::string& board_id, const std::vector<std::string>& column_ids);
+    void delete_task_column(const std::string& column_id);
+    std::optional<TaskColumn> find_task_column(const std::string& column_id);
+
+    // Tasks
+    Task create_task(const std::string& board_id, const std::string& column_id,
+                      const std::string& title, const std::string& description,
+                      const std::string& priority, const std::string& due_date,
+                      const std::string& color, int position, const std::string& created_by,
+                      const std::string& start_date = "", int duration_days = 0);
+    std::vector<Task> list_tasks(const std::string& board_id);
+    std::vector<Task> list_column_tasks(const std::string& column_id);
+    std::optional<Task> find_task(const std::string& task_id);
+    Task update_task(const std::string& task_id, const std::string& column_id,
+                      const std::string& title, const std::string& description,
+                      const std::string& priority, const std::string& due_date,
+                      const std::string& color, int position,
+                      const std::string& start_date = "", int duration_days = 0);
+    void delete_task(const std::string& task_id);
+    void reorder_tasks(const std::vector<std::pair<std::string, int>>& task_positions);
+    int get_column_task_count(const std::string& column_id);
+
+    // Task assignees
+    void add_task_assignee(const std::string& task_id, const std::string& user_id);
+    void remove_task_assignee(const std::string& task_id, const std::string& user_id);
+    std::vector<TaskAssignee> get_task_assignees(const std::string& task_id);
+
+    // Task labels
+    TaskLabel create_task_label(const std::string& board_id, const std::string& name,
+                                 const std::string& color);
+    std::vector<TaskLabel> list_task_labels(const std::string& board_id);
+    TaskLabel update_task_label(const std::string& label_id, const std::string& name,
+                                 const std::string& color);
+    void delete_task_label(const std::string& label_id);
+    void assign_task_label(const std::string& task_id, const std::string& label_id);
+    void unassign_task_label(const std::string& task_id, const std::string& label_id);
+    std::vector<TaskLabel> get_task_labels(const std::string& task_id);
+
+    // Task checklists
+    TaskChecklist create_task_checklist(const std::string& task_id, const std::string& title, int position);
+    std::vector<TaskChecklist> get_task_checklists(const std::string& task_id);
+    TaskChecklist update_task_checklist(const std::string& checklist_id, const std::string& title);
+    void delete_task_checklist(const std::string& checklist_id);
+    TaskChecklistItem create_checklist_item(const std::string& checklist_id, const std::string& content,
+                                              int position);
+    std::vector<TaskChecklistItem> get_checklist_items(const std::string& checklist_id);
+    TaskChecklistItem update_checklist_item(const std::string& item_id, const std::string& content,
+                                              bool is_checked);
+    void delete_checklist_item(const std::string& item_id);
+
+    // Task dependencies
+    TaskDependency add_task_dependency(const std::string& task_id, const std::string& depends_on_id,
+                                        const std::string& dependency_type = "finish_to_start");
+    void remove_task_dependency(const std::string& dependency_id);
+    std::vector<TaskDependency> get_task_dependencies(const std::string& board_id);
+
+    // Task activity
+    void log_task_activity(const std::string& task_id, const std::string& user_id,
+                            const std::string& action, const std::string& details);
+    std::vector<TaskActivity> get_task_activity(const std::string& task_id, int limit = 50);
+
+    // Task board permissions (space-level)
+    void set_task_permission(const std::string& space_id, const std::string& user_id,
+                              const std::string& permission, const std::string& granted_by);
+    void remove_task_permission(const std::string& space_id, const std::string& user_id);
+    std::vector<TaskBoardPermission> get_task_permissions(const std::string& space_id);
+    std::string get_task_permission(const std::string& space_id, const std::string& user_id);
+
+    // Wiki pages
+    WikiPage create_wiki_page(const std::string& space_id, const std::string& parent_id,
+                               const std::string& title, const std::string& slug,
+                               bool is_folder, const std::string& content,
+                               const std::string& content_text, const std::string& icon,
+                               int position, const std::string& created_by);
+    std::vector<WikiPage> list_wiki_pages(const std::string& space_id, const std::string& parent_id);
+    std::optional<WikiPage> find_wiki_page(const std::string& page_id);
+    WikiPage update_wiki_page(const std::string& page_id, const std::string& title,
+                               const std::string& slug, const std::string& content,
+                               const std::string& content_text, const std::string& icon,
+                               const std::string& cover_image_file_id,
+                               const std::string& edited_by);
+    void move_wiki_page(const std::string& page_id, const std::string& new_parent_id);
+    void reorder_wiki_pages(const std::vector<std::pair<std::string, int>>& page_positions);
+    void soft_delete_wiki_page(const std::string& page_id);
+    std::vector<WikiPage> get_wiki_page_path(const std::string& page_id);
+    bool wiki_page_slug_exists(const std::string& space_id, const std::string& parent_id,
+                                const std::string& slug, const std::string& exclude_id = "");
+    std::vector<WikiPage> get_wiki_tree(const std::string& space_id);
+
+    // Wiki page versions
+    WikiPageVersion create_wiki_page_version(const std::string& page_id, const std::string& title,
+                                              const std::string& content, const std::string& content_text,
+                                              const std::string& edited_by, bool is_major = false);
+    std::vector<WikiPageVersion> list_wiki_page_versions(const std::string& page_id, bool major_only = true);
+    std::optional<WikiPageVersion> get_wiki_page_version(const std::string& version_id);
+
+    // Wiki page permissions (per-node overrides)
+    void set_wiki_page_permission(const std::string& page_id, const std::string& user_id,
+                                   const std::string& permission, const std::string& granted_by);
+    void remove_wiki_page_permission(const std::string& page_id, const std::string& user_id);
+    std::vector<WikiPagePermission> get_wiki_page_permissions(const std::string& page_id);
+    std::string get_effective_wiki_page_permission(const std::string& page_id, const std::string& user_id);
+
+    // Wiki space-level permissions
+    void set_wiki_permission(const std::string& space_id, const std::string& user_id,
+                              const std::string& permission, const std::string& granted_by);
+    void remove_wiki_permission(const std::string& space_id, const std::string& user_id);
+    std::vector<WikiPermission> get_wiki_permissions(const std::string& space_id);
+    std::string get_wiki_permission(const std::string& space_id, const std::string& user_id);
+
+    // Wiki search
+    struct WikiSearchResult {
+        std::string id, space_id, space_name, title, snippet, created_at;
+        std::string created_by_username;
+    };
+    std::vector<WikiSearchResult> search_wiki_pages(const std::string& tsquery_expr,
+        const std::string& user_id, bool is_admin, int limit, int offset);
 
 private:
     pqxx::connection& get_conn();

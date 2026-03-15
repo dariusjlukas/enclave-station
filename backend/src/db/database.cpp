@@ -610,6 +610,250 @@ void Database::run_migrations() {
         );
     )SQL");
 
+    // Task boards
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_boards (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+            name VARCHAR(255) NOT NULL,
+            description TEXT DEFAULT '',
+            created_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_boards_space ON task_boards(space_id);
+    )SQL");
+
+    // Task columns
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_columns (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            board_id UUID NOT NULL REFERENCES task_boards(id) ON DELETE CASCADE,
+            name VARCHAR(255) NOT NULL,
+            position INT NOT NULL DEFAULT 0,
+            wip_limit INT DEFAULT 0,
+            color VARCHAR(50) DEFAULT '',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_columns_board ON task_columns(board_id);
+    )SQL");
+
+    // Tasks
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS tasks (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            board_id UUID NOT NULL REFERENCES task_boards(id) ON DELETE CASCADE,
+            column_id UUID NOT NULL REFERENCES task_columns(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            description TEXT DEFAULT '',
+            priority VARCHAR(20) DEFAULT 'medium',
+            due_date TIMESTAMPTZ,
+            color VARCHAR(50) DEFAULT '',
+            position INT NOT NULL DEFAULT 0,
+            created_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_board ON tasks(board_id);
+        CREATE INDEX IF NOT EXISTS idx_tasks_column ON tasks(column_id);
+    )SQL");
+
+    // Task assignees
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_assignees (
+            task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            PRIMARY KEY (task_id, user_id)
+        );
+    )SQL");
+
+    // Task labels (per board)
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_labels (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            board_id UUID NOT NULL REFERENCES task_boards(id) ON DELETE CASCADE,
+            name VARCHAR(100) NOT NULL,
+            color VARCHAR(50) DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_labels_board ON task_labels(board_id);
+    )SQL");
+
+    // Task label assignments
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_label_assignments (
+            task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            label_id UUID NOT NULL REFERENCES task_labels(id) ON DELETE CASCADE,
+            PRIMARY KEY (task_id, label_id)
+        );
+    )SQL");
+
+    // Task checklists
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_checklists (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            title VARCHAR(255) NOT NULL,
+            position INT NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_checklists_task ON task_checklists(task_id);
+    )SQL");
+
+    // Task checklist items
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_checklist_items (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            checklist_id UUID NOT NULL REFERENCES task_checklists(id) ON DELETE CASCADE,
+            content VARCHAR(500) NOT NULL,
+            is_checked BOOLEAN DEFAULT FALSE,
+            position INT NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_checklist_items_checklist ON task_checklist_items(checklist_id);
+    )SQL");
+
+    // Task activity log
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_activity (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES users(id),
+            action VARCHAR(50) NOT NULL,
+            details TEXT DEFAULT '{}',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_activity_task ON task_activity(task_id);
+    )SQL");
+
+    // Task board permissions (space-level, like calendar)
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_board_permissions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+            user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            permission VARCHAR(20) NOT NULL,
+            granted_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(space_id, user_id)
+        );
+    )SQL");
+
+    // Gantt chart support: add start_date, duration_days to tasks
+    txn.exec(R"SQL(
+        ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ;
+        ALTER TABLE tasks ADD COLUMN IF NOT EXISTS duration_days INT DEFAULT 0;
+    )SQL");
+
+    // Task dependencies
+    txn.exec(R"SQL(
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            depends_on_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            dependency_type VARCHAR(30) DEFAULT 'finish_to_start',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(task_id, depends_on_id),
+            CHECK(task_id != depends_on_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_deps_task ON task_dependencies(task_id);
+        CREATE INDEX IF NOT EXISTS idx_task_deps_dep ON task_dependencies(depends_on_id);
+    )SQL");
+
+    // Wiki tables
+    txn.exec(R"SQL(
+        ALTER TABLE space_files ADD COLUMN IF NOT EXISTS tool_source VARCHAR(20) DEFAULT 'files';
+
+        CREATE TABLE IF NOT EXISTS wiki_pages (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+            parent_id UUID REFERENCES wiki_pages(id) ON DELETE CASCADE,
+            title VARCHAR(500) NOT NULL,
+            slug VARCHAR(500) NOT NULL,
+            is_folder BOOLEAN NOT NULL DEFAULT FALSE,
+            content TEXT DEFAULT '',
+            content_text TEXT DEFAULT '',
+            content_tsv TSVECTOR,
+            icon VARCHAR(50) DEFAULT '',
+            cover_image_file_id TEXT DEFAULT '',
+            position INTEGER DEFAULT 0,
+            is_deleted BOOLEAN DEFAULT FALSE,
+            created_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            last_edited_by UUID REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wiki_pages_space ON wiki_pages(space_id);
+        CREATE INDEX IF NOT EXISTS idx_wiki_pages_parent ON wiki_pages(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_wiki_pages_space_parent
+            ON wiki_pages(space_id, parent_id) WHERE is_deleted = FALSE;
+        CREATE INDEX IF NOT EXISTS idx_wiki_pages_tsv ON wiki_pages USING GIN(content_tsv);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_wiki_pages_unique_slug
+            ON wiki_pages(space_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'), LOWER(slug))
+            WHERE is_deleted = FALSE;
+
+        CREATE TABLE IF NOT EXISTS wiki_page_versions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            page_id UUID NOT NULL REFERENCES wiki_pages(id) ON DELETE CASCADE,
+            version_number INTEGER NOT NULL,
+            title VARCHAR(500) NOT NULL,
+            content TEXT NOT NULL DEFAULT '',
+            content_text TEXT DEFAULT '',
+            is_major BOOLEAN DEFAULT FALSE,
+            edited_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(page_id, version_number)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wiki_versions_page ON wiki_page_versions(page_id);
+
+        CREATE TABLE IF NOT EXISTS wiki_page_permissions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            page_id UUID NOT NULL REFERENCES wiki_pages(id) ON DELETE CASCADE,
+            user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+            permission VARCHAR(20) NOT NULL,
+            granted_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(page_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wiki_perms_page ON wiki_page_permissions(page_id);
+        CREATE INDEX IF NOT EXISTS idx_wiki_perms_user ON wiki_page_permissions(user_id);
+
+        CREATE TABLE IF NOT EXISTS wiki_permissions (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+            user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+            permission VARCHAR(20) NOT NULL,
+            granted_by UUID NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            UNIQUE(space_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_wiki_permissions_space ON wiki_permissions(space_id);
+    )SQL");
+
+    // Migrate wiki content columns from JSONB to TEXT (for existing installations)
+    txn.exec(R"SQL(
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'wiki_pages' AND column_name = 'content'
+                AND data_type = 'jsonb'
+            ) THEN
+                ALTER TABLE wiki_pages ALTER COLUMN content TYPE TEXT USING content::text;
+                ALTER TABLE wiki_pages ALTER COLUMN content SET DEFAULT '';
+            END IF;
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'wiki_page_versions' AND column_name = 'content'
+                AND data_type = 'jsonb'
+            ) THEN
+                ALTER TABLE wiki_page_versions ALTER COLUMN content TYPE TEXT USING content::text;
+                ALTER TABLE wiki_page_versions ALTER COLUMN content SET DEFAULT '';
+            END IF;
+        END $$;
+    )SQL");
+
+    // Add is_major column to wiki_page_versions
+    txn.exec(R"SQL(
+        ALTER TABLE wiki_page_versions ADD COLUMN IF NOT EXISTS is_major BOOLEAN DEFAULT FALSE;
+    )SQL");
+
     txn.commit();
     std::cout << "[DB] Migrations complete" << std::endl;
 }
@@ -1643,12 +1887,24 @@ std::optional<Database::MessageOwnership> Database::get_message_ownership(const 
 std::optional<Database::FileInfo> Database::get_file_info(const std::string& file_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
+    // Check messages table (chat file attachments)
     auto r = txn.exec_params(
         "SELECT file_name, file_type FROM messages WHERE file_id = $1 LIMIT 1",
         file_id);
+    if (!r.empty()) {
+        txn.commit();
+        return FileInfo{r[0][0].as<std::string>(), r[0][1].as<std::string>()};
+    }
+    // Check space_files table (space files and wiki media, keyed by disk_file_id)
+    auto r2 = txn.exec_params(
+        "SELECT name, mime_type FROM space_files WHERE disk_file_id = $1 LIMIT 1",
+        file_id);
     txn.commit();
-    if (r.empty()) return std::nullopt;
-    return FileInfo{r[0][0].as<std::string>(), r[0][1].as<std::string>()};
+    if (!r2.empty()) {
+        return FileInfo{r2[0][0].as<std::string>(),
+                        r2[0][1].is_null() ? "application/octet-stream" : r2[0][1].as<std::string>()};
+    }
+    return std::nullopt;
 }
 
 // --- Reactions ---
@@ -3407,6 +3663,7 @@ std::vector<SpaceFile> Database::list_space_files(const std::string& space_id, c
         "  ) SELECT SUM(file_size) AS total_size FROM descendants WHERE NOT is_folder"
         ") fs ON sf.is_folder "
         "WHERE sf.space_id = $1 AND sf.is_deleted = FALSE "
+        "AND (sf.tool_source = 'files' OR sf.tool_source IS NULL) "
         "AND (($2 = '' AND sf.parent_id IS NULL) OR sf.parent_id::text = $2) "
         "ORDER BY sf.is_folder DESC, sf.name ASC",
         space_id, parent_val);
@@ -3429,6 +3686,42 @@ std::vector<SpaceFile> Database::list_space_files(const std::string& space_id, c
         files.push_back(f);
     }
     return files;
+}
+
+std::vector<Database::SpaceFileEntry> Database::list_space_files_recursive(
+        const std::string& space_id, const std::string& folder_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    // Recursive CTE that builds the relative path for every non-folder descendant.
+    auto r = txn.exec_params(
+        "WITH RECURSIVE tree AS ("
+        "  SELECT id, name, is_folder, disk_file_id, file_size, "
+        "         name::text AS rel_path "
+        "  FROM space_files "
+        "  WHERE parent_id = $1 AND space_id = $2 AND is_deleted = FALSE "
+        "    AND (tool_source = 'files' OR tool_source IS NULL) "
+        "  UNION ALL "
+        "  SELECT c.id, c.name, c.is_folder, c.disk_file_id, c.file_size, "
+        "         tree.rel_path || '/' || c.name "
+        "  FROM space_files c "
+        "  INNER JOIN tree ON c.parent_id = tree.id "
+        "  WHERE c.is_deleted = FALSE "
+        "    AND (c.tool_source = 'files' OR c.tool_source IS NULL) "
+        ") "
+        "SELECT disk_file_id, rel_path, file_size "
+        "FROM tree WHERE NOT is_folder "
+        "ORDER BY rel_path",
+        folder_id, space_id);
+    txn.commit();
+    std::vector<SpaceFileEntry> entries;
+    for (const auto& row : r) {
+        SpaceFileEntry e;
+        e.disk_file_id = row[0].is_null() ? "" : row[0].as<std::string>();
+        e.relative_path = row[1].as<std::string>();
+        e.file_size = row[2].as<int64_t>();
+        entries.push_back(e);
+    }
+    return entries;
 }
 
 std::optional<SpaceFile> Database::find_space_file(const std::string& file_id) {
@@ -3495,6 +3788,13 @@ void Database::soft_delete_space_file(const std::string& file_id) {
         "UPDATE space_files SET is_deleted = TRUE, updated_at = NOW() "
         "WHERE id IN (SELECT id FROM descendants)",
         file_id);
+    txn.commit();
+}
+
+void Database::set_space_file_tool_source(const std::string& file_id, const std::string& tool_source) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("UPDATE space_files SET tool_source = $2 WHERE id = $1", file_id, tool_source);
     txn.commit();
 }
 
@@ -4389,4 +4689,1360 @@ std::string Database::get_calendar_permission(const std::string& space_id, const
     txn.commit();
     if (r.empty()) return "";
     return r[0][0].as<std::string>();
+}
+
+// --- Task Boards ---
+
+TaskBoard Database::create_task_board(const std::string& space_id, const std::string& name,
+                                       const std::string& description, const std::string& created_by) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "INSERT INTO task_boards (space_id, name, description, created_by) "
+        "VALUES ($1, $2, $3, $4) "
+        "RETURNING id, created_at::text, updated_at::text",
+        space_id, name, description, created_by);
+    txn.commit();
+    TaskBoard b;
+    b.id = r[0][0].as<std::string>();
+    b.space_id = space_id;
+    b.name = name;
+    b.description = description;
+    b.created_by = created_by;
+    b.created_at = r[0][1].as<std::string>();
+    b.updated_at = r[0][2].as<std::string>();
+    return b;
+}
+
+std::vector<TaskBoard> Database::list_task_boards(const std::string& space_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT b.id, b.space_id, b.name, b.description, b.created_by, "
+        "u.username, b.created_at::text, b.updated_at::text "
+        "FROM task_boards b LEFT JOIN users u ON b.created_by = u.id "
+        "WHERE b.space_id = $1 ORDER BY b.created_at ASC",
+        space_id);
+    txn.commit();
+    std::vector<TaskBoard> boards;
+    for (const auto& row : r) {
+        TaskBoard b;
+        b.id = row[0].as<std::string>();
+        b.space_id = row[1].as<std::string>();
+        b.name = row[2].as<std::string>();
+        b.description = row[3].as<std::string>("");
+        b.created_by = row[4].as<std::string>();
+        b.created_by_username = row[5].as<std::string>("");
+        b.created_at = row[6].as<std::string>();
+        b.updated_at = row[7].as<std::string>();
+        boards.push_back(b);
+    }
+    return boards;
+}
+
+std::optional<TaskBoard> Database::find_task_board(const std::string& board_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT b.id, b.space_id, b.name, b.description, b.created_by, "
+        "u.username, b.created_at::text, b.updated_at::text "
+        "FROM task_boards b LEFT JOIN users u ON b.created_by = u.id "
+        "WHERE b.id = $1",
+        board_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    TaskBoard b;
+    b.id = r[0][0].as<std::string>();
+    b.space_id = r[0][1].as<std::string>();
+    b.name = r[0][2].as<std::string>();
+    b.description = r[0][3].as<std::string>("");
+    b.created_by = r[0][4].as<std::string>();
+    b.created_by_username = r[0][5].as<std::string>("");
+    b.created_at = r[0][6].as<std::string>();
+    b.updated_at = r[0][7].as<std::string>();
+    return b;
+}
+
+TaskBoard Database::update_task_board(const std::string& board_id, const std::string& name,
+                                       const std::string& description) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "UPDATE task_boards SET name = $2, description = $3, updated_at = NOW() "
+        "WHERE id = $1 "
+        "RETURNING space_id, created_by, created_at::text, updated_at::text",
+        board_id, name, description);
+    txn.commit();
+    TaskBoard b;
+    b.id = board_id;
+    b.name = name;
+    b.description = description;
+    b.space_id = r[0][0].as<std::string>();
+    b.created_by = r[0][1].as<std::string>();
+    b.created_at = r[0][2].as<std::string>();
+    b.updated_at = r[0][3].as<std::string>();
+    return b;
+}
+
+void Database::delete_task_board(const std::string& board_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_boards WHERE id = $1", board_id);
+    txn.commit();
+}
+
+// --- Task Columns ---
+
+TaskColumn Database::create_task_column(const std::string& board_id, const std::string& name,
+                                          int position, int wip_limit, const std::string& color) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "INSERT INTO task_columns (board_id, name, position, wip_limit, color) "
+        "VALUES ($1, $2, $3, $4, $5) "
+        "RETURNING id, created_at::text",
+        board_id, name, position, wip_limit, color);
+    txn.commit();
+    TaskColumn c;
+    c.id = r[0][0].as<std::string>();
+    c.board_id = board_id;
+    c.name = name;
+    c.position = position;
+    c.wip_limit = wip_limit;
+    c.color = color;
+    c.created_at = r[0][1].as<std::string>();
+    return c;
+}
+
+std::vector<TaskColumn> Database::list_task_columns(const std::string& board_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, board_id, name, position, wip_limit, color, created_at::text "
+        "FROM task_columns WHERE board_id = $1 ORDER BY position ASC",
+        board_id);
+    txn.commit();
+    std::vector<TaskColumn> cols;
+    for (const auto& row : r) {
+        TaskColumn c;
+        c.id = row[0].as<std::string>();
+        c.board_id = row[1].as<std::string>();
+        c.name = row[2].as<std::string>();
+        c.position = row[3].as<int>();
+        c.wip_limit = row[4].as<int>(0);
+        c.color = row[5].as<std::string>("");
+        c.created_at = row[6].as<std::string>();
+        cols.push_back(c);
+    }
+    return cols;
+}
+
+TaskColumn Database::update_task_column(const std::string& column_id, const std::string& name,
+                                          int wip_limit, const std::string& color) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "UPDATE task_columns SET name = $2, wip_limit = $3, color = $4 WHERE id = $1 "
+        "RETURNING board_id, position, created_at::text",
+        column_id, name, wip_limit, color);
+    txn.commit();
+    TaskColumn c;
+    c.id = column_id;
+    c.name = name;
+    c.wip_limit = wip_limit;
+    c.color = color;
+    c.board_id = r[0][0].as<std::string>();
+    c.position = r[0][1].as<int>();
+    c.created_at = r[0][2].as<std::string>();
+    return c;
+}
+
+void Database::reorder_task_columns(const std::string& board_id, const std::vector<std::string>& column_ids) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    for (int i = 0; i < (int)column_ids.size(); i++) {
+        txn.exec_params(
+            "UPDATE task_columns SET position = $1 WHERE id = $2 AND board_id = $3",
+            i, column_ids[i], board_id);
+    }
+    txn.commit();
+}
+
+void Database::delete_task_column(const std::string& column_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_columns WHERE id = $1", column_id);
+    txn.commit();
+}
+
+std::optional<TaskColumn> Database::find_task_column(const std::string& column_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, board_id, name, position, wip_limit, color, created_at::text "
+        "FROM task_columns WHERE id = $1",
+        column_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    TaskColumn c;
+    c.id = r[0][0].as<std::string>();
+    c.board_id = r[0][1].as<std::string>();
+    c.name = r[0][2].as<std::string>();
+    c.position = r[0][3].as<int>();
+    c.wip_limit = r[0][4].as<int>(0);
+    c.color = r[0][5].as<std::string>("");
+    c.created_at = r[0][6].as<std::string>();
+    return c;
+}
+
+// --- Tasks ---
+
+Task Database::create_task(const std::string& board_id, const std::string& column_id,
+                             const std::string& title, const std::string& description,
+                             const std::string& priority, const std::string& due_date,
+                             const std::string& color, int position, const std::string& created_by,
+                             const std::string& start_date, int duration_days) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "INSERT INTO tasks (board_id, column_id, title, description, priority, "
+        "due_date, start_date, duration_days, color, position, created_by) "
+        "VALUES ($1, $2, $3, $4, $5, "
+        "NULLIF($6, '')::timestamptz, NULLIF($7, '')::timestamptz, $8, $9, $10, $11) "
+        "RETURNING id, created_at::text, updated_at::text",
+        board_id, column_id, title, description, priority,
+        due_date, start_date, duration_days, color, position, created_by);
+    txn.commit();
+    Task t;
+    t.id = r[0][0].as<std::string>();
+    t.board_id = board_id;
+    t.column_id = column_id;
+    t.title = title;
+    t.description = description;
+    t.priority = priority;
+    t.due_date = due_date;
+    t.start_date = start_date;
+    t.duration_days = duration_days;
+    t.color = color;
+    t.position = position;
+    t.created_by = created_by;
+    t.created_at = r[0][1].as<std::string>();
+    t.updated_at = r[0][2].as<std::string>();
+    return t;
+}
+
+std::vector<Task> Database::list_tasks(const std::string& board_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT t.id, t.board_id, t.column_id, t.title, t.description, t.priority, "
+        "COALESCE(t.due_date::text, ''), COALESCE(t.start_date::text, ''), "
+        "COALESCE(t.duration_days, 0), t.color, t.position, t.created_by, "
+        "u.username, t.created_at::text, t.updated_at::text "
+        "FROM tasks t LEFT JOIN users u ON t.created_by = u.id "
+        "WHERE t.board_id = $1 ORDER BY t.position ASC",
+        board_id);
+    txn.commit();
+    std::vector<Task> tasks;
+    for (const auto& row : r) {
+        Task t;
+        t.id = row[0].as<std::string>();
+        t.board_id = row[1].as<std::string>();
+        t.column_id = row[2].as<std::string>();
+        t.title = row[3].as<std::string>();
+        t.description = row[4].as<std::string>("");
+        t.priority = row[5].as<std::string>("medium");
+        t.due_date = row[6].as<std::string>("");
+        t.start_date = row[7].as<std::string>("");
+        t.duration_days = row[8].as<int>(0);
+        t.color = row[9].as<std::string>("");
+        t.position = row[10].as<int>();
+        t.created_by = row[11].as<std::string>();
+        t.created_by_username = row[12].as<std::string>("");
+        t.created_at = row[13].as<std::string>();
+        t.updated_at = row[14].as<std::string>();
+        tasks.push_back(t);
+    }
+    return tasks;
+}
+
+std::vector<Task> Database::list_column_tasks(const std::string& column_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT t.id, t.board_id, t.column_id, t.title, t.description, t.priority, "
+        "COALESCE(t.due_date::text, ''), COALESCE(t.start_date::text, ''), "
+        "COALESCE(t.duration_days, 0), t.color, t.position, t.created_by, "
+        "u.username, t.created_at::text, t.updated_at::text "
+        "FROM tasks t LEFT JOIN users u ON t.created_by = u.id "
+        "WHERE t.column_id = $1 ORDER BY t.position ASC",
+        column_id);
+    txn.commit();
+    std::vector<Task> tasks;
+    for (const auto& row : r) {
+        Task t;
+        t.id = row[0].as<std::string>();
+        t.board_id = row[1].as<std::string>();
+        t.column_id = row[2].as<std::string>();
+        t.title = row[3].as<std::string>();
+        t.description = row[4].as<std::string>("");
+        t.priority = row[5].as<std::string>("medium");
+        t.due_date = row[6].as<std::string>("");
+        t.start_date = row[7].as<std::string>("");
+        t.duration_days = row[8].as<int>(0);
+        t.color = row[9].as<std::string>("");
+        t.position = row[10].as<int>();
+        t.created_by = row[11].as<std::string>();
+        t.created_by_username = row[12].as<std::string>("");
+        t.created_at = row[13].as<std::string>();
+        t.updated_at = row[14].as<std::string>();
+        tasks.push_back(t);
+    }
+    return tasks;
+}
+
+std::optional<Task> Database::find_task(const std::string& task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT t.id, t.board_id, t.column_id, t.title, t.description, t.priority, "
+        "COALESCE(t.due_date::text, ''), COALESCE(t.start_date::text, ''), "
+        "COALESCE(t.duration_days, 0), t.color, t.position, t.created_by, "
+        "u.username, t.created_at::text, t.updated_at::text "
+        "FROM tasks t LEFT JOIN users u ON t.created_by = u.id "
+        "WHERE t.id = $1",
+        task_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    Task t;
+    t.id = r[0][0].as<std::string>();
+    t.board_id = r[0][1].as<std::string>();
+    t.column_id = r[0][2].as<std::string>();
+    t.title = r[0][3].as<std::string>();
+    t.description = r[0][4].as<std::string>("");
+    t.priority = r[0][5].as<std::string>("medium");
+    t.due_date = r[0][6].as<std::string>("");
+    t.start_date = r[0][7].as<std::string>("");
+    t.duration_days = r[0][8].as<int>(0);
+    t.color = r[0][9].as<std::string>("");
+    t.position = r[0][10].as<int>();
+    t.created_by = r[0][11].as<std::string>();
+    t.created_by_username = r[0][12].as<std::string>("");
+    t.created_at = r[0][13].as<std::string>();
+    t.updated_at = r[0][14].as<std::string>();
+    return t;
+}
+
+Task Database::update_task(const std::string& task_id, const std::string& column_id,
+                             const std::string& title, const std::string& description,
+                             const std::string& priority, const std::string& due_date,
+                             const std::string& color, int position,
+                             const std::string& start_date, int duration_days) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "UPDATE tasks SET column_id = $2, title = $3, description = $4, "
+        "priority = $5, due_date = NULLIF($6, '')::timestamptz, color = $7, position = $8, "
+        "start_date = NULLIF($9, '')::timestamptz, duration_days = $10, updated_at = NOW() "
+        "WHERE id = $1 "
+        "RETURNING board_id, created_by, created_at::text, updated_at::text",
+        task_id, column_id, title, description, priority, due_date, color, position,
+        start_date, duration_days);
+    txn.commit();
+    Task t;
+    t.id = task_id;
+    t.column_id = column_id;
+    t.title = title;
+    t.description = description;
+    t.priority = priority;
+    t.due_date = due_date;
+    t.start_date = start_date;
+    t.duration_days = duration_days;
+    t.color = color;
+    t.position = position;
+    t.board_id = r[0][0].as<std::string>();
+    t.created_by = r[0][1].as<std::string>();
+    t.created_at = r[0][2].as<std::string>();
+    t.updated_at = r[0][3].as<std::string>();
+    return t;
+}
+
+void Database::delete_task(const std::string& task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM tasks WHERE id = $1", task_id);
+    txn.commit();
+}
+
+void Database::reorder_tasks(const std::vector<std::pair<std::string, int>>& task_positions) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    for (const auto& [task_id, pos] : task_positions) {
+        txn.exec_params("UPDATE tasks SET position = $2 WHERE id = $1", task_id, pos);
+    }
+    txn.commit();
+}
+
+int Database::get_column_task_count(const std::string& column_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params("SELECT COUNT(*) FROM tasks WHERE column_id = $1", column_id);
+    txn.commit();
+    return r[0][0].as<int>();
+}
+
+// --- Task Assignees ---
+
+void Database::add_task_assignee(const std::string& task_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO task_assignees (task_id, user_id) VALUES ($1, $2) "
+        "ON CONFLICT DO NOTHING",
+        task_id, user_id);
+    txn.commit();
+}
+
+void Database::remove_task_assignee(const std::string& task_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_assignees WHERE task_id = $1 AND user_id = $2",
+                    task_id, user_id);
+    txn.commit();
+}
+
+std::vector<TaskAssignee> Database::get_task_assignees(const std::string& task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT a.task_id, a.user_id, u.username, u.display_name "
+        "FROM task_assignees a JOIN users u ON a.user_id = u.id "
+        "WHERE a.task_id = $1",
+        task_id);
+    txn.commit();
+    std::vector<TaskAssignee> assignees;
+    for (const auto& row : r) {
+        TaskAssignee a;
+        a.task_id = row[0].as<std::string>();
+        a.user_id = row[1].as<std::string>();
+        a.username = row[2].as<std::string>();
+        a.display_name = row[3].as<std::string>();
+        assignees.push_back(a);
+    }
+    return assignees;
+}
+
+// --- Task Labels ---
+
+TaskLabel Database::create_task_label(const std::string& board_id, const std::string& name,
+                                        const std::string& color) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "INSERT INTO task_labels (board_id, name, color) VALUES ($1, $2, $3) RETURNING id",
+        board_id, name, color);
+    txn.commit();
+    TaskLabel l;
+    l.id = r[0][0].as<std::string>();
+    l.board_id = board_id;
+    l.name = name;
+    l.color = color;
+    return l;
+}
+
+std::vector<TaskLabel> Database::list_task_labels(const std::string& board_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, board_id, name, color FROM task_labels WHERE board_id = $1 ORDER BY name",
+        board_id);
+    txn.commit();
+    std::vector<TaskLabel> labels;
+    for (const auto& row : r) {
+        TaskLabel l;
+        l.id = row[0].as<std::string>();
+        l.board_id = row[1].as<std::string>();
+        l.name = row[2].as<std::string>();
+        l.color = row[3].as<std::string>("");
+        labels.push_back(l);
+    }
+    return labels;
+}
+
+TaskLabel Database::update_task_label(const std::string& label_id, const std::string& name,
+                                        const std::string& color) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "UPDATE task_labels SET name = $2, color = $3 WHERE id = $1 RETURNING board_id",
+        label_id, name, color);
+    txn.commit();
+    TaskLabel l;
+    l.id = label_id;
+    l.board_id = r[0][0].as<std::string>();
+    l.name = name;
+    l.color = color;
+    return l;
+}
+
+void Database::delete_task_label(const std::string& label_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_labels WHERE id = $1", label_id);
+    txn.commit();
+}
+
+void Database::assign_task_label(const std::string& task_id, const std::string& label_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO task_label_assignments (task_id, label_id) VALUES ($1, $2) "
+        "ON CONFLICT DO NOTHING",
+        task_id, label_id);
+    txn.commit();
+}
+
+void Database::unassign_task_label(const std::string& task_id, const std::string& label_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_label_assignments WHERE task_id = $1 AND label_id = $2",
+                    task_id, label_id);
+    txn.commit();
+}
+
+std::vector<TaskLabel> Database::get_task_labels(const std::string& task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT l.id, l.board_id, l.name, l.color "
+        "FROM task_labels l JOIN task_label_assignments a ON l.id = a.label_id "
+        "WHERE a.task_id = $1",
+        task_id);
+    txn.commit();
+    std::vector<TaskLabel> labels;
+    for (const auto& row : r) {
+        TaskLabel l;
+        l.id = row[0].as<std::string>();
+        l.board_id = row[1].as<std::string>();
+        l.name = row[2].as<std::string>();
+        l.color = row[3].as<std::string>("");
+        labels.push_back(l);
+    }
+    return labels;
+}
+
+// --- Task Checklists ---
+
+TaskChecklist Database::create_task_checklist(const std::string& task_id, const std::string& title, int position) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "INSERT INTO task_checklists (task_id, title, position) VALUES ($1, $2, $3) RETURNING id",
+        task_id, title, position);
+    txn.commit();
+    TaskChecklist cl;
+    cl.id = r[0][0].as<std::string>();
+    cl.task_id = task_id;
+    cl.title = title;
+    cl.position = position;
+    return cl;
+}
+
+std::vector<TaskChecklist> Database::get_task_checklists(const std::string& task_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, task_id, title, position FROM task_checklists WHERE task_id = $1 ORDER BY position",
+        task_id);
+    txn.commit();
+    std::vector<TaskChecklist> checklists;
+    for (const auto& row : r) {
+        TaskChecklist cl;
+        cl.id = row[0].as<std::string>();
+        cl.task_id = row[1].as<std::string>();
+        cl.title = row[2].as<std::string>();
+        cl.position = row[3].as<int>();
+        checklists.push_back(cl);
+    }
+    return checklists;
+}
+
+TaskChecklist Database::update_task_checklist(const std::string& checklist_id, const std::string& title) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "UPDATE task_checklists SET title = $2 WHERE id = $1 RETURNING task_id, position",
+        checklist_id, title);
+    txn.commit();
+    TaskChecklist cl;
+    cl.id = checklist_id;
+    cl.title = title;
+    cl.task_id = r[0][0].as<std::string>();
+    cl.position = r[0][1].as<int>();
+    return cl;
+}
+
+void Database::delete_task_checklist(const std::string& checklist_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_checklists WHERE id = $1", checklist_id);
+    txn.commit();
+}
+
+TaskChecklistItem Database::create_checklist_item(const std::string& checklist_id, const std::string& content,
+                                                    int position) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "INSERT INTO task_checklist_items (checklist_id, content, position) VALUES ($1, $2, $3) "
+        "RETURNING id",
+        checklist_id, content, position);
+    txn.commit();
+    TaskChecklistItem item;
+    item.id = r[0][0].as<std::string>();
+    item.checklist_id = checklist_id;
+    item.content = content;
+    item.is_checked = false;
+    item.position = position;
+    return item;
+}
+
+std::vector<TaskChecklistItem> Database::get_checklist_items(const std::string& checklist_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT id, checklist_id, content, is_checked, position "
+        "FROM task_checklist_items WHERE checklist_id = $1 ORDER BY position",
+        checklist_id);
+    txn.commit();
+    std::vector<TaskChecklistItem> items;
+    for (const auto& row : r) {
+        TaskChecklistItem item;
+        item.id = row[0].as<std::string>();
+        item.checklist_id = row[1].as<std::string>();
+        item.content = row[2].as<std::string>();
+        item.is_checked = row[3].as<bool>();
+        item.position = row[4].as<int>();
+        items.push_back(item);
+    }
+    return items;
+}
+
+TaskChecklistItem Database::update_checklist_item(const std::string& item_id, const std::string& content,
+                                                    bool is_checked) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "UPDATE task_checklist_items SET content = $2, is_checked = $3 WHERE id = $1 "
+        "RETURNING checklist_id, position",
+        item_id, content, is_checked);
+    txn.commit();
+    TaskChecklistItem item;
+    item.id = item_id;
+    item.content = content;
+    item.is_checked = is_checked;
+    item.checklist_id = r[0][0].as<std::string>();
+    item.position = r[0][1].as<int>();
+    return item;
+}
+
+void Database::delete_checklist_item(const std::string& item_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_checklist_items WHERE id = $1", item_id);
+    txn.commit();
+}
+
+// --- Task Dependencies ---
+
+TaskDependency Database::add_task_dependency(const std::string& task_id, const std::string& depends_on_id,
+                                               const std::string& dependency_type) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "INSERT INTO task_dependencies (task_id, depends_on_id, dependency_type) "
+        "VALUES ($1, $2, $3) ON CONFLICT (task_id, depends_on_id) DO UPDATE SET dependency_type = $3 "
+        "RETURNING id, created_at::text",
+        task_id, depends_on_id, dependency_type);
+    txn.commit();
+    TaskDependency d;
+    d.id = r[0][0].as<std::string>();
+    d.task_id = task_id;
+    d.depends_on_id = depends_on_id;
+    d.dependency_type = dependency_type;
+    d.created_at = r[0][1].as<std::string>();
+    return d;
+}
+
+void Database::remove_task_dependency(const std::string& dependency_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params("DELETE FROM task_dependencies WHERE id = $1", dependency_id);
+    txn.commit();
+}
+
+std::vector<TaskDependency> Database::get_task_dependencies(const std::string& board_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT d.id, d.task_id, d.depends_on_id, d.dependency_type, d.created_at::text "
+        "FROM task_dependencies d "
+        "JOIN tasks t ON d.task_id = t.id "
+        "WHERE t.board_id = $1",
+        board_id);
+    txn.commit();
+    std::vector<TaskDependency> deps;
+    for (const auto& row : r) {
+        TaskDependency d;
+        d.id = row[0].as<std::string>();
+        d.task_id = row[1].as<std::string>();
+        d.depends_on_id = row[2].as<std::string>();
+        d.dependency_type = row[3].as<std::string>("finish_to_start");
+        d.created_at = row[4].as<std::string>();
+        deps.push_back(d);
+    }
+    return deps;
+}
+
+// --- Task Activity ---
+
+void Database::log_task_activity(const std::string& task_id, const std::string& user_id,
+                                   const std::string& action, const std::string& details) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO task_activity (task_id, user_id, action, details) VALUES ($1, $2, $3, $4)",
+        task_id, user_id, action, details);
+    txn.commit();
+}
+
+std::vector<TaskActivity> Database::get_task_activity(const std::string& task_id, int limit) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT a.id, a.task_id, a.user_id, u.username, u.display_name, "
+        "a.action, a.details, a.created_at::text "
+        "FROM task_activity a LEFT JOIN users u ON a.user_id = u.id "
+        "WHERE a.task_id = $1 ORDER BY a.created_at DESC LIMIT $2",
+        task_id, limit);
+    txn.commit();
+    std::vector<TaskActivity> activities;
+    for (const auto& row : r) {
+        TaskActivity a;
+        a.id = row[0].as<std::string>();
+        a.task_id = row[1].as<std::string>();
+        a.user_id = row[2].as<std::string>();
+        a.username = row[3].as<std::string>("");
+        a.display_name = row[4].as<std::string>("");
+        a.action = row[5].as<std::string>();
+        a.details = row[6].as<std::string>("{}");
+        a.created_at = row[7].as<std::string>();
+        activities.push_back(a);
+    }
+    return activities;
+}
+
+// --- Task Board Permissions ---
+
+void Database::set_task_permission(const std::string& space_id, const std::string& user_id,
+                                     const std::string& permission, const std::string& granted_by) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO task_board_permissions (space_id, user_id, permission, granted_by) "
+        "VALUES ($1, $2, $3, $4) "
+        "ON CONFLICT (space_id, user_id) DO UPDATE SET permission = $3, granted_by = $4",
+        space_id, user_id, permission, granted_by);
+    txn.commit();
+}
+
+void Database::remove_task_permission(const std::string& space_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "DELETE FROM task_board_permissions WHERE space_id = $1 AND user_id = $2",
+        space_id, user_id);
+    txn.commit();
+}
+
+std::vector<TaskBoardPermission> Database::get_task_permissions(const std::string& space_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT p.id, p.space_id, p.user_id, u.username, u.display_name, "
+        "p.permission, p.granted_by, g.username, p.created_at::text "
+        "FROM task_board_permissions p "
+        "JOIN users u ON p.user_id = u.id "
+        "LEFT JOIN users g ON p.granted_by = g.id "
+        "WHERE p.space_id = $1",
+        space_id);
+    txn.commit();
+    std::vector<TaskBoardPermission> perms;
+    for (const auto& row : r) {
+        TaskBoardPermission p;
+        p.id = row[0].as<std::string>();
+        p.space_id = row[1].as<std::string>();
+        p.user_id = row[2].as<std::string>();
+        p.username = row[3].as<std::string>();
+        p.display_name = row[4].as<std::string>();
+        p.permission = row[5].as<std::string>();
+        p.granted_by = row[6].as<std::string>();
+        p.granted_by_username = row[7].as<std::string>("");
+        p.created_at = row[8].as<std::string>();
+        perms.push_back(p);
+    }
+    return perms;
+}
+
+std::string Database::get_task_permission(const std::string& space_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT permission FROM task_board_permissions "
+        "WHERE space_id = $1 AND user_id = $2",
+        space_id, user_id);
+    txn.commit();
+    if (r.empty()) return "";
+    return r[0][0].as<std::string>();
+}
+
+// --- Wiki Pages ---
+
+WikiPage Database::create_wiki_page(const std::string& space_id, const std::string& parent_id,
+                                     const std::string& title, const std::string& slug,
+                                     bool is_folder, const std::string& content,
+                                     const std::string& content_text, const std::string& icon,
+                                     int position, const std::string& created_by) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::string parent_val = parent_id.empty() ? "" : parent_id;
+    auto r = txn.exec_params(
+        "INSERT INTO wiki_pages (space_id, parent_id, title, slug, is_folder, content, "
+        "content_text, icon, position, created_by, last_edited_by, "
+        "content_tsv) "
+        "VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $10, "
+        "to_tsvector('english', $11 || ' ' || $12)) "
+        "RETURNING id::text, created_at::text, updated_at::text",
+        space_id, parent_val, title, slug, is_folder, content, content_text, icon, position, created_by,
+        title, content_text);
+    auto page_id = r[0][0].as<std::string>();
+    // Auto-grant "owner" permission to creator
+    txn.exec_params(
+        "INSERT INTO wiki_page_permissions (page_id, user_id, permission, granted_by) "
+        "VALUES ($1, $2, 'owner', $2) ON CONFLICT DO NOTHING",
+        page_id, created_by);
+    txn.commit();
+    WikiPage p;
+    p.id = page_id;
+    p.space_id = space_id;
+    p.parent_id = parent_id;
+    p.title = title;
+    p.slug = slug;
+    p.is_folder = is_folder;
+    p.content = content;
+    p.content_text = content_text;
+    p.icon = icon;
+    p.position = position;
+    p.created_by = created_by;
+    p.last_edited_by = created_by;
+    p.created_at = r[0][1].as<std::string>();
+    p.updated_at = r[0][2].as<std::string>();
+    return p;
+}
+
+std::vector<WikiPage> Database::list_wiki_pages(const std::string& space_id, const std::string& parent_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::string parent_val = parent_id.empty() ? "" : parent_id;
+    auto r = txn.exec_params(
+        "SELECT wp.id::text, wp.space_id::text, wp.parent_id::text, wp.title, wp.slug, "
+        "wp.is_folder, wp.content, wp.content_text, wp.icon, wp.cover_image_file_id::text, "
+        "wp.position, wp.created_by::text, u.username, wp.created_at::text, wp.updated_at::text, "
+        "wp.last_edited_by::text, e.username "
+        "FROM wiki_pages wp "
+        "LEFT JOIN users u ON u.id = wp.created_by "
+        "LEFT JOIN users e ON e.id = wp.last_edited_by "
+        "WHERE wp.space_id = $1 AND wp.is_deleted = FALSE "
+        "AND (($2 = '' AND wp.parent_id IS NULL) OR wp.parent_id::text = $2) "
+        "ORDER BY wp.is_folder DESC, wp.position ASC, wp.title ASC",
+        space_id, parent_val);
+    txn.commit();
+    std::vector<WikiPage> pages;
+    for (const auto& row : r) {
+        WikiPage p;
+        p.id = row[0].as<std::string>();
+        p.space_id = row[1].as<std::string>();
+        p.parent_id = row[2].is_null() ? "" : row[2].as<std::string>();
+        p.title = row[3].as<std::string>();
+        p.slug = row[4].as<std::string>();
+        p.is_folder = row[5].as<bool>();
+        p.content = row[6].is_null() ? "" : row[6].as<std::string>();
+        p.content_text = row[7].is_null() ? "" : row[7].as<std::string>();
+        p.icon = row[8].is_null() ? "" : row[8].as<std::string>();
+        p.cover_image_file_id = row[9].is_null() ? "" : row[9].as<std::string>();
+        p.position = row[10].as<int>();
+        p.created_by = row[11].as<std::string>();
+        p.created_by_username = row[12].is_null() ? "" : row[12].as<std::string>();
+        p.created_at = row[13].as<std::string>();
+        p.updated_at = row[14].as<std::string>();
+        p.last_edited_by = row[15].is_null() ? "" : row[15].as<std::string>();
+        p.last_edited_by_username = row[16].is_null() ? "" : row[16].as<std::string>();
+        pages.push_back(p);
+    }
+    return pages;
+}
+
+std::optional<WikiPage> Database::find_wiki_page(const std::string& page_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT wp.id::text, wp.space_id::text, wp.parent_id::text, wp.title, wp.slug, "
+        "wp.is_folder, wp.content, wp.content_text, wp.icon, wp.cover_image_file_id::text, "
+        "wp.position, wp.is_deleted, wp.created_by::text, u.username, wp.created_at::text, "
+        "wp.updated_at::text, wp.last_edited_by::text, e.username "
+        "FROM wiki_pages wp "
+        "LEFT JOIN users u ON u.id = wp.created_by "
+        "LEFT JOIN users e ON e.id = wp.last_edited_by "
+        "WHERE wp.id = $1",
+        page_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    WikiPage p;
+    p.id = r[0][0].as<std::string>();
+    p.space_id = r[0][1].as<std::string>();
+    p.parent_id = r[0][2].is_null() ? "" : r[0][2].as<std::string>();
+    p.title = r[0][3].as<std::string>();
+    p.slug = r[0][4].as<std::string>();
+    p.is_folder = r[0][5].as<bool>();
+    p.content = r[0][6].is_null() ? "" : r[0][6].as<std::string>();
+    p.content_text = r[0][7].is_null() ? "" : r[0][7].as<std::string>();
+    p.icon = r[0][8].is_null() ? "" : r[0][8].as<std::string>();
+    p.cover_image_file_id = r[0][9].is_null() ? "" : r[0][9].as<std::string>();
+    p.position = r[0][10].as<int>();
+    p.is_deleted = r[0][11].as<bool>();
+    p.created_by = r[0][12].as<std::string>();
+    p.created_by_username = r[0][13].is_null() ? "" : r[0][13].as<std::string>();
+    p.created_at = r[0][14].as<std::string>();
+    p.updated_at = r[0][15].as<std::string>();
+    p.last_edited_by = r[0][16].is_null() ? "" : r[0][16].as<std::string>();
+    p.last_edited_by_username = r[0][17].is_null() ? "" : r[0][17].as<std::string>();
+    return p;
+}
+
+WikiPage Database::update_wiki_page(const std::string& page_id, const std::string& title,
+                                     const std::string& slug, const std::string& content,
+                                     const std::string& content_text, const std::string& icon,
+                                     const std::string& cover_image_file_id,
+                                     const std::string& edited_by) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::string cover_val = cover_image_file_id.empty() ? "" : cover_image_file_id;
+    auto r = txn.exec_params(
+        "UPDATE wiki_pages SET title = $2, slug = $3, content = $4, content_text = $5, "
+        "icon = $6, cover_image_file_id = NULLIF($7, ''), last_edited_by = $8, "
+        "updated_at = NOW(), "
+        "content_tsv = to_tsvector('english', $9 || ' ' || $10) "
+        "WHERE id = $1 "
+        "RETURNING id::text, space_id::text, parent_id::text, title, slug, is_folder, "
+        "content, content_text, icon, cover_image_file_id::text, position, is_deleted, "
+        "created_by::text, created_at::text, updated_at::text, last_edited_by::text",
+        page_id, title, slug, content, content_text, icon, cover_val, edited_by,
+        title, content_text);
+    txn.commit();
+    WikiPage p;
+    p.id = r[0][0].as<std::string>();
+    p.space_id = r[0][1].as<std::string>();
+    p.parent_id = r[0][2].is_null() ? "" : r[0][2].as<std::string>();
+    p.title = r[0][3].as<std::string>();
+    p.slug = r[0][4].as<std::string>();
+    p.is_folder = r[0][5].as<bool>();
+    p.content = r[0][6].is_null() ? "" : r[0][6].as<std::string>();
+    p.content_text = r[0][7].is_null() ? "" : r[0][7].as<std::string>();
+    p.icon = r[0][8].is_null() ? "" : r[0][8].as<std::string>();
+    p.cover_image_file_id = r[0][9].is_null() ? "" : r[0][9].as<std::string>();
+    p.position = r[0][10].as<int>();
+    p.is_deleted = r[0][11].as<bool>();
+    p.created_by = r[0][12].as<std::string>();
+    p.created_at = r[0][13].as<std::string>();
+    p.updated_at = r[0][14].as<std::string>();
+    p.last_edited_by = r[0][15].is_null() ? "" : r[0][15].as<std::string>();
+    return p;
+}
+
+void Database::move_wiki_page(const std::string& page_id, const std::string& new_parent_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::string parent_val = new_parent_id.empty() ? "" : new_parent_id;
+    txn.exec_params(
+        "UPDATE wiki_pages SET parent_id = NULLIF($2, '')::uuid, updated_at = NOW() WHERE id = $1",
+        page_id, parent_val);
+    txn.commit();
+}
+
+void Database::reorder_wiki_pages(const std::vector<std::pair<std::string, int>>& page_positions) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    for (const auto& [page_id, position] : page_positions) {
+        txn.exec_params(
+            "UPDATE wiki_pages SET position = $2 WHERE id = $1",
+            page_id, position);
+    }
+    txn.commit();
+}
+
+void Database::soft_delete_wiki_page(const std::string& page_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    // Soft-delete the page and all children recursively
+    txn.exec_params(
+        "WITH RECURSIVE descendants AS ("
+        "  SELECT id FROM wiki_pages WHERE id = $1 "
+        "  UNION ALL "
+        "  SELECT wp.id FROM wiki_pages wp "
+        "  JOIN descendants d ON wp.parent_id = d.id "
+        "  WHERE wp.is_deleted = FALSE"
+        ") "
+        "UPDATE wiki_pages SET is_deleted = TRUE, updated_at = NOW() "
+        "WHERE id IN (SELECT id FROM descendants)",
+        page_id);
+    txn.commit();
+}
+
+std::vector<WikiPage> Database::get_wiki_page_path(const std::string& page_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "WITH RECURSIVE ancestors AS ("
+        "  SELECT id, parent_id, title, 0 AS depth FROM wiki_pages WHERE id = $1 "
+        "  UNION ALL "
+        "  SELECT wp.id, wp.parent_id, wp.title, a.depth + 1 "
+        "  FROM wiki_pages wp JOIN ancestors a ON wp.id = a.parent_id"
+        ") "
+        "SELECT id::text, title FROM ancestors ORDER BY depth DESC",
+        page_id);
+    txn.commit();
+    std::vector<WikiPage> path;
+    for (const auto& row : r) {
+        WikiPage p;
+        p.id = row[0].as<std::string>();
+        p.title = row[1].as<std::string>();
+        path.push_back(p);
+    }
+    return path;
+}
+
+bool Database::wiki_page_slug_exists(const std::string& space_id, const std::string& parent_id,
+                                      const std::string& slug, const std::string& exclude_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::string parent_val = parent_id.empty() ? "" : parent_id;
+    std::string exclude_val = exclude_id.empty() ? "" : exclude_id;
+    auto r = txn.exec_params(
+        "SELECT 1 FROM wiki_pages "
+        "WHERE space_id = $1 AND is_deleted = FALSE "
+        "AND (($2 = '' AND parent_id IS NULL) OR parent_id::text = $2) "
+        "AND LOWER(slug) = LOWER($3) "
+        "AND ($4 = '' OR id::text != $4) "
+        "LIMIT 1",
+        space_id, parent_val, slug, exclude_val);
+    txn.commit();
+    return !r.empty();
+}
+
+std::vector<WikiPage> Database::get_wiki_tree(const std::string& space_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT wp.id::text, wp.parent_id::text, wp.title, wp.slug, wp.is_folder, "
+        "wp.icon, wp.position, u.username "
+        "FROM wiki_pages wp "
+        "LEFT JOIN users u ON u.id = wp.created_by "
+        "WHERE wp.space_id = $1 AND wp.is_deleted = FALSE "
+        "ORDER BY wp.is_folder DESC, wp.position ASC, wp.title ASC",
+        space_id);
+    txn.commit();
+    std::vector<WikiPage> pages;
+    for (const auto& row : r) {
+        WikiPage p;
+        p.id = row[0].as<std::string>();
+        p.parent_id = row[1].is_null() ? "" : row[1].as<std::string>();
+        p.title = row[2].as<std::string>();
+        p.slug = row[3].as<std::string>();
+        p.is_folder = row[4].as<bool>();
+        p.icon = row[5].is_null() ? "" : row[5].as<std::string>();
+        p.position = row[6].as<int>();
+        p.created_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
+        pages.push_back(p);
+    }
+    return pages;
+}
+
+// --- Wiki Page Versions ---
+
+WikiPageVersion Database::create_wiki_page_version(const std::string& page_id, const std::string& title,
+                                                    const std::string& content, const std::string& content_text,
+                                                    const std::string& edited_by, bool is_major) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto vr = txn.exec_params(
+        "SELECT COALESCE(MAX(version_number), 0) + 1 FROM wiki_page_versions WHERE page_id = $1",
+        page_id);
+    int next_ver = vr[0][0].as<int>();
+    auto r = txn.exec_params(
+        "INSERT INTO wiki_page_versions (page_id, version_number, title, content, content_text, edited_by, is_major) "
+        "VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id::text, created_at::text",
+        page_id, next_ver, title, content, content_text, edited_by, is_major);
+    txn.commit();
+    WikiPageVersion v;
+    v.id = r[0][0].as<std::string>();
+    v.page_id = page_id;
+    v.version_number = next_ver;
+    v.title = title;
+    v.content = content;
+    v.content_text = content_text;
+    v.is_major = is_major;
+    v.edited_by = edited_by;
+    v.created_at = r[0][1].as<std::string>();
+    return v;
+}
+
+std::vector<WikiPageVersion> Database::list_wiki_page_versions(const std::string& page_id, bool major_only) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::string query =
+        "SELECT v.id::text, v.page_id::text, v.version_number, v.title, v.content, "
+        "v.content_text, v.edited_by::text, u.username, v.created_at::text, v.is_major "
+        "FROM wiki_page_versions v "
+        "LEFT JOIN users u ON u.id = v.edited_by "
+        "WHERE v.page_id = $1 ";
+    if (major_only) query += "AND v.is_major = TRUE ";
+    query += "ORDER BY v.version_number DESC";
+    auto r = txn.exec_params(query, page_id);
+    txn.commit();
+    std::vector<WikiPageVersion> versions;
+    for (const auto& row : r) {
+        WikiPageVersion v;
+        v.id = row[0].as<std::string>();
+        v.page_id = row[1].as<std::string>();
+        v.version_number = row[2].as<int>();
+        v.title = row[3].as<std::string>();
+        v.content = row[4].is_null() ? "" : row[4].as<std::string>();
+        v.content_text = row[5].is_null() ? "" : row[5].as<std::string>();
+        v.edited_by = row[6].is_null() ? "" : row[6].as<std::string>();
+        v.edited_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
+        v.created_at = row[8].as<std::string>();
+        v.is_major = row[9].is_null() ? false : row[9].as<bool>();
+        versions.push_back(v);
+    }
+    return versions;
+}
+
+std::optional<WikiPageVersion> Database::get_wiki_page_version(const std::string& version_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT v.id::text, v.page_id::text, v.version_number, v.title, v.content, "
+        "v.content_text, v.edited_by::text, u.username, v.created_at::text "
+        "FROM wiki_page_versions v "
+        "LEFT JOIN users u ON u.id = v.edited_by "
+        "WHERE v.id = $1",
+        version_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    WikiPageVersion v;
+    v.id = r[0][0].as<std::string>();
+    v.page_id = r[0][1].as<std::string>();
+    v.version_number = r[0][2].as<int>();
+    v.title = r[0][3].as<std::string>();
+    v.content = r[0][4].is_null() ? "" : r[0][4].as<std::string>();
+    v.content_text = r[0][5].is_null() ? "" : r[0][5].as<std::string>();
+    v.edited_by = r[0][6].is_null() ? "" : r[0][6].as<std::string>();
+    v.edited_by_username = r[0][7].is_null() ? "" : r[0][7].as<std::string>();
+    v.created_at = r[0][8].as<std::string>();
+    return v;
+}
+
+// --- Wiki Page Permissions ---
+
+void Database::set_wiki_page_permission(const std::string& page_id, const std::string& user_id,
+                                         const std::string& permission, const std::string& granted_by) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO wiki_page_permissions (page_id, user_id, permission, granted_by) "
+        "VALUES ($1, $2, $3, $4) "
+        "ON CONFLICT (page_id, user_id) DO UPDATE SET permission = $3, granted_by = $4",
+        page_id, user_id, permission, granted_by);
+    txn.commit();
+}
+
+void Database::remove_wiki_page_permission(const std::string& page_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "DELETE FROM wiki_page_permissions WHERE page_id = $1 AND user_id = $2",
+        page_id, user_id);
+    txn.commit();
+}
+
+std::vector<WikiPagePermission> Database::get_wiki_page_permissions(const std::string& page_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT p.id::text, p.page_id::text, p.user_id::text, u.username, u.display_name, "
+        "p.permission, p.granted_by::text, g.username, p.created_at::text "
+        "FROM wiki_page_permissions p "
+        "JOIN users u ON u.id = p.user_id "
+        "LEFT JOIN users g ON g.id = p.granted_by "
+        "WHERE p.page_id = $1 "
+        "ORDER BY CASE p.permission WHEN 'owner' THEN 0 WHEN 'edit' THEN 1 ELSE 2 END, u.username",
+        page_id);
+    txn.commit();
+    std::vector<WikiPagePermission> perms;
+    for (const auto& row : r) {
+        WikiPagePermission p;
+        p.id = row[0].as<std::string>();
+        p.page_id = row[1].as<std::string>();
+        p.user_id = row[2].as<std::string>();
+        p.username = row[3].as<std::string>();
+        p.display_name = row[4].as<std::string>();
+        p.permission = row[5].as<std::string>();
+        p.granted_by = row[6].as<std::string>();
+        p.granted_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
+        p.created_at = row[8].as<std::string>();
+        perms.push_back(p);
+    }
+    return perms;
+}
+
+std::string Database::get_effective_wiki_page_permission(const std::string& page_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "WITH RECURSIVE ancestors AS ("
+        "  SELECT id, parent_id FROM wiki_pages WHERE id = $1 "
+        "  UNION ALL "
+        "  SELECT wp.id, wp.parent_id FROM wiki_pages wp JOIN ancestors a ON wp.id = a.parent_id"
+        ") "
+        "SELECT permission FROM wiki_page_permissions "
+        "WHERE user_id = $2 AND page_id IN (SELECT id FROM ancestors) "
+        "ORDER BY CASE permission WHEN 'owner' THEN 2 WHEN 'edit' THEN 1 ELSE 0 END DESC "
+        "LIMIT 1",
+        page_id, user_id);
+    if (!r.empty()) {
+        txn.commit();
+        return r[0][0].as<std::string>();
+    }
+    auto r2 = txn.exec_params(
+        "SELECT 1 FROM wiki_pages WHERE id = $1 AND created_by = $2",
+        page_id, user_id);
+    txn.commit();
+    if (!r2.empty()) return "owner";
+    return "view";
+}
+
+// --- Wiki Space-Level Permissions ---
+
+void Database::set_wiki_permission(const std::string& space_id, const std::string& user_id,
+                                    const std::string& permission, const std::string& granted_by) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "INSERT INTO wiki_permissions (space_id, user_id, permission, granted_by) "
+        "VALUES ($1, $2, $3, $4) "
+        "ON CONFLICT (space_id, user_id) DO UPDATE SET permission = $3, granted_by = $4",
+        space_id, user_id, permission, granted_by);
+    txn.commit();
+}
+
+void Database::remove_wiki_permission(const std::string& space_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    txn.exec_params(
+        "DELETE FROM wiki_permissions WHERE space_id = $1 AND user_id = $2",
+        space_id, user_id);
+    txn.commit();
+}
+
+std::vector<WikiPermission> Database::get_wiki_permissions(const std::string& space_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT p.id, p.space_id, p.user_id, u.username, u.display_name, "
+        "p.permission, p.granted_by, g.username, p.created_at::text "
+        "FROM wiki_permissions p "
+        "JOIN users u ON p.user_id = u.id "
+        "LEFT JOIN users g ON p.granted_by = g.id "
+        "WHERE p.space_id = $1",
+        space_id);
+    txn.commit();
+    std::vector<WikiPermission> perms;
+    for (const auto& row : r) {
+        WikiPermission p;
+        p.id = row[0].as<std::string>();
+        p.space_id = row[1].as<std::string>();
+        p.user_id = row[2].as<std::string>();
+        p.username = row[3].as<std::string>();
+        p.display_name = row[4].as<std::string>();
+        p.permission = row[5].as<std::string>();
+        p.granted_by = row[6].as<std::string>();
+        p.granted_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
+        p.created_at = row[8].as<std::string>();
+        perms.push_back(p);
+    }
+    return perms;
+}
+
+std::string Database::get_wiki_permission(const std::string& space_id, const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        "SELECT permission FROM wiki_permissions "
+        "WHERE space_id = $1 AND user_id = $2",
+        space_id, user_id);
+    txn.commit();
+    if (r.empty()) return "";
+    return r[0][0].as<std::string>();
+}
+
+// --- Wiki Search ---
+
+std::vector<Database::WikiSearchResult> Database::search_wiki_pages(
+    const std::string& tsquery_expr, const std::string& user_id,
+    bool is_admin, int limit, int offset) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+
+    std::string sql =
+        "SELECT wp.id::text, wp.space_id::text, s.name, wp.title, "
+        "ts_headline('english', wp.content_text, " + tsquery_expr + ", "
+        "'MaxWords=40, MinWords=20, StartSel=<mark>, StopSel=</mark>'), "
+        "wp.created_at::text, u.username "
+        "FROM wiki_pages wp "
+        "JOIN spaces s ON wp.space_id = s.id "
+        "LEFT JOIN users u ON u.id = wp.created_by "
+        "WHERE wp.content_tsv @@ (" + tsquery_expr + ") "
+        "AND wp.is_deleted = FALSE "
+        "AND (EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = wp.space_id AND sm.user_id = $1)";
+    if (is_admin) {
+        sql += " OR TRUE";
+    }
+    sql += ") ORDER BY wp.updated_at DESC LIMIT $2 OFFSET $3";
+
+    auto r = txn.exec_params(sql, user_id, limit, offset);
+    txn.commit();
+
+    std::vector<WikiSearchResult> results;
+    for (const auto& row : r) {
+        WikiSearchResult res;
+        res.id = row[0].as<std::string>();
+        res.space_id = row[1].as<std::string>();
+        res.space_name = row[2].is_null() ? "" : row[2].as<std::string>();
+        res.title = row[3].as<std::string>();
+        res.snippet = row[4].is_null() ? "" : row[4].as<std::string>();
+        res.created_at = row[5].as<std::string>();
+        res.created_by_username = row[6].is_null() ? "" : row[6].as<std::string>();
+        results.push_back(res);
+    }
+    return results;
 }

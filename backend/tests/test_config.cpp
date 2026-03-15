@@ -50,7 +50,7 @@ TEST_F(ConfigTest, DefaultValues) {
     EXPECT_EQ(c.session_expiry_hours, 168);
     EXPECT_EQ(c.public_url, "");
     EXPECT_EQ(c.upload_dir, "/data/uploads");
-    EXPECT_EQ(c.max_file_size, 1073741824);
+    EXPECT_EQ(c.max_file_size, 0);
 }
 
 TEST_F(ConfigTest, EnvironmentOverrides) {

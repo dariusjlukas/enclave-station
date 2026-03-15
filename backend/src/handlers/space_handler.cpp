@@ -1286,7 +1286,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     bool enabled = j.at("enabled").get<bool>();
 
                     // Validate tool name
-                    if (tool != "files" && tool != "calendar" && tool != "tasks") {
+                    if (tool != "files" && tool != "calendar" && tool != "tasks" && tool != "wiki") {
                         res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                             ->end(R"({"error":"Unknown tool"})");
                         return;

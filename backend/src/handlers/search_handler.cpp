@@ -107,9 +107,28 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     }
                     json resp = {{"type", "spaces"}, {"results", arr}};
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+                } else if (type == "wiki") {
+                    auto user = db.find_user_by_id(user_id);
+                    bool is_admin = user && (user->role == "admin" || user->role == "owner");
+                    if (query.empty()) {
+                        json resp = {{"type", "wiki"}, {"results", json::array()}};
+                        res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+                        return;
+                    }
+                    std::string tsquery = build_tsquery(terms, mode);
+                    auto results = db.search_wiki_pages(tsquery, user_id, is_admin, limit, offset);
+                    json arr = json::array();
+                    for (const auto& w : results) {
+                        arr.push_back({{"id", w.id}, {"space_id", w.space_id},
+                                       {"space_name", w.space_name}, {"title", w.title},
+                                       {"snippet", w.snippet}, {"created_at", w.created_at},
+                                       {"created_by_username", w.created_by_username}});
+                    }
+                    json resp = {{"type", "wiki"}, {"results", arr}};
+                    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
                 } else {
                     res->writeStatus("400")->writeHeader("Content-Type", "application/json")
-                        ->end(R"({"error":"Invalid type. Use users, messages, files, channels, or spaces"})");
+                        ->end(R"({"error":"Invalid type. Use users, messages, files, channels, spaces, or wiki"})");
                 }
             } catch (const std::exception& e) {
                 res->writeStatus("500")->writeHeader("Content-Type", "application/json")

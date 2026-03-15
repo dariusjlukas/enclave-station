@@ -29,7 +29,7 @@ services:
       SESSION_EXPIRY_HOURS: ${SESSION_EXPIRY_HOURS:-168}
       PUBLIC_URL: ${PUBLIC_URL:-}
       UPLOAD_DIR: /data/uploads
-      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-1073741824}
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-0}
     volumes:
       - uploads:/data/uploads
     depends_on:

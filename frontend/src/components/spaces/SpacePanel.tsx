@@ -9,6 +9,7 @@ import {
   faFolderOpen,
   faCalendar,
   faListCheck,
+  faBook,
 } from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
 import { SpaceAvatar } from '../common/SpaceAvatar';
@@ -67,6 +68,10 @@ export function SpacePanel({
     activeToolView?.type === 'files' && activeToolView.spaceId === spaceId;
   const isCalendarActive =
     activeToolView?.type === 'calendar' && activeToolView.spaceId === spaceId;
+  const isTasksActive =
+    activeToolView?.type === 'tasks' && activeToolView.spaceId === spaceId;
+  const isWikiActive =
+    activeToolView?.type === 'wiki' && activeToolView.spaceId === spaceId;
 
   return (
     <div className='flex flex-col h-full'>
@@ -140,7 +145,7 @@ export function SpacePanel({
                 setActiveChannel(ch.id);
                 onSelect?.();
               }}
-              className={`w-full text-left px-3 py-2.5 text-sm rounded-md transition-colors flex items-center ${
+              className={`w-full text-left px-3 py-2.5 text-sm rounded-md transition-colors flex items-center cursor-pointer ${
                 activeChannelId === ch.id
                   ? 'bg-primary/20 text-primary'
                   : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
@@ -188,7 +193,7 @@ export function SpacePanel({
                 setActiveToolView({ type: 'files', spaceId });
                 onSelect?.();
               }}
-              className={`w-full text-left flex items-center gap-2 py-2.5 text-sm rounded-md px-3 transition-colors ${
+              className={`w-full text-left flex items-center gap-2 py-2.5 text-sm rounded-md px-3 transition-colors cursor-pointer ${
                 isFilesActive
                   ? 'bg-primary/20 text-primary font-medium'
                   : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
@@ -206,7 +211,7 @@ export function SpacePanel({
                 setActiveToolView({ type: 'calendar', spaceId });
                 onSelect?.();
               }}
-              className={`w-full text-left flex items-center gap-2 py-2.5 text-sm rounded-md px-3 transition-colors ${
+              className={`w-full text-left flex items-center gap-2 py-2.5 text-sm rounded-md px-3 transition-colors cursor-pointer ${
                 isCalendarActive
                   ? 'bg-primary/20 text-primary font-medium'
                   : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
@@ -217,15 +222,40 @@ export function SpacePanel({
             </button>
           )}
 
-          {/* Tasks — placeholder if not enabled */}
-          {!enabledTools.has('tasks') && (
-            <div className='flex items-center gap-2 py-2.5 px-3 text-default-300 text-sm rounded-md'>
+          {/* Tasks — enabled */}
+          {enabledTools.has('tasks') && (
+            <button
+              onClick={() => {
+                setActiveToolView({ type: 'tasks', spaceId });
+                onSelect?.();
+              }}
+              className={`w-full text-left flex items-center gap-2 py-2.5 text-sm rounded-md px-3 transition-colors cursor-pointer ${
+                isTasksActive
+                  ? 'bg-primary/20 text-primary font-medium'
+                  : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
+              }`}
+            >
               <FontAwesomeIcon icon={faListCheck} className='text-xs w-4' />
               <span>Tasks</span>
-              <span className='text-xs bg-default-100 text-default-400 px-1.5 py-0.5 rounded ml-auto'>
-                Soon
-              </span>
-            </div>
+            </button>
+          )}
+
+          {/* Wiki — enabled */}
+          {enabledTools.has('wiki') && (
+            <button
+              onClick={() => {
+                setActiveToolView({ type: 'wiki', spaceId });
+                onSelect?.();
+              }}
+              className={`w-full text-left flex items-center gap-2 py-2.5 text-sm rounded-md px-3 transition-colors cursor-pointer ${
+                isWikiActive
+                  ? 'bg-primary/20 text-primary font-medium'
+                  : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
+              }`}
+            >
+              <FontAwesomeIcon icon={faBook} className='text-xs w-4' />
+              <span>Wiki</span>
+            </button>
           )}
         </div>
       </div>

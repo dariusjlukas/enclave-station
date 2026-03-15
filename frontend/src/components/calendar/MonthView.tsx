@@ -1,3 +1,4 @@
+import { useState, useRef, useEffect } from 'react';
 import type { CalendarEvent } from '../../types';
 
 const HOVER_MAP: Record<string, string> = {
@@ -15,7 +16,17 @@ interface Props {
   events: CalendarEvent[];
   currentDate: Date;
   onDayClick: (date: Date) => void;
+  onDayRangeSelect: (start: Date, end: Date) => void;
   onEventClick: (event: CalendarEvent) => void;
+}
+
+interface SpanSegment {
+  event: CalendarEvent;
+  startCol: number;
+  span: number;
+  lane: number;
+  isStart: boolean;
+  isEnd: boolean;
 }
 
 function isSameDay(a: Date, b: Date): boolean {
@@ -32,13 +43,158 @@ function startOfWeek(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), diff);
 }
 
+function isDayInRange(day: Date, rangeStart: Date, rangeEnd: Date): boolean {
+  const s = new Date(
+    rangeStart.getFullYear(),
+    rangeStart.getMonth(),
+    rangeStart.getDate(),
+  ).getTime();
+  const e = new Date(
+    rangeEnd.getFullYear(),
+    rangeEnd.getMonth(),
+    rangeEnd.getDate(),
+  ).getTime();
+  const min = Math.min(s, e);
+  const max = Math.max(s, e);
+  const dayStart = new Date(
+    day.getFullYear(),
+    day.getMonth(),
+    day.getDate(),
+  ).getTime();
+  return dayStart >= min && dayStart <= max;
+}
+
+/** Strip time component, return midnight */
+function dayOf(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Calendar days between two dates (b - a) */
+function daysBetween(a: Date, b: Date): number {
+  return Math.round((dayOf(b).getTime() - dayOf(a).getTime()) / 86400000);
+}
+
+/** Height of each spanning-event lane in px */
+const LANE_H = 20;
+/** px from cell top to the first spanning lane (p-1=4 + h-6=24 + mb-0.5=2) */
+const SPAN_TOP = 30;
+
+function computeWeekSpans(
+  week: Date[],
+  allEvents: CalendarEvent[],
+): SpanSegment[] {
+  const weekStart = dayOf(week[0]);
+  const weekEnd = dayOf(week[6]);
+
+  // Collect multi-day events that overlap this week
+  const spanning: CalendarEvent[] = [];
+  for (const ev of allEvents) {
+    const evStart = dayOf(new Date(ev.start_time));
+    const evEnd = dayOf(new Date(ev.end_time));
+    if (isSameDay(evStart, evEnd)) continue;
+    if (evEnd < weekStart || evStart > weekEnd) continue;
+    spanning.push(ev);
+  }
+
+  // Sort: earlier start first, then longer events first (for stable lane assignment)
+  spanning.sort((a, b) => {
+    const aStart = dayOf(new Date(a.start_time)).getTime();
+    const bStart = dayOf(new Date(b.start_time)).getTime();
+    if (aStart !== bStart) return aStart - bStart;
+    const aDur = daysBetween(new Date(a.start_time), new Date(a.end_time));
+    const bDur = daysBetween(new Date(b.start_time), new Date(b.end_time));
+    return bDur - aDur;
+  });
+
+  const segments: SpanSegment[] = [];
+  const lanesUsed: boolean[][] = [];
+
+  for (const ev of spanning) {
+    const evStart = dayOf(new Date(ev.start_time));
+    const evEnd = dayOf(new Date(ev.end_time));
+
+    // Clamp to week boundaries
+    const segStart = evStart < weekStart ? 0 : daysBetween(weekStart, evStart);
+    const segEnd = evEnd > weekEnd ? 6 : daysBetween(weekStart, evEnd);
+    const span = segEnd - segStart + 1;
+
+    // Find lowest available lane
+    let lane = 0;
+    while (true) {
+      if (!lanesUsed[lane]) lanesUsed[lane] = new Array(7).fill(false);
+      let fits = true;
+      for (let c = segStart; c <= segEnd; c++) {
+        if (lanesUsed[lane][c]) {
+          fits = false;
+          break;
+        }
+      }
+      if (fits) break;
+      lane++;
+    }
+
+    if (!lanesUsed[lane]) lanesUsed[lane] = new Array(7).fill(false);
+    for (let c = segStart; c <= segEnd; c++) {
+      lanesUsed[lane][c] = true;
+    }
+
+    segments.push({
+      event: ev,
+      startCol: segStart,
+      span,
+      lane,
+      isStart: evStart.getTime() >= weekStart.getTime(),
+      isEnd: evEnd.getTime() <= weekEnd.getTime(),
+    });
+  }
+
+  return segments;
+}
+
 export function MonthView({
   events,
   currentDate,
   onDayClick,
+  onDayRangeSelect,
   onEventClick,
 }: Props) {
   const today = new Date();
+  const [dragStart, setDragStart] = useState<Date | null>(null);
+  const [dragEnd, setDragEnd] = useState<Date | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const isDraggingRef = useRef(false);
+  const dragStartRef = useRef<Date | null>(null);
+  const dragEndRef = useRef<Date | null>(null);
+
+  // Listen for mouseup globally so drag ends even if mouse leaves the grid
+  useEffect(() => {
+    const onMouseUp = () => {
+      if (!isDraggingRef.current) return;
+      isDraggingRef.current = false;
+      setDragging(false);
+
+      const start = dragStartRef.current;
+      const end = dragEndRef.current;
+      dragStartRef.current = null;
+      dragEndRef.current = null;
+      setDragStart(null);
+      setDragEnd(null);
+
+      if (!start || !end) return;
+
+      const s = dayOf(start).getTime();
+      const e = dayOf(end).getTime();
+
+      if (s === e) {
+        onDayClick(start);
+      } else {
+        onDayRangeSelect(s < e ? start : end, s < e ? end : start);
+      }
+    };
+    window.addEventListener('mouseup', onMouseUp);
+    return () => window.removeEventListener('mouseup', onMouseUp);
+  }, [onDayClick, onDayRangeSelect]);
+
   const month = currentDate.getMonth();
   const year = currentDate.getFullYear();
   const monthStart = new Date(year, month, 1);
@@ -64,27 +220,23 @@ export function MonthView({
     return result;
   })();
 
-  // Index events by day key
-  const eventsByDay = (() => {
+  // Index single-day events by day key (multi-day events are rendered as spanning bars)
+  const singleEventsByDay = (() => {
     const map = new Map<string, CalendarEvent[]>();
     for (const ev of events) {
       const start = new Date(ev.start_time);
       const end = new Date(ev.end_time);
-      // For multi-day events, add to each day
-      const d = new Date(start);
-      while (d <= end) {
-        const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-        const list = map.get(key) || [];
-        list.push(ev);
-        map.set(key, list);
-        d.setDate(d.getDate() + 1);
-        if (ev.all_day) {
-          d.setHours(0, 0, 0, 0);
-        }
-      }
+      if (!isSameDay(start, end)) continue;
+      const key = `${start.getFullYear()}-${start.getMonth()}-${start.getDate()}`;
+      const list = map.get(key) || [];
+      list.push(ev);
+      map.set(key, list);
     }
     return map;
   })();
+
+  // Compute spanning segments for each week row
+  const weekSpans = weeks.map((week) => computeWeekSpans(week, events));
 
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -104,67 +256,131 @@ export function MonthView({
 
       {/* Weeks */}
       <div className='flex-1 grid auto-rows-[minmax(100px,1fr)]'>
-        {weeks.map((week, wi) => (
-          <div
-            key={wi}
-            className='grid grid-cols-7 border-b border-default-100'
-          >
-            {week.map((day) => {
-              const key = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
-              const dayEvents = eventsByDay.get(key) || [];
-              const isCurrentMonth = day.getMonth() === currentDate.getMonth();
-              const isToday = isSameDay(day, today);
-              const MAX_VISIBLE = 3;
+        {weeks.map((week, wi) => {
+          const spans = weekSpans[wi];
+          const numLanes = spans.reduce(
+            (max, s) => Math.max(max, s.lane + 1),
+            0,
+          );
+          const maxSingleDay = Math.max(0, 3 - numLanes);
 
-              return (
-                <div
-                  key={key}
-                  className={`border-r border-default-100 last:border-r-0 p-1 cursor-pointer hover:bg-content2/50 transition-colors ${
-                    !isCurrentMonth ? 'opacity-40' : ''
-                  }`}
-                  onClick={() => onDayClick(day)}
-                >
+          return (
+            <div
+              key={wi}
+              className='relative grid grid-cols-7 border-b border-default-100'
+            >
+              {/* Day cells */}
+              {week.map((day) => {
+                const key = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
+                const dayEvents = singleEventsByDay.get(key) || [];
+                const isCurrentMonth =
+                  day.getMonth() === currentDate.getMonth();
+                const isToday = isSameDay(day, today);
+                const inDragRange =
+                  dragStart && dragEnd && dragging
+                    ? isDayInRange(day, dragStart, dragEnd)
+                    : false;
+
+                return (
                   <div
-                    className={`text-xs font-medium mb-0.5 w-6 h-6 flex items-center justify-center rounded-full ${
-                      isToday ? 'bg-primary text-white' : 'text-default-600'
-                    }`}
+                    key={key}
+                    className={`border-r border-default-100 last:border-r-0 p-1 cursor-pointer hover:bg-content2/50 transition-colors select-none ${
+                      !isCurrentMonth ? 'opacity-40' : ''
+                    } ${inDragRange ? 'bg-primary/15' : ''}`}
+                    onMouseDown={(e) => {
+                      if ((e.target as HTMLElement).closest('button')) return;
+                      e.preventDefault();
+                      isDraggingRef.current = true;
+                      setDragging(true);
+                      dragStartRef.current = day;
+                      dragEndRef.current = day;
+                      setDragStart(day);
+                      setDragEnd(day);
+                    }}
+                    onMouseEnter={() => {
+                      if (isDraggingRef.current) {
+                        dragEndRef.current = day;
+                        setDragEnd(day);
+                      }
+                    }}
                   >
-                    {day.getDate()}
-                  </div>
-                  <div className='space-y-0.5'>
-                    {dayEvents.slice(0, MAX_VISIBLE).map((ev, i) => (
-                      <button
-                        key={`${ev.id}-${i}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onEventClick(ev);
-                        }}
-                        className={`relative z-10 w-full text-left text-[11px] leading-tight px-1 py-0.5 rounded truncate ${
-                          HOVER_MAP[ev.color] || HOVER_MAP.blue
-                        }`}
-                      >
-                        {!ev.all_day && (
-                          <span className='font-medium mr-0.5'>
-                            {new Date(ev.start_time).toLocaleTimeString(
-                              undefined,
-                              { hour: 'numeric', minute: '2-digit' },
-                            )}
-                          </span>
-                        )}
-                        {ev.title}
-                      </button>
-                    ))}
-                    {dayEvents.length > MAX_VISIBLE && (
-                      <p className='text-[10px] text-default-400 px-1'>
-                        +{dayEvents.length - MAX_VISIBLE} more
-                      </p>
+                    {/* Date number */}
+                    <div
+                      className={`text-xs font-medium mb-0.5 w-6 h-6 flex items-center justify-center rounded-full ${
+                        isToday ? 'bg-primary text-white' : 'text-default-600'
+                      }`}
+                    >
+                      {day.getDate()}
+                    </div>
+
+                    {/* Spacer to push single-day events below spanning bars */}
+                    {numLanes > 0 && (
+                      <div style={{ height: numLanes * LANE_H }} />
                     )}
+
+                    {/* Single-day events */}
+                    <div className='space-y-0.5'>
+                      {dayEvents.slice(0, maxSingleDay).map((ev, i) => (
+                        <button
+                          key={`${ev.id}-${i}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onEventClick(ev);
+                          }}
+                          className={`relative z-10 w-full text-left text-[11px] leading-tight px-1 py-0.5 rounded truncate ${
+                            HOVER_MAP[ev.color] || HOVER_MAP.blue
+                          }`}
+                        >
+                          {!ev.all_day && (
+                            <span className='font-medium mr-0.5'>
+                              {new Date(ev.start_time).toLocaleTimeString(
+                                undefined,
+                                { hour: 'numeric', minute: '2-digit' },
+                              )}
+                            </span>
+                          )}
+                          {ev.title}
+                        </button>
+                      ))}
+                      {dayEvents.length > maxSingleDay && (
+                        <p className='text-[10px] text-default-400 px-1'>
+                          +{dayEvents.length - maxSingleDay} more
+                        </p>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+                );
+              })}
+
+              {/* Spanning event bars (absolutely positioned across columns) */}
+              {spans.map((seg) => {
+                const colorCls = HOVER_MAP[seg.event.color] || HOVER_MAP.blue;
+                const roundL = seg.isStart ? 'rounded-l' : '';
+                const roundR = seg.isEnd ? 'rounded-r' : '';
+
+                return (
+                  <button
+                    key={`span-${seg.event.id}-${seg.startCol}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEventClick(seg.event);
+                    }}
+                    className={`absolute z-20 text-[11px] leading-tight truncate px-1.5 ${colorCls} ${roundL} ${roundR}`}
+                    style={{
+                      top: SPAN_TOP + seg.lane * LANE_H,
+                      left: `calc(${(seg.startCol / 7) * 100}% + 2px)`,
+                      width: `calc(${(seg.span / 7) * 100}% - 4px)`,
+                      height: LANE_H - 2,
+                      lineHeight: `${LANE_H - 2}px`,
+                    }}
+                  >
+                    {seg.event.title}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

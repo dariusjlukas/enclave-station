@@ -23,6 +23,8 @@ export function IconRail({ onBrowseSpaces }: Props) {
   const spaces = useChatStore((s) => s.spaces);
   const activeView = useChatStore((s) => s.activeView);
   const setActiveView = useChatStore((s) => s.setActiveView);
+  const sidePanelCollapsed = useChatStore((s) => s.sidePanelCollapsed);
+  const setSidePanelCollapsed = useChatStore((s) => s.setSidePanelCollapsed);
   const channels = useChatStore((s) => s.channels);
   const unreadCounts = useChatStore((s) => s.unreadCounts);
   const mentionCounts = useChatStore((s) => s.mentionCounts);
@@ -55,12 +57,20 @@ export function IconRail({ onBrowseSpaces }: Props) {
     return false;
   };
 
+  const handleViewClick = (view: SidebarView) => {
+    if (isActive(view)) {
+      setSidePanelCollapsed(!sidePanelCollapsed);
+    } else {
+      setActiveView(view);
+    }
+  };
+
   return (
     <div className='w-16 flex-shrink-0 bg-content2/50 border-r border-default-100 flex flex-col items-center py-3 gap-2 overflow-y-auto'>
       <Tooltip content='Messages' placement='right'>
         <button
-          onClick={() => setActiveView({ type: 'messages' })}
-          className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-content2 text-default-500 ${
+          onClick={() => handleViewClick({ type: 'messages' })}
+          className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-content2 text-default-500 cursor-pointer ${
             isActive({ type: 'messages' })
               ? 'ring-2 ring-primary text-primary'
               : 'hover:ring-2 hover:ring-default-300 hover:text-foreground'
@@ -76,8 +86,10 @@ export function IconRail({ onBrowseSpaces }: Props) {
       {spaces.map((space) => (
         <Tooltip key={space.id} content={space.name} placement='right'>
           <button
-            onClick={() => setActiveView({ type: 'space', spaceId: space.id })}
-            className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all text-sm font-semibold overflow-hidden ${
+            onClick={() =>
+              handleViewClick({ type: 'space', spaceId: space.id })
+            }
+            className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all text-sm font-semibold overflow-hidden cursor-pointer ${
               isActive({ type: 'space', spaceId: space.id })
                 ? 'ring-2 ring-primary'
                 : 'hover:ring-2 hover:ring-default-300'
@@ -97,7 +109,7 @@ export function IconRail({ onBrowseSpaces }: Props) {
       <Tooltip content='Add or browse spaces' placement='right'>
         <button
           onClick={onBrowseSpaces}
-          className='w-11 h-11 rounded-xl flex items-center justify-center bg-content2/50 text-default-400 hover:bg-content3 hover:text-foreground transition-all border-2 border-dashed border-default-200'
+          className='w-11 h-11 rounded-xl flex items-center justify-center bg-content2/50 text-default-400 hover:bg-content3 hover:text-foreground transition-all border-2 border-dashed border-default-200 cursor-pointer'
         >
           <FontAwesomeIcon icon={faPlus} />
         </button>

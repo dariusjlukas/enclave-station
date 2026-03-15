@@ -43,6 +43,7 @@ interface Props {
   spaceId: string;
   event: CalendarEvent | null;
   initialDate: Date | null;
+  initialEndDate?: Date | null;
   canEdit: boolean;
   onClose: () => void;
   onSaved: () => void;
@@ -62,6 +63,7 @@ export function EventModal({
   spaceId,
   event,
   initialDate,
+  initialEndDate,
   canEdit,
   onClose,
   onSaved,
@@ -109,15 +111,24 @@ export function EventModal({
       const s = new Date(initialDate);
       s.setMinutes(0);
       s.setSeconds(0);
-      if (s.getHours() === 0) s.setHours(9);
-      const e = new Date(s);
-      e.setHours(e.getHours() + 1);
-      setStartDate(toLocalDate(s));
-      setStartTime(toLocalDatetime(s).split('T')[1]);
-      setEndDate(toLocalDate(e));
-      setEndTime(toLocalDatetime(e).split('T')[1]);
+      if (initialEndDate) {
+        // Multi-day drag selection → all-day event
+        setAllDay(true);
+        setStartDate(toLocalDate(s));
+        setStartTime('09:00');
+        setEndDate(toLocalDate(initialEndDate));
+        setEndTime('10:00');
+      } else {
+        if (s.getHours() === 0) s.setHours(9);
+        const e = new Date(s);
+        e.setHours(e.getHours() + 1);
+        setStartDate(toLocalDate(s));
+        setStartTime(toLocalDatetime(s).split('T')[1]);
+        setEndDate(toLocalDate(e));
+        setEndTime(toLocalDatetime(e).split('T')[1]);
+      }
     }
-  }, [event, initialDate, spaceId]);
+  }, [event, initialDate, initialEndDate, spaceId]);
 
   const buildStartTime = (): string => {
     if (allDay) return `${startDate}T00:00:00Z`;
@@ -330,6 +341,13 @@ export function EventModal({
                   </div>
                 )}
               </div>
+
+              {/* Created by (existing events only) */}
+              {event && (
+                <p className='text-xs text-default-400'>
+                  Created by {event.created_by_username}
+                </p>
+              )}
             </>
           ) : (
             /* Read-only view */

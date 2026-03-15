@@ -13,7 +13,6 @@ export class WebSocketService {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private token: string | null = null;
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
-  private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private connectTimer: ReturnType<typeof setTimeout> | null = null;
   private _connectionState: ConnectionState = 'disconnected';
   private _hasConnected = false;
@@ -21,6 +20,8 @@ export class WebSocketService {
   private _pingSentAt: number | null = null;
   private _lastPingMs: number | null = null;
   private _lastHeartbeat: Date | null = null;
+  /** Monotonic timestamp (ms) of last successful pong, used by watchdog. */
+  private _lastPongAt: number = 0;
 
   get connectionState() {
     return this._connectionState;
@@ -98,15 +99,13 @@ export class WebSocketService {
 
         // Handle pong internally
         if (type === 'pong') {
-          if (this.pongTimer) {
-            clearTimeout(this.pongTimer);
-            this.pongTimer = null;
-          }
+          const now = Date.now();
+          this._lastPongAt = now;
           if (this._pingSentAt !== null) {
-            this._lastPingMs = Date.now() - this._pingSentAt;
+            this._lastPingMs = now - this._pingSentAt;
             this._pingSentAt = null;
           }
-          this._lastHeartbeat = new Date();
+          this._lastHeartbeat = new Date(now);
           return;
         }
 
@@ -146,26 +145,64 @@ export class WebSocketService {
 
   private startHeartbeat() {
     this.stopHeartbeat();
+    // Seed the watchdog so the first check doesn't immediately fire
+    this._lastPongAt = Date.now();
     this.heartbeatInterval = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this._pingSentAt = Date.now();
+      try {
+        const now = Date.now();
+        const sincePong = now - this._lastPongAt;
+
+        // Watchdog: runs BEFORE the readyState check. If the socket is
+        // stuck in CLOSING/CLOSED without onclose firing (e.g. proxy
+        // timeout, network glitch), the readyState gate below would
+        // skip everything and the connection would be stuck forever.
+        if (sincePong > PONG_TIMEOUT) {
+          console.warn(
+            `[WS] No pong received in ${sincePong}ms, forcing reconnect`,
+          );
+          this.forceReconnect();
+          return;
+        }
+
+        // Only send pings on an open connection
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+        this._pingSentAt = now;
         this.ws.send(JSON.stringify({ type: 'ping' }));
-        this.pongTimer = setTimeout(() => {
-          console.warn('[WS] Pong timeout, closing connection');
-          this.ws?.close();
-        }, PONG_TIMEOUT);
+      } catch (e) {
+        console.error('[WS] Heartbeat error, forcing reconnect:', e);
+        this.forceReconnect();
       }
     }, HEARTBEAT_INTERVAL);
+  }
+
+  /** Tear down the current socket immediately and schedule a reconnect. */
+  private forceReconnect() {
+    this.stopHeartbeat();
+    if (this.connectTimer) {
+      clearTimeout(this.connectTimer);
+      this.connectTimer = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      const old = this.ws;
+      this.ws = null; // Null out first so stale onclose is ignored
+      old.onclose = null;
+      old.onmessage = null;
+      old.onerror = null;
+      old.close();
+    }
+    this.setState('disconnected');
+    this.reconnectTimer = setTimeout(() => this.doConnect(), RECONNECT_DELAY);
   }
 
   private stopHeartbeat() {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
-    }
-    if (this.pongTimer) {
-      clearTimeout(this.pongTimer);
-      this.pongTimer = null;
     }
   }
 
@@ -213,3 +250,11 @@ export class WebSocketService {
 }
 
 export const wsService = new WebSocketService();
+
+// Expose diagnostics on window for E2E tests
+(window as unknown as Record<string, unknown>).__wsDebug = () => ({
+  connectionState: wsService.connectionState,
+  hasConnected: wsService.hasConnected,
+  lastHeartbeat: wsService.getHeartbeatInfo().lastHeartbeat?.getTime() ?? null,
+  lastPingMs: wsService.getHeartbeatInfo().lastPingMs,
+});

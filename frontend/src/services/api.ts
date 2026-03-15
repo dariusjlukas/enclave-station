@@ -13,6 +13,19 @@ import type {
   CalendarEvent,
   CalendarEventRsvp,
   CalendarPermission,
+  TaskBoard,
+  TaskColumn,
+  TaskItem,
+  TaskLabel,
+  TaskChecklist,
+  TaskChecklistItem,
+  TaskDependency,
+  TaskBoardPermission,
+  WikiPage,
+  WikiPageVersion,
+  WikiPagePermission,
+  WikiPermission,
+  WikiSearchResult,
 } from '../types';
 import type {
   PublicKeyCredentialCreationOptionsJSON,
@@ -1376,6 +1389,8 @@ export interface ChannelSearchResult {
   is_public: boolean;
 }
 
+export { type WikiSearchResult } from '../types';
+
 export interface SearchFilter {
   type: string;
   value: string;
@@ -1435,6 +1450,22 @@ export function searchChannels(query: string, limit = 20, offset = 0) {
     offset: String(offset),
   });
   return request<SearchResponse<ChannelSearchResult>>(`/search?${params}`);
+}
+
+export function searchWiki(
+  query: string,
+  mode = 'and',
+  limit = 20,
+  offset = 0,
+) {
+  const params = new URLSearchParams({
+    q: query,
+    type: 'wiki',
+    mode,
+    limit: String(limit),
+    offset: String(offset),
+  });
+  return request<SearchResponse<WikiSearchResult>>(`/search?${params}`);
 }
 
 export function searchComposite<T = MessageSearchResult>(
@@ -1567,6 +1598,23 @@ export async function downloadSpaceFile(
   if (!res.ok) throw new Error('Download failed');
   const blob = await res.blob();
   triggerDownload(blob, fileName);
+}
+
+export async function downloadSpaceFolderAsZip(
+  spaceId: string,
+  folderId: string,
+  folderName: string,
+) {
+  const token = getToken();
+  const res = await fetch(
+    `${API_BASE}/spaces/${spaceId}/files/${folderId}/download-zip`,
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    },
+  );
+  if (!res.ok) throw new Error('Download failed');
+  const blob = await res.blob();
+  triggerDownload(blob, folderName + '.zip');
 }
 
 export function updateSpaceFile(
@@ -1871,4 +1919,509 @@ export function removeCalendarPermission(spaceId: string, userId: string) {
     `/spaces/${spaceId}/calendar/permissions/${userId}`,
     { method: 'DELETE' },
   );
+}
+
+// --- Task Boards ---
+
+export function listTaskBoards(spaceId: string) {
+  return request<{ boards: TaskBoard[]; my_permission: string }>(
+    `/spaces/${spaceId}/tasks/boards`,
+  );
+}
+
+export function createTaskBoard(
+  spaceId: string,
+  data: { name: string; description?: string },
+) {
+  return request<TaskBoard>(`/spaces/${spaceId}/tasks/boards`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function getTaskBoard(spaceId: string, boardId: string) {
+  return request<TaskBoard>(`/spaces/${spaceId}/tasks/boards/${boardId}`);
+}
+
+export function updateTaskBoard(
+  spaceId: string,
+  boardId: string,
+  data: { name?: string; description?: string },
+) {
+  return request<TaskBoard>(`/spaces/${spaceId}/tasks/boards/${boardId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteTaskBoard(spaceId: string, boardId: string) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}`,
+    { method: 'DELETE' },
+  );
+}
+
+// Task Columns
+
+export function createTaskColumn(
+  spaceId: string,
+  boardId: string,
+  data: { name: string; position?: number; wip_limit?: number; color?: string },
+) {
+  return request<TaskColumn>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/columns`,
+    { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function updateTaskColumn(
+  spaceId: string,
+  boardId: string,
+  columnId: string,
+  data: { name?: string; wip_limit?: number; color?: string },
+) {
+  return request<TaskColumn>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/columns/${columnId}`,
+    { method: 'PUT', body: JSON.stringify(data) },
+  );
+}
+
+export function reorderTaskColumns(
+  spaceId: string,
+  boardId: string,
+  columnIds: string[],
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/columns/reorder`,
+    { method: 'PUT', body: JSON.stringify({ column_ids: columnIds }) },
+  );
+}
+
+export function deleteTaskColumn(
+  spaceId: string,
+  boardId: string,
+  columnId: string,
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/columns/${columnId}`,
+    { method: 'DELETE' },
+  );
+}
+
+// Tasks
+
+export function createTask(
+  spaceId: string,
+  boardId: string,
+  data: {
+    column_id: string;
+    title: string;
+    description?: string;
+    priority?: string;
+    due_date?: string;
+    color?: string;
+    position?: number;
+    assignee_ids?: string[];
+    label_ids?: string[];
+  },
+) {
+  return request<TaskItem>(`/spaces/${spaceId}/tasks/boards/${boardId}/tasks`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function getTaskDetail(
+  spaceId: string,
+  boardId: string,
+  taskId: string,
+) {
+  return request<TaskItem>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}`,
+  );
+}
+
+export function updateTask(
+  spaceId: string,
+  boardId: string,
+  taskId: string,
+  data: {
+    column_id?: string;
+    title?: string;
+    description?: string;
+    priority?: string;
+    due_date?: string;
+    start_date?: string;
+    duration_days?: number;
+    color?: string;
+    position?: number;
+    assignee_ids?: string[];
+    label_ids?: string[];
+  },
+) {
+  return request<TaskItem>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}`,
+    { method: 'PUT', body: JSON.stringify(data) },
+  );
+}
+
+export function deleteTask(spaceId: string, boardId: string, taskId: string) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}`,
+    { method: 'DELETE' },
+  );
+}
+
+export function reorderTasks(
+  spaceId: string,
+  boardId: string,
+  tasks: { id: string; column_id: string; position: number }[],
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/reorder`,
+    { method: 'PUT', body: JSON.stringify({ tasks }) },
+  );
+}
+
+// Checklists
+
+export function createTaskChecklist(
+  spaceId: string,
+  boardId: string,
+  taskId: string,
+  data: { title: string; position?: number },
+) {
+  return request<TaskChecklist>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}/checklists`,
+    { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function deleteTaskChecklist(
+  spaceId: string,
+  boardId: string,
+  taskId: string,
+  checklistId: string,
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}/checklists/${checklistId}`,
+    { method: 'DELETE' },
+  );
+}
+
+export function createChecklistItem(
+  spaceId: string,
+  boardId: string,
+  taskId: string,
+  checklistId: string,
+  data: { content: string; position?: number },
+) {
+  return request<TaskChecklistItem>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}/checklists/${checklistId}/items`,
+    { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function updateChecklistItem(
+  spaceId: string,
+  boardId: string,
+  taskId: string,
+  checklistId: string,
+  itemId: string,
+  data: { content?: string; is_checked?: boolean },
+) {
+  return request<TaskChecklistItem>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}/checklists/${checklistId}/items/${itemId}`,
+    { method: 'PUT', body: JSON.stringify(data) },
+  );
+}
+
+export function deleteChecklistItem(
+  spaceId: string,
+  boardId: string,
+  taskId: string,
+  checklistId: string,
+  itemId: string,
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/tasks/${taskId}/checklists/${checklistId}/items/${itemId}`,
+    { method: 'DELETE' },
+  );
+}
+
+// Task Labels
+
+export function createTaskLabel(
+  spaceId: string,
+  boardId: string,
+  data: { name: string; color?: string },
+) {
+  return request<TaskLabel>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/labels`,
+    { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function updateTaskLabel(
+  spaceId: string,
+  boardId: string,
+  labelId: string,
+  data: { name: string; color?: string },
+) {
+  return request<TaskLabel>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/labels/${labelId}`,
+    { method: 'PUT', body: JSON.stringify(data) },
+  );
+}
+
+export function deleteTaskLabel(
+  spaceId: string,
+  boardId: string,
+  labelId: string,
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/labels/${labelId}`,
+    { method: 'DELETE' },
+  );
+}
+
+// Task Dependencies
+
+export function addTaskDependency(
+  spaceId: string,
+  boardId: string,
+  data: { task_id: string; depends_on_id: string; dependency_type?: string },
+) {
+  return request<TaskDependency>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/dependencies`,
+    { method: 'POST', body: JSON.stringify(data) },
+  );
+}
+
+export function removeTaskDependency(
+  spaceId: string,
+  boardId: string,
+  depId: string,
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/boards/${boardId}/dependencies/${depId}`,
+    { method: 'DELETE' },
+  );
+}
+
+// Task Permissions (space-level)
+
+export function getTaskPermissions(spaceId: string) {
+  return request<{ permissions: TaskBoardPermission[]; my_permission: string }>(
+    `/spaces/${spaceId}/tasks/permissions`,
+  );
+}
+
+export function setTaskPermission(
+  spaceId: string,
+  userId: string,
+  permission: string,
+) {
+  return request<{ ok: boolean }>(`/spaces/${spaceId}/tasks/permissions`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, permission }),
+  });
+}
+
+export function removeTaskPermission(spaceId: string, userId: string) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/tasks/permissions/${userId}`,
+    { method: 'DELETE' },
+  );
+}
+
+// --- Wiki ---
+
+export type WikiPagePath = { id: string; name: string };
+
+export function listWikiPages(spaceId: string, parentId?: string) {
+  const params = new URLSearchParams();
+  if (parentId) params.set('parent_id', parentId);
+  const qs = params.toString();
+  return request<{
+    pages: WikiPage[];
+    path: WikiPagePath[];
+    my_permission: string;
+  }>(`/spaces/${spaceId}/wiki/pages${qs ? '?' + qs : ''}`);
+}
+
+export function getWikiTree(spaceId: string) {
+  return request<{ pages: WikiPage[]; my_permission: string }>(
+    `/spaces/${spaceId}/wiki/tree`,
+  );
+}
+
+export function createWikiPage(
+  spaceId: string,
+  data: {
+    title: string;
+    parent_id?: string;
+    is_folder?: boolean;
+    content?: string;
+  },
+) {
+  return request<WikiPage>(`/spaces/${spaceId}/wiki/pages`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function getWikiPage(spaceId: string, pageId: string) {
+  return request<WikiPage & { path: WikiPagePath[] }>(
+    `/spaces/${spaceId}/wiki/pages/${pageId}`,
+  );
+}
+
+export function updateWikiPage(
+  spaceId: string,
+  pageId: string,
+  data: {
+    title?: string;
+    content?: string;
+    icon?: string;
+    cover_image_file_id?: string;
+    create_version?: boolean;
+  },
+) {
+  return request<WikiPage>(`/spaces/${spaceId}/wiki/pages/${pageId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteWikiPage(spaceId: string, pageId: string) {
+  return request<{ ok: boolean }>(`/spaces/${spaceId}/wiki/pages/${pageId}`, {
+    method: 'DELETE',
+  });
+}
+
+export function moveWikiPage(
+  spaceId: string,
+  pageId: string,
+  newParentId: string | null,
+) {
+  return request<WikiPage>(`/spaces/${spaceId}/wiki/pages/${pageId}/move`, {
+    method: 'PUT',
+    body: JSON.stringify({ parent_id: newParentId }),
+  });
+}
+
+export function reorderWikiPages(
+  spaceId: string,
+  pagePositions: { id: string; position: number }[],
+) {
+  return request<{ ok: boolean }>(`/spaces/${spaceId}/wiki/pages/reorder`, {
+    method: 'POST',
+    body: JSON.stringify({ page_positions: pagePositions }),
+  });
+}
+
+export function listWikiPageVersions(spaceId: string, pageId: string) {
+  return request<{ versions: WikiPageVersion[] }>(
+    `/spaces/${spaceId}/wiki/pages/${pageId}/versions`,
+  );
+}
+
+export function getWikiPageVersion(
+  spaceId: string,
+  pageId: string,
+  versionId: string,
+) {
+  return request<WikiPageVersion>(
+    `/spaces/${spaceId}/wiki/pages/${pageId}/versions/${versionId}`,
+  );
+}
+
+export function revertWikiPage(
+  spaceId: string,
+  pageId: string,
+  versionId: string,
+) {
+  return request<WikiPage>(
+    `/spaces/${spaceId}/wiki/pages/${pageId}/versions/${versionId}/revert`,
+    { method: 'POST' },
+  );
+}
+
+export function getWikiPagePermissions(spaceId: string, pageId: string) {
+  return request<{ permissions: WikiPagePermission[]; my_permission: string }>(
+    `/spaces/${spaceId}/wiki/pages/${pageId}/permissions`,
+  );
+}
+
+export function setWikiPagePermission(
+  spaceId: string,
+  pageId: string,
+  userId: string,
+  permission: string,
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/wiki/pages/${pageId}/permissions`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ user_id: userId, permission }),
+    },
+  );
+}
+
+export function removeWikiPagePermission(
+  spaceId: string,
+  pageId: string,
+  userId: string,
+) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/wiki/pages/${pageId}/permissions/${userId}`,
+    { method: 'DELETE' },
+  );
+}
+
+export function getWikiPermissions(spaceId: string) {
+  return request<{ permissions: WikiPermission[]; my_permission: string }>(
+    `/spaces/${spaceId}/wiki/permissions`,
+  );
+}
+
+export function setWikiPermission(
+  spaceId: string,
+  userId: string,
+  permission: string,
+) {
+  return request<{ ok: boolean }>(`/spaces/${spaceId}/wiki/permissions`, {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, permission }),
+  });
+}
+
+export function removeWikiPermission(spaceId: string, userId: string) {
+  return request<{ ok: boolean }>(
+    `/spaces/${spaceId}/wiki/permissions/${userId}`,
+    { method: 'DELETE' },
+  );
+}
+
+export function uploadWikiMedia(
+  spaceId: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<{ file_id: string; url: string }> {
+  return chunkedUpload(
+    `${API_BASE}/spaces/${spaceId}/wiki/upload`,
+    file,
+    {
+      filename: file.name,
+      content_type: file.type || 'application/octet-stream',
+    },
+    onProgress,
+  );
+}
+
+export function getWikiMediaUrl(url: string, inline?: boolean): string {
+  const token = getToken();
+  const base = `${url}?token=${token}`;
+  return inline ? `${base}&inline=1` : base;
 }

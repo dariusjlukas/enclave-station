@@ -15,6 +15,8 @@
 #include "handlers/notification_handler.h"
 #include "handlers/space_file_handler.h"
 #include "handlers/calendar_handler.h"
+#include "handlers/task_board_handler.h"
+#include "handlers/wiki_handler.h"
 #include "upload_manager.h"
 #include "ws/ws_handler.h"
 
@@ -51,6 +53,8 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db,
     NotificationHandler<SSL> notification_handler{db};
     SpaceFileHandler<SSL> space_file_handler{db, config, upload_manager};
     CalendarHandler<SSL> calendar_handler{db, config};
+    TaskBoardHandler<SSL> task_board_handler{db, config};
+    WikiHandler<SSL> wiki_handler{db, config, upload_manager};
 
     // CORS preflight
     app.options("/*", [](auto* res, auto* req) {
@@ -64,6 +68,8 @@ void run_server(uWS::TemplatedApp<SSL>&& app, Config& config, Database& db,
     auth_handler.register_routes(app);
     notification_handler.register_routes(app);
     search_handler.register_routes(app);
+    task_board_handler.register_routes(app);
+    wiki_handler.register_routes(app);
     calendar_handler.register_routes(app);
     space_file_handler.register_routes(app);
     space_handler.register_routes(app);

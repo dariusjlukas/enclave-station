@@ -1,5 +1,6 @@
 import { IconRail } from './IconRail';
 import { SidePanel } from './SidePanel';
+import { useChatStore } from '../../stores/chatStore';
 
 interface Props {
   onCreateConversation: () => void;
@@ -20,6 +21,8 @@ export function NewSidebar({
   open,
   onClose,
 }: Props) {
+  const sidePanelCollapsed = useChatStore((s) => s.sidePanelCollapsed);
+
   return (
     <>
       {open && (
@@ -29,12 +32,16 @@ export function NewSidebar({
         />
       )}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-72 bg-background/95 border-r border-default-100 flex transform transition-transform duration-200 ease-in-out md:static md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 bg-background/95 border-r border-default-100 flex transform transition-all duration-200 ease-in-out md:static md:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        } ${sidePanelCollapsed ? 'w-16' : 'w-72'}`}
       >
         <IconRail onBrowseSpaces={onBrowseSpaces} />
-        <div className='flex-1 flex flex-col overflow-hidden'>
+        <div
+          className={`flex flex-col overflow-hidden transition-all duration-200 ${
+            sidePanelCollapsed ? 'w-0 opacity-0' : 'flex-1 opacity-100'
+          }`}
+        >
           <SidePanel
             onCreateConversation={onCreateConversation}
             onCreateChannel={onCreateChannel}

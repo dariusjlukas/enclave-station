@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Modal,
   ModalContent,
@@ -32,7 +32,7 @@ export function CalendarPermissions({ spaceId, onClose }: Props) {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedPerm, setSelectedPerm] = useState('edit');
 
-  const loadPermissions = async () => {
+  const loadPermissions = useCallback(async () => {
     try {
       const data = await api.getCalendarPermissions(spaceId);
       setPermissions(data.permissions);
@@ -41,11 +41,11 @@ export function CalendarPermissions({ spaceId, onClose }: Props) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [spaceId]);
 
   useEffect(() => {
     loadPermissions();
-  }, [spaceId]);
+  }, [loadPermissions]);
 
   const handleAdd = async () => {
     if (!selectedUserId) return;

@@ -1,6 +1,7 @@
 #include "handlers/space_file_handler.h"
 #include "handlers/file_access_utils.h"
 #include "handlers/format_utils.h"
+#include "zip_builder.h"
 #include <fstream>
 #include <filesystem>
 #include <pqxx/pqxx>
@@ -1283,6 +1284,55 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         res->writeHeader("Content-Type", "application/json")
             ->writeHeader("Access-Control-Allow-Origin", "*")
             ->end(resp.dump());
+    });
+
+    // Download folder as ZIP
+    // Auth via header or query param (same pattern as single-file download)
+    app.get("/api/spaces/:spaceId/files/:folderId/download-zip", [this](auto* res, auto* req) {
+        std::string token = extract_bearer_token(req);
+        if (token.empty()) token = std::string(req->getQuery("token"));
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+            res->writeStatus("401")->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Unauthorized"})");
+            return;
+        }
+        std::string user_id = *user_id_opt;
+        std::string space_id(req->getParameter(0));
+        std::string folder_id(req->getParameter(1));
+
+        if (!check_space_access(res, space_id, user_id)) return;
+
+        auto folder = db.find_space_file(folder_id);
+        if (!folder || folder->space_id != space_id || folder->is_deleted || !folder->is_folder) {
+            res->writeStatus("404")->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Folder not found"})");
+            return;
+        }
+
+        auto entries = db.list_space_files_recursive(space_id, folder_id);
+
+        ZipBuilder zip;
+        for (const auto& entry : entries) {
+            if (entry.disk_file_id.empty()) continue;
+            if (!file_access_utils::is_valid_hex_id(entry.disk_file_id)) continue;
+            std::string path = config.upload_dir + "/" + entry.disk_file_id;
+            std::ifstream in(path, std::ios::binary);
+            if (!in) continue;
+            std::string data((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+            zip.add_file(entry.relative_path, data);
+        }
+
+        std::string archive = zip.build();
+        std::string disposition = file_access_utils::attachment_disposition(folder->name + ".zip");
+
+        res->writeHeader("Content-Type", "application/zip")
+            ->writeHeader("Content-Disposition", disposition)
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(archive);
     });
 }
 

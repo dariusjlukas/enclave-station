@@ -109,7 +109,7 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
               setActiveChannel(ch.id);
               onSelect?.();
             }}
-            className={`w-full text-left px-3 py-2.5 text-sm rounded-md flex items-center gap-2 transition-colors ${
+            className={`w-full text-left px-3 py-2.5 text-sm rounded-md flex items-center gap-2 transition-colors cursor-pointer ${
               activeChannelId === ch.id
                 ? 'bg-primary/20 text-primary'
                 : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
@@ -162,7 +162,7 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
         {archivedConversations.length > 0 && (
           <div className='mt-2'>
             <button
-              className='w-full text-left px-3 py-1.5 text-xs font-semibold text-default-400 uppercase tracking-wider hover:text-default-500'
+              className='w-full text-left px-3 py-1.5 text-xs font-semibold text-default-400 uppercase tracking-wider hover:text-default-500 cursor-pointer'
               onClick={() => setShowArchived((v) => !v)}
             >
               Archived ({archivedConversations.length}){' '}
@@ -176,7 +176,7 @@ export function ConversationList({ onCreateConversation, onSelect }: Props) {
                     setActiveChannel(ch.id);
                     onSelect?.();
                   }}
-                  className={`w-full text-left px-3 py-2.5 text-sm rounded-md flex items-center gap-2 transition-colors opacity-60 ${
+                  className={`w-full text-left px-3 py-2.5 text-sm rounded-md flex items-center gap-2 transition-colors opacity-60 cursor-pointer ${
                     activeChannelId === ch.id
                       ? 'bg-primary/20 text-primary'
                       : 'text-default-500 hover:bg-content2/50 hover:text-foreground'

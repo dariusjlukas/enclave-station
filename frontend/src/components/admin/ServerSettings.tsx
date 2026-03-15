@@ -103,11 +103,24 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
   );
 
   // File settings
-  const [maxFileValue, setMaxFileValue] = useState('1024');
+  const [maxFileValue, setMaxFileValue] = useState('0');
   const [maxFileUnit, setMaxFileUnit] = useState('MB');
   const [maxStorageValue, setMaxStorageValue] = useState('0');
   const [maxStorageUnit, setMaxStorageUnit] = useState('GB');
-  const [maxStorageBytes, setMaxStorageBytes] = useState(0);
+
+  const maxFileBytes = useMemo(() => {
+    const val = parseFloat(maxFileValue);
+    if (val === 0 || isNaN(val)) return 0;
+    return val * (UNITS.find((u) => u.key === maxFileUnit)?.bytes || 1048576);
+  }, [maxFileValue, maxFileUnit]);
+
+  const maxStorageBytes = useMemo(() => {
+    const val = parseFloat(maxStorageValue);
+    if (val === 0 || isNaN(val)) return 0;
+    return (
+      val * (UNITS.find((u) => u.key === maxStorageUnit)?.bytes || 1073741824)
+    );
+  }, [maxStorageValue, maxStorageUnit]);
 
   // New settings
   const [serverName, setServerName] = useState('EnclaveStation');
@@ -239,7 +252,6 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       setMaxFileUnit('MB');
     }
 
-    setMaxStorageBytes(data.max_storage_size);
     if (data.max_storage_size > 0) {
       const storage = toHumanUnit(data.max_storage_size);
       setMaxStorageValue(String(storage.value));
@@ -290,25 +302,14 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
   }, [loading]);
 
   const buildSettingsPayload = () => {
-    const fileBytes =
-      parseFloat(maxFileValue) === 0
-        ? 0
-        : parseFloat(maxFileValue) *
-          (UNITS.find((u) => u.key === maxFileUnit)?.bytes || 1048576);
-    const storageBytes =
-      parseFloat(maxStorageValue) === 0
-        ? 0
-        : parseFloat(maxStorageValue) *
-          (UNITS.find((u) => u.key === maxStorageUnit)?.bytes || 1073741824);
-
     return {
       server_name: serverName,
       auth_methods: authMethods,
       registration_mode: registrationMode,
       file_uploads_enabled: fileUploadsEnabled,
       session_expiry_hours: parseInt(sessionExpiryHours) || 168,
-      max_file_size: Math.round(fileBytes),
-      max_storage_size: Math.round(storageBytes),
+      max_file_size: Math.round(maxFileBytes),
+      max_storage_size: Math.round(maxStorageBytes),
       password_min_length: parseInt(pwMinLength) || 8,
       password_require_uppercase: pwRequireUpper,
       password_require_lowercase: pwRequireLower,

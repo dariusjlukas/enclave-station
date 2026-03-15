@@ -17,6 +17,7 @@ import type {
   FileSearchResult,
   SpaceSearchResult,
   ChannelSearchResult,
+  WikiSearchResult,
 } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
 import { UserPopoverCard } from '../common/UserPopoverCard';
@@ -24,7 +25,13 @@ import { UserAvatar } from '../common/UserAvatar';
 import { SpaceAvatar } from '../common/SpaceAvatar';
 import { relativeTime } from '../../utils/time';
 
-type SearchTab = 'messages' | 'users' | 'files' | 'channels' | 'spaces';
+type SearchTab =
+  | 'messages'
+  | 'users'
+  | 'files'
+  | 'channels'
+  | 'spaces'
+  | 'wiki';
 
 interface SearchChip {
   id: string;
@@ -38,6 +45,7 @@ const TAB_LABELS: Record<SearchTab, string> = {
   files: 'File',
   channels: 'Channel',
   spaces: 'Space',
+  wiki: 'Wiki',
 };
 
 let chipIdCounter = 0;
@@ -60,6 +68,7 @@ export function GlobalSearch() {
     [],
   );
   const [spaceResults, setSpaceResults] = useState<SpaceSearchResult[]>([]);
+  const [wikiResults, setWikiResults] = useState<WikiSearchResult[]>([]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -76,6 +85,7 @@ export function GlobalSearch() {
     setFileResults([]);
     setChannelResults([]);
     setSpaceResults([]);
+    setWikiResults([]);
   }, []);
 
   const clearSearch = useCallback(() => {
@@ -157,6 +167,11 @@ export function GlobalSearch() {
           promise = api
             .searchSpaces(searchQuery)
             .then((r) => setSpaceResults(r.results));
+          break;
+        case 'wiki':
+          promise = api
+            .searchWiki(searchQuery, searchMode)
+            .then((r) => setWikiResults(r.results));
           break;
       }
 
@@ -453,6 +468,45 @@ export function GlobalSearch() {
             result={s}
             onNavigate={() => handleNavigateToSpace(s.id)}
           />
+        ));
+      case 'wiki':
+        if (wikiResults.length === 0)
+          return (
+            <p className='text-sm text-default-400 text-center py-8'>
+              No results found
+            </p>
+          );
+        return wikiResults.map((w) => (
+          <div
+            key={w.id}
+            className='flex items-center gap-3 px-3 py-2 hover:bg-content2 rounded-lg cursor-pointer transition-colors'
+            onClick={() => {
+              const store = useChatStore.getState();
+              store.setActiveView({ type: 'space', spaceId: w.space_id });
+              store.setActiveToolView({ type: 'wiki', spaceId: w.space_id });
+              clearSearch();
+            }}
+          >
+            <FontAwesomeIcon
+              icon={faFile}
+              className='text-default-400 w-4 flex-shrink-0'
+            />
+            <div className='flex-1 min-w-0'>
+              <p className='text-sm font-medium text-foreground truncate'>
+                {w.title}
+              </p>
+              {w.snippet && (
+                <p
+                  className='text-xs text-default-400 line-clamp-1'
+                  dangerouslySetInnerHTML={{ __html: w.snippet }}
+                />
+              )}
+              <p className='text-xs text-default-400 mt-0.5'>
+                {w.space_name} &middot; {w.created_by_username} &middot;{' '}
+                {relativeTime(w.created_at)}
+              </p>
+            </div>
+          </div>
         ));
     }
   };

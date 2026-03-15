@@ -1,11 +1,15 @@
 import { useState, useEffect } from 'react';
 import { Modal, ModalContent, ModalBody } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faWifi } from '@fortawesome/free-solid-svg-icons';
+import { faWifi, faMicrochip, faCube } from '@fortawesome/free-solid-svg-icons';
 import {
   useConnectionState,
   useHasConnected,
 } from '../../hooks/useConnectionState';
+import { PCBRouter } from './PCBRouter';
+import { RubiksCube } from './RubiksCube';
+
+type GameChoice = null | 'pcb' | 'rubiks';
 
 const RECONNECT_SECONDS = 5;
 
@@ -13,9 +17,13 @@ export function ConnectionLostModal() {
   const connectionState = useConnectionState();
   const hasConnected = useHasConnected();
   const [countdown, setCountdown] = useState(RECONNECT_SECONDS);
+  const [activeGame, setActiveGame] = useState<GameChoice>(null);
 
   // Only show after we've been connected at least once (skip initial connect after login)
   const showModal = hasConnected && connectionState !== 'connected';
+
+  // Reset game when modal closes — derived from showModal, not set in an effect
+  const effectiveGame: GameChoice = activeGame && showModal ? activeGame : null;
 
   useEffect(() => {
     if (!showModal) return;
@@ -34,7 +42,7 @@ export function ConnectionLostModal() {
       isDismissable={false}
       hideCloseButton
       backdrop='blur'
-      size='sm'
+      size={effectiveGame ? 'lg' : 'sm'}
       classNames={{ wrapper: '!items-center !pt-0' }}
     >
       <ModalContent>
@@ -79,6 +87,43 @@ export function ConnectionLostModal() {
               />
             ))}
           </div>
+
+          {effectiveGame ? (
+            <div className='mt-4 pt-4 border-t border-default-200'>
+              {effectiveGame === 'pcb' && <PCBRouter />}
+              {effectiveGame === 'rubiks' && <RubiksCube />}
+              <button
+                onClick={() => setActiveGame(null)}
+                className='mt-3 text-xs text-default-400 hover:text-default-600 transition-colors cursor-pointer'
+              >
+                ← Back to game selection
+              </button>
+            </div>
+          ) : (
+            <div className='mt-4 flex justify-center gap-3'>
+              <button
+                onClick={() => setActiveGame('pcb')}
+                className='flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-lg bg-default-100 hover:bg-default-200 transition-colors cursor-pointer'
+              >
+                <FontAwesomeIcon
+                  icon={faMicrochip}
+                  className='text-lg text-default-500'
+                />
+                <span className='text-xs text-default-500'>Route PCB</span>
+              </button>
+              <button
+                onClick={() => setActiveGame('rubiks')}
+                className='flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-lg bg-default-100 hover:bg-default-200 transition-colors cursor-pointer'
+              >
+                <FontAwesomeIcon
+                  icon={faCube}
+                  className='text-lg text-default-500'
+                />
+                <span className='text-xs text-default-500'>Rubik's Cube</span>
+              </button>
+            </div>
+          )}
+
           <style>{`
             @keyframes float {
               0%, 100% { transform: translateY(0) rotate(0deg); }

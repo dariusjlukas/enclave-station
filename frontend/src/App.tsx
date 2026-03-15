@@ -18,9 +18,12 @@ import { RecoveryLogin } from './components/auth/RecoveryLogin';
 import { AddDevice } from './components/auth/AddDevice';
 import { NewSidebar } from './components/sidebar/NewSidebar';
 import { Header } from './components/layout/Header';
+import { ServerStatusBanner } from './components/layout/ServerStatusBanner';
 import { ChatArea } from './components/layout/ChatArea';
 import { FileBrowser } from './components/files/FileBrowser';
 import { CalendarView } from './components/calendar/CalendarView';
+import { TaskBoardView } from './components/tasks/TaskBoardView';
+import { WikiView } from './components/wiki/WikiView';
 import { CreateChannel } from './components/channels/CreateChannel';
 import { ChannelBrowser } from './components/channels/ChannelBrowser';
 import { ChannelSettings } from './components/channels/ChannelSettings';
@@ -45,6 +48,7 @@ import { SystemMonitor } from './components/admin/SystemMonitor';
 import { UserSettings } from './components/settings/UserSettings';
 import { ConnectionLostModal } from './components/common/ConnectionLostModal';
 import { useConnectionState } from './hooks/useConnectionState';
+import { useWebSocketConnection } from './hooks/useWebSocket';
 import { wsService } from './services/websocket';
 import * as api from './services/api';
 
@@ -52,6 +56,9 @@ type AuthPage = 'login' | 'register' | 'recovery' | 'add-device';
 
 function App() {
   const { isAuthenticated, loading } = useAuth();
+  // WebSocket connection lifecycle — must live here (always mounted),
+  // not in ChatArea which unmounts when navigating to tools.
+  useWebSocketConnection();
   // Check for device_token or invite in URL
   const urlParams = new URLSearchParams(window.location.search);
   const urlDeviceToken = urlParams.get('device_token');
@@ -313,6 +320,7 @@ function App() {
 
   return (
     <div className='h-screen flex flex-col bg-background'>
+      <ServerStatusBanner />
       <Header
         onShowAdmin={() => setShowAdmin(true)}
         onShowSettings={() => setShowSettings(true)}
@@ -334,6 +342,10 @@ function App() {
           <FileBrowser spaceId={activeToolView.spaceId} />
         ) : activeToolView?.type === 'calendar' ? (
           <CalendarView spaceId={activeToolView.spaceId} />
+        ) : activeToolView?.type === 'tasks' ? (
+          <TaskBoardView spaceId={activeToolView.spaceId} />
+        ) : activeToolView?.type === 'wiki' ? (
+          <WikiView spaceId={activeToolView.spaceId} />
         ) : (
           <ChatArea />
         )}

@@ -13,7 +13,13 @@ import type {
   Notification,
 } from '../types';
 
-export function useWebSocket() {
+/**
+ * Manages the WebSocket connection lifecycle and event subscriptions.
+ * Must be called from a component that stays mounted for the entire
+ * authenticated session (e.g. App), NOT from a conditionally-rendered
+ * component like ChatArea.
+ */
+export function useWebSocketConnection() {
   const token = useChatStore((s) => s.token);
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
@@ -375,7 +381,14 @@ export function useWebSocket() {
       timers.clear();
     };
   }, [token]);
+}
 
+/**
+ * Returns WebSocket action functions (send message, typing, etc.).
+ * These are thin wrappers around wsService.send() and do not manage
+ * the connection lifecycle — safe to call from any component.
+ */
+export function useWebSocketActions() {
   const sendMessage = useCallback(
     (channelId: string, content: string, replyToMessageId?: string) => {
       const payload: Record<string, string> = {

@@ -35,7 +35,7 @@ struct Config {
         c.session_expiry_hours = std::stoi(env("SESSION_EXPIRY_HOURS", "168"));
         c.public_url = env("PUBLIC_URL", "");
         c.upload_dir = env("UPLOAD_DIR", "/data/uploads");
-        c.max_file_size = std::stoll(env("MAX_FILE_SIZE", "1073741824"));
+        c.max_file_size = std::stoll(env("MAX_FILE_SIZE", "0"));
         c.ssl_cert_path = env("SSL_CERT_PATH", "");
         c.ssl_key_path = env("SSL_KEY_PATH", "");
         c.webauthn_rp_name = env("WEBAUTHN_RP_NAME", "EnclaveStation");

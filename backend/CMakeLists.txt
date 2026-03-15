@@ -66,6 +66,8 @@ set(LIB_SOURCES
     src/handlers/space_handler.cpp
     src/handlers/space_file_handler.cpp
     src/handlers/calendar_handler.cpp
+    src/handlers/task_board_handler.cpp
+    src/handlers/wiki_handler.cpp
     src/recurrence.cpp
     src/upload_manager.cpp
     src/ws/ws_handler.cpp

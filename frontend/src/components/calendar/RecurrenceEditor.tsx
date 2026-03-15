@@ -109,11 +109,12 @@ export function RecurrenceEditor({ value, onChange }: Props) {
     [state, onChange],
   );
 
-  // Emit initial value if empty
+  // Emit initial value if empty — intentionally mount-only
   useEffect(() => {
     if (!value) {
       onChange(buildRRule(state));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

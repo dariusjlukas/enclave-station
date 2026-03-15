@@ -3,7 +3,6 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "EnclaveStation",
   description: "Documentation for EnclaveStation — a self-hosted chat platform",
-  base: "/enclave-station/",
   cleanUrls: true,
 
   head: [

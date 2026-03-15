@@ -161,7 +161,7 @@ RUN_E2E=false
 RUN_DOCKER=false
 SKIP_BUILD=false
 E2E_WORKERS=16
-API_WORKERS=16
+API_WORKERS=64
 ANY_FLAG=false
 NEXT_IS_WORKERS=false
 
@@ -282,7 +282,9 @@ if [ "$NEED_PG" = true ]; then
         -e POSTGRES_PASSWORD="$TEST_PG_PASS" \
         -e POSTGRES_DB="$TEST_PG_DB" \
         -p "$TEST_PG_PORT:5432" \
-        postgres:16-alpine >/dev/null
+        postgres:16-alpine \
+        -c max_locks_per_transaction=512 \
+        -c max_connections=200 >/dev/null
 
     PG_CONTAINER_STARTED=true
 fi
@@ -314,7 +316,7 @@ fi
 # =====================================================================
 
 if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_UNIT" = true ]; then
-    run_check "Backend Unit Tests" bash -c "cd '$BUILD_DIR' && ctest --output-on-failure -L unit --timeout 30"
+    run_check "Backend Unit Tests" bash -c "cd '$BUILD_DIR' && ctest --output-on-failure -L unit --timeout 30 -j\$(nproc)"
 
     # Report code coverage if unit tests passed
     if [ "${RESULTS["Backend Unit Tests"]}" = "PASS" ] && command -v gcov &>/dev/null; then

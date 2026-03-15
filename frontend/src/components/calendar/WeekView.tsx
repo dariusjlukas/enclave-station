@@ -29,6 +29,15 @@ interface Props {
   onEventClick: (event: CalendarEvent) => void;
 }
 
+interface AllDaySegment {
+  event: CalendarEvent;
+  startCol: number;
+  span: number;
+  lane: number;
+  isStart: boolean;
+  isEnd: boolean;
+}
+
 function startOfWeek(d: Date): Date {
   const day = d.getDay();
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
@@ -43,8 +52,96 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+function dayOf(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function daysBetween(a: Date, b: Date): number {
+  return Math.round((dayOf(b).getTime() - dayOf(a).getTime()) / 86400000);
+}
+
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const HOUR_HEIGHT = 60; // px per hour
+const HOUR_HEIGHT = 60;
+const LANE_H = 20;
+
+function computeAllDaySegments(
+  days: Date[],
+  allEvents: CalendarEvent[],
+): AllDaySegment[] {
+  const weekStart = dayOf(days[0]);
+  const weekEnd = dayOf(days[days.length - 1]);
+  const numCols = days.length;
+
+  // Collect events for the all-day section: all_day OR multi-day
+  const items: {
+    ev: CalendarEvent;
+    startCol: number;
+    span: number;
+    isStart: boolean;
+    isEnd: boolean;
+  }[] = [];
+
+  for (const ev of allEvents) {
+    const evStart = dayOf(new Date(ev.start_time));
+    const evEnd = dayOf(new Date(ev.end_time));
+    const isMultiDay = !isSameDay(evStart, evEnd);
+    if (!ev.all_day && !isMultiDay) continue;
+    if (evEnd < weekStart || evStart > weekEnd) continue;
+
+    const segStart = evStart < weekStart ? 0 : daysBetween(weekStart, evStart);
+    const segEnd =
+      evEnd > weekEnd ? numCols - 1 : daysBetween(weekStart, evEnd);
+
+    items.push({
+      ev,
+      startCol: segStart,
+      span: segEnd - segStart + 1,
+      isStart: evStart.getTime() >= weekStart.getTime(),
+      isEnd: evEnd.getTime() <= weekEnd.getTime(),
+    });
+  }
+
+  // Sort: earlier start, then longer spans first
+  items.sort((a, b) => {
+    if (a.startCol !== b.startCol) return a.startCol - b.startCol;
+    return b.span - a.span;
+  });
+
+  const segments: AllDaySegment[] = [];
+  const lanesUsed: boolean[][] = [];
+
+  for (const item of items) {
+    let lane = 0;
+    while (true) {
+      if (!lanesUsed[lane]) lanesUsed[lane] = new Array(numCols).fill(false);
+      let fits = true;
+      for (let c = item.startCol; c < item.startCol + item.span; c++) {
+        if (lanesUsed[lane][c]) {
+          fits = false;
+          break;
+        }
+      }
+      if (fits) break;
+      lane++;
+    }
+
+    if (!lanesUsed[lane]) lanesUsed[lane] = new Array(numCols).fill(false);
+    for (let c = item.startCol; c < item.startCol + item.span; c++) {
+      lanesUsed[lane][c] = true;
+    }
+
+    segments.push({
+      event: item.ev,
+      startCol: item.startCol,
+      span: item.span,
+      lane,
+      isStart: item.isStart,
+      isEnd: item.isEnd,
+    });
+  }
+
+  return segments;
+}
 
 export function WeekView({
   events,
@@ -61,16 +158,21 @@ export function WeekView({
     return d;
   });
 
-  // Split events into all-day and timed
-  const allDayEvents: CalendarEvent[] = [];
+  // Single-day timed events go in the time grid; everything else goes in the all-day section
   const timedEvents: CalendarEvent[] = [];
   for (const ev of events) {
-    if (ev.all_day) {
-      allDayEvents.push(ev);
-    } else {
+    const s = new Date(ev.start_time);
+    const e = new Date(ev.end_time);
+    if (!ev.all_day && isSameDay(s, e)) {
       timedEvents.push(ev);
     }
   }
+
+  const allDaySegments = computeAllDaySegments(days, events);
+  const numLanes = allDaySegments.reduce(
+    (max, s) => Math.max(max, s.lane + 1),
+    0,
+  );
 
   // Index timed events by day
   const timedByDay = new Map<string, CalendarEvent[]>();
@@ -84,72 +186,82 @@ export function WeekView({
 
   return (
     <div className='flex flex-col h-full'>
-      {/* All-day events bar */}
-      {allDayEvents.length > 0 && (
-        <div className='border-b border-default-200'>
-          <div className='grid grid-cols-[60px_repeat(7,1fr)]'>
-            <div className='text-xs text-default-400 p-1 text-right pr-2'>
-              All day
-            </div>
+      {/* Scrollable area containing headers, all-day section, and time grid */}
+      <div className='flex-1 overflow-y-auto'>
+        {/* Sticky header block: day headers + all-day section */}
+        <div className='sticky top-0 z-10 bg-background'>
+          {/* Day headers */}
+          <div className='grid grid-cols-[60px_repeat(7,1fr)] border-b border-default-200'>
+            <div />
             {days.map((day) => {
-              const dayAllDay = allDayEvents.filter((ev) => {
-                const s = new Date(ev.start_time);
-                const e = new Date(ev.end_time);
-                return (
-                  day >= new Date(s.getFullYear(), s.getMonth(), s.getDate()) &&
-                  day <= new Date(e.getFullYear(), e.getMonth(), e.getDate())
-                );
-              });
+              const isToday = isSameDay(day, today);
               return (
                 <div
                   key={day.getTime()}
-                  className='p-0.5 min-h-[28px] border-l border-default-100'
+                  className='text-center py-2 border-l border-default-100'
                 >
-                  {dayAllDay.map((ev) => (
-                    <button
-                      key={ev.id}
-                      onClick={() => onEventClick(ev)}
-                      className={`w-full text-left text-[11px] px-1 py-0.5 rounded truncate mb-0.5 ${
-                        ALL_DAY_MAP[ev.color] || ALL_DAY_MAP.blue
-                      }`}
-                    >
-                      {ev.title}
-                    </button>
-                  ))}
+                  <div className='text-xs text-default-400'>
+                    {day.toLocaleDateString(undefined, { weekday: 'short' })}
+                  </div>
+                  <div
+                    className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full mx-auto ${
+                      isToday ? 'bg-primary text-white' : ''
+                    }`}
+                  >
+                    {day.getDate()}
+                  </div>
                 </div>
               );
             })}
           </div>
-        </div>
-      )}
 
-      {/* Time grid (headers + hours in same scroll container) */}
-      <div className='flex-1 overflow-y-auto'>
-        {/* Day headers - sticky inside scroll container so columns align */}
-        <div className='grid grid-cols-[60px_repeat(7,1fr)] border-b border-default-200 sticky top-0 z-10 bg-background'>
-          <div />
-          {days.map((day) => {
-            const isToday = isSameDay(day, today);
-            return (
-              <div
-                key={day.getTime()}
-                className='text-center py-2 border-l border-default-100'
-              >
-                <div className='text-xs text-default-400'>
-                  {day.toLocaleDateString(undefined, { weekday: 'short' })}
-                </div>
-                <div
-                  className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full mx-auto ${
-                    isToday ? 'bg-primary text-white' : ''
-                  }`}
-                >
-                  {day.getDate()}
-                </div>
+          {/* All-day / multi-day events section */}
+          {numLanes > 0 && (
+            <div className='grid grid-cols-[60px_1fr] border-b border-default-200'>
+              <div className='text-xs text-default-400 p-1 text-right pr-2 self-start pt-1.5'>
+                All day
               </div>
-            );
-          })}
+              <div
+                className='relative'
+                style={{ minHeight: numLanes * LANE_H + 4 }}
+              >
+                {/* Column border lines */}
+                <div className='absolute inset-0 grid grid-cols-7 pointer-events-none'>
+                  {days.map((_, i) => (
+                    <div key={i} className='border-l border-default-100' />
+                  ))}
+                </div>
+
+                {/* Spanning event bars */}
+                {allDaySegments.map((seg) => {
+                  const colorCls =
+                    ALL_DAY_MAP[seg.event.color] || ALL_DAY_MAP.blue;
+                  const roundL = seg.isStart ? 'rounded-l' : '';
+                  const roundR = seg.isEnd ? 'rounded-r' : '';
+
+                  return (
+                    <button
+                      key={`span-${seg.event.id}-${seg.startCol}`}
+                      onClick={() => onEventClick(seg.event)}
+                      className={`absolute z-10 text-[11px] leading-tight truncate px-1.5 ${colorCls} ${roundL} ${roundR}`}
+                      style={{
+                        top: seg.lane * LANE_H + 2,
+                        left: `calc(${(seg.startCol / 7) * 100}% + 2px)`,
+                        width: `calc(${(seg.span / 7) * 100}% - 4px)`,
+                        height: LANE_H - 2,
+                        lineHeight: `${LANE_H - 2}px`,
+                      }}
+                    >
+                      {seg.event.title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
+        {/* Time grid */}
         <div className='grid grid-cols-[60px_repeat(7,1fr)] relative'>
           {/* Time labels */}
           <div>

@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useChatStore } from '../../stores/chatStore';
 import { MessageList } from '../chat/MessageList';
 import { MessageInput } from '../chat/MessageInput';
-import { useWebSocket } from '../../hooks/useWebSocket';
+import { useWebSocketActions } from '../../hooks/useWebSocket';
 import { uploadFile } from '../../services/api';
 import type { Message } from '../../types';
 
@@ -22,7 +22,7 @@ export function ChatArea() {
     markRead,
     addReaction,
     removeReaction,
-  } = useWebSocket();
+  } = useWebSocketActions();
 
   const serverArchived = useChatStore((s) => s.serverArchived);
   const serverName = useChatStore((s) => s.serverName);

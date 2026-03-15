@@ -738,3 +738,70 @@ export async function apiGetAdminSettings(
   const res = await apiGet("/api/admin/settings", token, config);
   return (await res.json()) as { server_locked_down: boolean; [key: string]: unknown };
 }
+
+/**
+ * Enable the tasks tool for a space.
+ */
+export async function apiEnableTasksTool(
+  spaceId: string,
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<void> {
+  const res = await apiPut(
+    `/api/spaces/${spaceId}/tools`,
+    { tool: "tasks", enabled: true },
+    token,
+    config,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`apiEnableTasksTool failed (${res.status}): ${text}`);
+  }
+}
+
+/**
+ * Create a task board in a space.
+ */
+export async function apiCreateTaskBoard(
+  spaceId: string,
+  name: string,
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<{ id: string; name: string; columns: { id: string; name: string }[] }> {
+  const res = await apiPost(
+    `/api/spaces/${spaceId}/tasks/boards`,
+    { name },
+    token,
+    config,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`apiCreateTaskBoard failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as { id: string; name: string; columns: { id: string; name: string }[] };
+}
+
+/**
+ * Create a task on a board.
+ */
+export async function apiCreateTask(
+  spaceId: string,
+  boardId: string,
+  columnId: string,
+  title: string,
+  token: string,
+  extra: Record<string, unknown> = {},
+  config: ApiConfig = defaultConfig,
+): Promise<{ id: string; title: string; column_id: string }> {
+  const res = await apiPost(
+    `/api/spaces/${spaceId}/tasks/boards/${boardId}/tasks`,
+    { column_id: columnId, title, ...extra },
+    token,
+    config,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`apiCreateTask failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as { id: string; title: string; column_id: string };
+}

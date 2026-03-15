@@ -10,6 +10,7 @@ import {
   ModalFooter,
   Select,
   SelectItem,
+  Progress,
 } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -35,6 +36,8 @@ import {
   faRotateLeft,
   faUserPlus,
   faUserMinus,
+  faXmark,
+  faCheck,
 } from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
 import * as api from '../../services/api';
@@ -126,6 +129,13 @@ function isPreviewable(mimeType: string): boolean {
   );
 }
 
+interface UploadEntry {
+  fileName: string;
+  progress: number;
+  status: 'uploading' | 'done' | 'error';
+  error?: string;
+}
+
 interface Props {
   spaceId: string;
 }
@@ -144,9 +154,12 @@ export function FileBrowser({ spaceId }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   // Upload state
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploads, setUploads] = useState<Map<string, UploadEntry>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploading = useMemo(
+    () => [...uploads.values()].some((u) => u.status === 'uploading'),
+    [uploads],
+  );
 
   // Create folder state
   const [showNewFolder, setShowNewFolder] = useState(false);
@@ -230,27 +243,91 @@ export function FileBrowser({ spaceId }: Props) {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
-    setUploading(true);
+    // Snapshot the files before clearing the input (clearing invalidates the live FileList)
+    const filesToUpload = Array.from(fileList);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+
     setError(null);
-    try {
-      for (let i = 0; i < fileList.length; i++) {
-        await api.uploadSpaceFile(spaceId, fileList[i], parentId, (p) =>
-          setUploadProgress(p),
-        );
+
+    // Generate stable keys for each file
+    const now = Date.now();
+    const entryKeys = filesToUpload.map((f, i) => f.name + '-' + now + '-' + i);
+
+    // Create entries for each file
+    setUploads((prev) => {
+      const next = new Map(prev);
+      for (let i = 0; i < filesToUpload.length; i++) {
+        next.set(entryKeys[i], {
+          fileName: filesToUpload[i].name,
+          progress: 0,
+          status: 'uploading',
+        });
       }
-      await loadFiles();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Upload failed');
-    } finally {
-      setUploading(false);
-      setUploadProgress(null);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-    }
+      return next;
+    });
+
+    // Upload all files concurrently
+    const promises = filesToUpload.map(async (file, i) => {
+      const key = entryKeys[i];
+      try {
+        await api.uploadSpaceFile(spaceId, file, parentId, (p) => {
+          setUploads((prev) => {
+            const next = new Map(prev);
+            const entry = next.get(key);
+            if (entry) next.set(key, { ...entry, progress: p });
+            return next;
+          });
+        });
+        setUploads((prev) => {
+          const next = new Map(prev);
+          const entry = next.get(key);
+          if (entry) next.set(key, { ...entry, progress: 100, status: 'done' });
+          return next;
+        });
+      } catch (err) {
+        setUploads((prev) => {
+          const next = new Map(prev);
+          const entry = next.get(key);
+          if (entry)
+            next.set(key, {
+              ...entry,
+              status: 'error',
+              error: err instanceof Error ? err.message : 'Upload failed',
+            });
+          return next;
+        });
+      }
+    });
+
+    await Promise.all(promises);
+    await loadFiles();
+  };
+
+  const dismissUpload = (key: string) => {
+    setUploads((prev) => {
+      const next = new Map(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  const dismissFinishedUploads = () => {
+    setUploads((prev) => {
+      const next = new Map(prev);
+      for (const [k, v] of next) {
+        if (v.status !== 'uploading') next.delete(k);
+      }
+      return next;
+    });
   };
 
   const handleDownload = async (file: SpaceFile) => {
     try {
-      await api.downloadSpaceFile(spaceId, file.id, file.name);
+      if (file.is_folder) {
+        await api.downloadSpaceFolderAsZip(spaceId, file.id, file.name);
+      } else {
+        await api.downloadSpaceFile(spaceId, file.id, file.name);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Download failed');
     }
@@ -559,12 +636,9 @@ export function FileBrowser({ spaceId }: Props) {
                   size='sm'
                   variant='flat'
                   startContent={<FontAwesomeIcon icon={faUpload} />}
-                  isLoading={uploading}
                   onPress={() => fileInputRef.current?.click()}
                 >
-                  {uploading && uploadProgress !== null
-                    ? `${uploadProgress}%`
-                    : 'Upload'}
+                  Upload
                 </Button>
                 <input
                   ref={fileInputRef}
@@ -767,6 +841,16 @@ export function FileBrowser({ spaceId }: Props) {
                   onDrop={
                     file.is_folder ? (e) => handleDrop(e, file) : undefined
                   }
+                  onDoubleClick={
+                    file.is_folder
+                      ? (e) => {
+                          const t = e.target as HTMLElement;
+                          if (t.closest('button, input, [role="button"]'))
+                            return;
+                          navigateTo(file.id);
+                        }
+                      : undefined
+                  }
                   className={`grid grid-cols-[1fr_100px_120px_120px_220px] gap-2 items-center px-3 py-2 text-sm rounded-md hover:bg-content2/50 transition-colors group ${
                     dragId === file.id ? 'opacity-40' : ''
                   } ${dropTargetId === file.id ? 'bg-primary/15 ring-1 ring-primary/40' : ''}`}
@@ -865,6 +949,20 @@ export function FileBrowser({ spaceId }: Props) {
                         }}
                       >
                         <FontAwesomeIcon icon={faPen} className='text-xs' />
+                      </Button>
+                    )}
+                    {file.is_folder && (
+                      <Button
+                        isIconOnly
+                        size='sm'
+                        variant='light'
+                        title='Download as ZIP'
+                        onPress={() => handleDownload(file)}
+                      >
+                        <FontAwesomeIcon
+                          icon={faDownload}
+                          className='text-xs'
+                        />
                       </Button>
                     )}
                     {!file.is_folder && (
@@ -1262,6 +1360,80 @@ export function FileBrowser({ spaceId }: Props) {
           </ModalBody>
         </ModalContent>
       </Modal>
+
+      {/* Floating upload progress card */}
+      {uploads.size > 0 && (
+        <div className='fixed bottom-4 right-4 z-50 w-80 bg-content1 border border-default-200 rounded-xl shadow-lg overflow-hidden'>
+          <div className='flex items-center justify-between px-3 py-2 border-b border-default-100'>
+            <span className='text-xs font-semibold text-foreground'>
+              {uploading
+                ? `Uploading (${[...uploads.values()].filter((u) => u.status === 'uploading').length})`
+                : 'Uploads complete'}
+            </span>
+            {!uploading && (
+              <Button
+                isIconOnly
+                size='sm'
+                variant='light'
+                onPress={dismissFinishedUploads}
+                title='Dismiss'
+              >
+                <FontAwesomeIcon icon={faXmark} className='text-xs' />
+              </Button>
+            )}
+          </div>
+          <div className='max-h-60 overflow-y-auto divide-y divide-default-50'>
+            {[...uploads.entries()].map(([key, entry]) => (
+              <div key={key} className='px-3 py-2 flex flex-col gap-1'>
+                <div className='flex items-center justify-between gap-2'>
+                  <span className='text-xs text-default-700 truncate'>
+                    {entry.fileName}
+                  </span>
+                  {entry.status === 'done' && (
+                    <FontAwesomeIcon
+                      icon={faCheck}
+                      className='text-xs text-success shrink-0'
+                    />
+                  )}
+                  {entry.status === 'error' && (
+                    <Button
+                      isIconOnly
+                      size='sm'
+                      variant='light'
+                      onPress={() => dismissUpload(key)}
+                      title='Dismiss'
+                    >
+                      <FontAwesomeIcon
+                        icon={faXmark}
+                        className='text-xs text-danger'
+                      />
+                    </Button>
+                  )}
+                </div>
+                {entry.status === 'uploading' && (
+                  <Progress
+                    size='sm'
+                    value={entry.progress}
+                    color='primary'
+                    aria-label={`Uploading ${entry.fileName}`}
+                    classNames={{ base: 'w-full' }}
+                  />
+                )}
+                {entry.status === 'error' && (
+                  <span className='text-xs text-danger'>
+                    {entry.error || 'Upload failed'}
+                  </span>
+                )}
+                {entry.status === 'uploading' && (
+                  <span className='text-xs text-default-400'>
+                    {entry.progress}%
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

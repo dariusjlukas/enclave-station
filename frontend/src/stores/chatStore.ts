@@ -29,9 +29,12 @@ interface ChatState {
   // Spaces
   spaces: Space[];
   activeView: SidebarView | null;
+  sidePanelCollapsed: boolean;
   activeToolView:
     | { type: 'files'; spaceId: string }
     | { type: 'calendar'; spaceId: string }
+    | { type: 'tasks'; spaceId: string }
+    | { type: 'wiki'; spaceId: string }
     | null;
 
   // Server state
@@ -79,10 +82,13 @@ interface ChatState {
   updateSpace: (updates: Partial<Space> & { id: string }) => void;
   removeSpace: (spaceId: string) => void;
   setActiveView: (view: SidebarView | null) => void;
+  setSidePanelCollapsed: (collapsed: boolean) => void;
   setActiveToolView: (
     view:
       | { type: 'files'; spaceId: string }
       | { type: 'calendar'; spaceId: string }
+      | { type: 'tasks'; spaceId: string }
+      | { type: 'wiki'; spaceId: string }
       | null,
   ) => void;
   setUnreadCounts: (counts: Record<string, number>) => void;
@@ -141,6 +147,7 @@ export const useChatStore = create<ChatState>((set) => ({
   uploadProgress: null,
   spaces: [],
   activeView: null,
+  sidePanelCollapsed: false,
   activeToolView: null,
   serverArchived: false,
   serverLockedDown: false,
@@ -348,7 +355,9 @@ export const useChatStore = create<ChatState>((set) => ({
           : state.activeView,
     })),
 
-  setActiveView: (view) => set({ activeView: view }),
+  setActiveView: (view) => set({ activeView: view, sidePanelCollapsed: false }),
+
+  setSidePanelCollapsed: (collapsed) => set({ sidePanelCollapsed: collapsed }),
 
   setActiveToolView: (view) =>
     set((state) => ({

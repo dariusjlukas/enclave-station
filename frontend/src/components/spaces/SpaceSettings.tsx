@@ -21,6 +21,7 @@ import {
   faFolderOpen,
   faCalendar,
   faListCheck,
+  faBook,
 } from '@fortawesome/free-solid-svg-icons';
 import Cropper from 'react-easy-crop';
 import type { Area } from 'react-easy-crop';
@@ -321,9 +322,17 @@ export function SpaceSettings({ space, onClose }: Props) {
     {
       name: 'tasks',
       label: 'Tasks',
-      description: 'Task tracking and to-do lists',
+      description: 'Kanban boards for task tracking and project management',
       icon: faListCheck,
-      available: false,
+      available: true,
+    },
+    {
+      name: 'wiki',
+      label: 'Wiki',
+      description:
+        'Collaborative documentation with rich text editing and version history',
+      icon: faBook,
+      available: true,
     },
   ];
 

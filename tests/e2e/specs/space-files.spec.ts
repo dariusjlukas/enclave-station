@@ -162,6 +162,57 @@ test.describe("File browser basics", () => {
   });
 });
 
+test.describe("Folder zip download", () => {
+  test("folder row shows download-as-zip button", async ({
+    page,
+    workerConfig,
+  }) => {
+    const space = await apiCreateSpace(
+      "TestSpace",
+      admin.token,
+      undefined,
+      workerConfig.apiConfig,
+    );
+    await apiEnableFilesTool(
+      space.id,
+      admin.token,
+      workerConfig.apiConfig,
+    );
+    const folder = await apiCreateSpaceFolder(
+      space.id,
+      "Downloads",
+      admin.token,
+      undefined,
+      workerConfig.apiConfig,
+    );
+    await apiUploadSpaceFile(
+      space.id,
+      "file.txt",
+      "content",
+      admin.token,
+      folder.id,
+      workerConfig.apiConfig,
+    );
+
+    await loginViaToken(page, admin.token);
+    await openFileBrowser(page, "TestSpace");
+
+    // Hover over the folder row to reveal action buttons
+    const row = page.locator("text=Downloads").locator("../..");
+    await row.hover();
+
+    // The zip download button should be visible
+    const zipBtn = row.getByTitle("Download as ZIP");
+    await expect(zipBtn).toBeVisible({ timeout: 5_000 });
+
+    // Click and verify a download is initiated
+    const downloadPromise = page.waitForEvent("download");
+    await zipBtn.click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("Downloads.zip");
+  });
+});
+
 test.describe("File permissions", () => {
   test("permission badge shows in header", async ({ page, workerConfig }) => {
     const space = await apiCreateSpace(

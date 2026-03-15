@@ -380,6 +380,22 @@ void WsHandler<SSL>::handle_message(uWS::WebSocket<SSL, true, WsUserData>* ws, s
             handle_add_reaction(ws, data, j);
         } else if (type == "remove_reaction") {
             handle_remove_reaction(ws, data, j);
+        } else if (type == "wiki_join") {
+            std::string page_id = j.at("page_id");
+            ws->subscribe("wiki:" + page_id);
+        } else if (type == "wiki_leave") {
+            std::string page_id = j.at("page_id");
+            ws->unsubscribe("wiki:" + page_id);
+        } else if (type == "wiki_update" || type == "wiki_awareness" ||
+                   type == "wiki_sync_step1" || type == "wiki_sync_step2") {
+            std::string page_id = j.at("page_id");
+            std::string topic = "wiki:" + page_id;
+            // Add sender info
+            json relay = j;
+            relay["user_id"] = data->user_id;
+            relay["username"] = data->username;
+            std::string msg_str = relay.dump();
+            ws->publish(topic, msg_str, uWS::OpCode::TEXT);
         } else if (type == "ping") {
             json pong = {{"type", "pong"}};
             ws->send(pong.dump(), uWS::OpCode::TEXT);

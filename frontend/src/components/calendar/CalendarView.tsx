@@ -141,6 +141,7 @@ export function CalendarView({ spaceId }: Props) {
     null,
   );
   const [createDate, setCreateDate] = useState<Date | null>(null);
+  const [createEndDate, setCreateEndDate] = useState<Date | null>(null);
   const [showPermissions, setShowPermissions] = useState(false);
 
   const range = useMemo(
@@ -148,13 +149,16 @@ export function CalendarView({ spaceId }: Props) {
     [viewMode, currentDate],
   );
 
+  const rangeStartTime = range.start.getTime();
+  const rangeEndTime = range.end.getTime();
+
   const loadEvents = useCallback(async () => {
     setLoading(true);
     try {
       const data = await api.listCalendarEvents(
         spaceId,
-        range.start.toISOString(),
-        range.end.toISOString(),
+        new Date(rangeStartTime).toISOString(),
+        new Date(rangeEndTime).toISOString(),
       );
       setEvents(data.events);
       setMyPermission(data.my_permission);
@@ -163,7 +167,7 @@ export function CalendarView({ spaceId }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [spaceId, range.start.getTime(), range.end.getTime()]);
+  }, [spaceId, rangeStartTime, rangeEndTime]);
 
   useEffect(() => {
     loadEvents();
@@ -182,6 +186,13 @@ export function CalendarView({ spaceId }: Props) {
   const handleDayClick = (date: Date) => {
     if (!canEdit || space?.is_archived) return;
     setCreateDate(date);
+    setCreateEndDate(null);
+  };
+
+  const handleDayRangeSelect = (start: Date, end: Date) => {
+    if (!canEdit || space?.is_archived) return;
+    setCreateDate(start);
+    setCreateEndDate(end);
   };
 
   const handleEventClick = (event: CalendarEvent) => {
@@ -191,6 +202,7 @@ export function CalendarView({ spaceId }: Props) {
   const handleCloseModal = () => {
     setSelectedEvent(null);
     setCreateDate(null);
+    setCreateEndDate(null);
   };
 
   const handleSaved = () => {
@@ -236,9 +248,10 @@ export function CalendarView({ spaceId }: Props) {
         </div>
 
         <div className='flex items-center gap-2'>
-          <ButtonGroup size='sm' variant='flat'>
+          <ButtonGroup size='sm'>
             <Button
               onPress={() => setViewMode('month')}
+              variant={viewMode === 'month' ? 'solid' : 'flat'}
               color={viewMode === 'month' ? 'primary' : 'default'}
               title='Month view'
             >
@@ -247,6 +260,7 @@ export function CalendarView({ spaceId }: Props) {
             </Button>
             <Button
               onPress={() => setViewMode('week')}
+              variant={viewMode === 'week' ? 'solid' : 'flat'}
               color={viewMode === 'week' ? 'primary' : 'default'}
               title='Week view'
             >
@@ -255,6 +269,7 @@ export function CalendarView({ spaceId }: Props) {
             </Button>
             <Button
               onPress={() => setViewMode('day')}
+              variant={viewMode === 'day' ? 'solid' : 'flat'}
               color={viewMode === 'day' ? 'primary' : 'default'}
               title='Day view'
             >
@@ -263,6 +278,7 @@ export function CalendarView({ spaceId }: Props) {
             </Button>
             <Button
               onPress={() => setViewMode('agenda')}
+              variant={viewMode === 'agenda' ? 'solid' : 'flat'}
               color={viewMode === 'agenda' ? 'primary' : 'default'}
               title='Agenda view'
             >
@@ -309,6 +325,7 @@ export function CalendarView({ spaceId }: Props) {
                 events={events}
                 currentDate={currentDate}
                 onDayClick={handleDayClick}
+                onDayRangeSelect={handleDayRangeSelect}
                 onEventClick={handleEventClick}
               />
             )}
@@ -341,6 +358,7 @@ export function CalendarView({ spaceId }: Props) {
           spaceId={spaceId}
           event={selectedEvent}
           initialDate={createDate}
+          initialEndDate={createEndDate}
           canEdit={canEdit}
           onClose={handleCloseModal}
           onSaved={handleSaved}

@@ -37,6 +37,10 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+function dayOf(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const HOUR_HEIGHT = 60;
 
@@ -51,18 +55,22 @@ export function DayView({
     currentDate.getMonth(),
     currentDate.getDate(),
   );
+  const dayEnd = dayOf(dayStart);
 
+  // Categorize events that overlap this day
   const allDayEvents: CalendarEvent[] = [];
   const timedEvents: CalendarEvent[] = [];
   for (const ev of events) {
-    const s = new Date(ev.start_time);
-    const e = new Date(ev.end_time);
+    const s = dayOf(new Date(ev.start_time));
+    const e = dayOf(new Date(ev.end_time));
     const inDay =
-      isSameDay(s, dayStart) ||
-      isSameDay(e, dayStart) ||
+      isSameDay(s, dayEnd) ||
+      isSameDay(e, dayEnd) ||
       (s < dayStart && e > dayStart);
     if (!inDay) continue;
-    if (ev.all_day) {
+
+    const isMultiDay = !isSameDay(s, e);
+    if (ev.all_day || isMultiDay) {
       allDayEvents.push(ev);
     } else {
       timedEvents.push(ev);
@@ -71,7 +79,7 @@ export function DayView({
 
   return (
     <div className='flex flex-col h-full'>
-      {/* All-day events */}
+      {/* All-day / multi-day events */}
       {allDayEvents.length > 0 && (
         <div className='border-b border-default-200 p-2 space-y-1'>
           <p className='text-xs text-default-400 mb-1'>All day</p>

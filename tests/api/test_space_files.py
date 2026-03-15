@@ -1,6 +1,7 @@
-"""Tests for space file endpoints: CRUD, permissions, versions, admin storage."""
+"""Tests for space file endpoints: CRUD, permissions, versions, admin storage, zip download."""
 
 import io
+import zipfile
 from conftest import pki_register, auth_header
 
 
@@ -433,4 +434,90 @@ class TestAdminStorage:
 
     def test_non_admin_cannot_access_storage(self, client, admin_user, regular_user):
         r = client.get("/api/admin/storage", headers=regular_user["headers"])
+        assert r.status_code == 403
+
+
+class TestSpaceFileFolderZipDownload:
+    def test_download_folder_as_zip(self, client, admin_user):
+        sp = _create_space(client, admin_user["headers"])
+        r = client.post(f"/api/spaces/{sp['id']}/files/folder",
+                        json={"name": "Docs", "parent_id": ""},
+                        headers=admin_user["headers"])
+        folder_id = r.json()["id"]
+
+        _upload_file(client, sp["id"], admin_user["headers"],
+                     "a.txt", content=b"alpha", parent_id=folder_id)
+        _upload_file(client, sp["id"], admin_user["headers"],
+                     "b.txt", content=b"bravo", parent_id=folder_id)
+
+        r = client.get(f"/api/spaces/{sp['id']}/files/{folder_id}/download-zip",
+                       headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert r.headers["content-type"] == "application/zip"
+        assert "Docs.zip" in r.headers.get("content-disposition", "")
+
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        names = sorted(zf.namelist())
+        assert names == ["a.txt", "b.txt"]
+        assert zf.read("a.txt") == b"alpha"
+        assert zf.read("b.txt") == b"bravo"
+
+    def test_download_nested_folders_as_zip(self, client, admin_user):
+        sp = _create_space(client, admin_user["headers"])
+        r = client.post(f"/api/spaces/{sp['id']}/files/folder",
+                        json={"name": "Root", "parent_id": ""},
+                        headers=admin_user["headers"])
+        root_id = r.json()["id"]
+
+        r = client.post(f"/api/spaces/{sp['id']}/files/folder",
+                        json={"name": "Sub", "parent_id": root_id},
+                        headers=admin_user["headers"])
+        sub_id = r.json()["id"]
+
+        _upload_file(client, sp["id"], admin_user["headers"],
+                     "top.txt", content=b"top", parent_id=root_id)
+        _upload_file(client, sp["id"], admin_user["headers"],
+                     "deep.txt", content=b"deep", parent_id=sub_id)
+
+        r = client.get(f"/api/spaces/{sp['id']}/files/{root_id}/download-zip",
+                       headers=admin_user["headers"])
+        assert r.status_code == 200
+
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        names = sorted(zf.namelist())
+        assert names == ["Sub/deep.txt", "top.txt"]
+        assert zf.read("top.txt") == b"top"
+        assert zf.read("Sub/deep.txt") == b"deep"
+
+    def test_download_empty_folder_as_zip(self, client, admin_user):
+        sp = _create_space(client, admin_user["headers"])
+        r = client.post(f"/api/spaces/{sp['id']}/files/folder",
+                        json={"name": "Empty", "parent_id": ""},
+                        headers=admin_user["headers"])
+        folder_id = r.json()["id"]
+
+        r = client.get(f"/api/spaces/{sp['id']}/files/{folder_id}/download-zip",
+                       headers=admin_user["headers"])
+        assert r.status_code == 200
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        assert zf.namelist() == []
+
+    def test_download_zip_on_file_returns_404(self, client, admin_user):
+        sp = _create_space(client, admin_user["headers"])
+        r = _upload_file(client, sp["id"], admin_user["headers"])
+        file_id = r.json()["id"]
+
+        r = client.get(f"/api/spaces/{sp['id']}/files/{file_id}/download-zip",
+                       headers=admin_user["headers"])
+        assert r.status_code == 404
+
+    def test_non_member_cannot_download_zip(self, client, admin_user, regular_user):
+        sp = _create_space(client, admin_user["headers"], "Private")
+        r = client.post(f"/api/spaces/{sp['id']}/files/folder",
+                        json={"name": "Docs", "parent_id": ""},
+                        headers=admin_user["headers"])
+        folder_id = r.json()["id"]
+
+        r = client.get(f"/api/spaces/{sp['id']}/files/{folder_id}/download-zip",
+                       headers=regular_user["headers"])
         assert r.status_code == 403
