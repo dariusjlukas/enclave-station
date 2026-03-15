@@ -75,7 +75,11 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                                        {"user_id", f.user_id}, {"username", f.username},
                                        {"file_id", f.file_id}, {"file_name", f.file_name},
                                        {"file_type", f.file_type}, {"file_size", f.file_size},
-                                       {"created_at", f.created_at}});
+                                       {"created_at", f.created_at},
+                                       {"source", f.source},
+                                       {"space_id", f.space_id},
+                                       {"space_name", f.space_name},
+                                       {"is_folder", f.is_folder}});
                     }
                     json resp = {{"type", "files"}, {"results", arr}};
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
@@ -110,13 +114,13 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 } else if (type == "wiki") {
                     auto user = db.find_user_by_id(user_id);
                     bool is_admin = user && (user->role == "admin" || user->role == "owner");
+                    std::vector<Database::WikiSearchResult> results;
                     if (query.empty()) {
-                        json resp = {{"type", "wiki"}, {"results", json::array()}};
-                        res->writeHeader("Content-Type", "application/json")->end(resp.dump());
-                        return;
+                        results = db.browse_wiki_pages(user_id, is_admin, limit, offset);
+                    } else {
+                        std::string tsquery = build_tsquery(terms, mode, "simple");
+                        results = db.search_wiki_pages(tsquery, query, user_id, is_admin, limit, offset);
                     }
-                    std::string tsquery = build_tsquery(terms, mode);
-                    auto results = db.search_wiki_pages(tsquery, user_id, is_admin, limit, offset);
                     json arr = json::array();
                     for (const auto& w : results) {
                         arr.push_back({{"id", w.id}, {"space_id", w.space_id},
@@ -192,7 +196,11 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                                        {"user_id", f.user_id}, {"username", f.username},
                                        {"file_id", f.file_id}, {"file_name", f.file_name},
                                        {"file_type", f.file_type}, {"file_size", f.file_size},
-                                       {"created_at", f.created_at}});
+                                       {"created_at", f.created_at},
+                                       {"source", f.source},
+                                       {"space_id", f.space_id},
+                                       {"space_name", f.space_name},
+                                       {"is_folder", f.is_folder}});
                     }
                     json resp = {{"type", "files"}, {"results", arr}};
                     res->writeHeader("Content-Type", "application/json")->end(resp.dump());
@@ -333,12 +341,13 @@ std::vector<std::string> SearchHandler<SSL>::split_terms(const std::string& inpu
 
 template <bool SSL>
 std::string SearchHandler<SSL>::build_tsquery(const std::vector<std::string>& terms,
-                                              const std::string& mode) {
+                                              const std::string& mode,
+                                              const std::string& config) {
     std::string op = (mode == "or") ? " || " : " && ";
     std::string result;
     for (size_t i = 0; i < terms.size(); i++) {
         if (i > 0) result += op;
-        result += "websearch_to_tsquery('english', " + quote_literal(terms[i]) + ")";
+        result += "websearch_to_tsquery('" + config + "', " + quote_literal(terms[i]) + ")";
     }
     return result;
 }

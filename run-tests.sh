@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+CI="${CI:-}"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$SCRIPT_DIR/backend"
 FRONTEND_DIR="$SCRIPT_DIR/frontend"
@@ -229,6 +231,13 @@ printf "${BOLD}Chat App Test Runner${NC}\n"
 # =====================================================================
 
 FE_PARALLEL_CHECKS=()
+
+# Run the formatter before checking, so format:check only fails on unfixable issues
+# Skip in CI (e.g. GitHub Actions) — CI should only check, not fix
+if [ "$RUN_FORMAT" = true ] && [ "$CI" != "true" ]; then
+    printf "\n${BLUE}${BOLD}=== Running Frontend Formatter ===${NC}\n"
+    (cd "$FRONTEND_DIR" && npm run format) || true
+fi
 
 if [ "$RUN_LINT" = true ]; then
     run_check_bg "Frontend Lint" bash -c "cd '$FRONTEND_DIR' && npm run lint"

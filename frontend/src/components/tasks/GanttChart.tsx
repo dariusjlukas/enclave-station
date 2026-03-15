@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 
 function parseDate(s: string): Date {
   // PostgreSQL timestamptz::text uses space separator and +00 offset (no colon)
@@ -82,11 +82,19 @@ export function GanttChart({
   const didDrag = useRef(false);
   const autoScrollRAF = useRef<number>(0);
   const lastMouseX = useRef(0);
+  const dragScrollOffset = useRef(0);
   const [dragInfo, setDragInfo] = useState<{
     taskId: string;
     type: 'move' | 'resize';
     dx: number;
   } | null>(null);
+
+  // Dynamic range expansion during drag
+  const [dragExpandLeft, setDragExpandLeft] = useState(0);
+  const [dragExpandRight, setDragExpandRight] = useState(0);
+  const prevExpandLeftRef = useRef(0);
+  const prevExpandRightRef = useRef(0);
+  const lastExpandTimeRef = useRef(0);
 
   const cellWidth = zoom === 'day' ? 32 : zoom === 'week' ? 100 : 120;
 
@@ -129,16 +137,16 @@ export function GanttChart({
       }
     }
 
-    // Pad range
-    minDate = addDays(minDate, -3);
-    maxDate = addDays(maxDate, 7);
+    // Pad range (include drag expansion for live timeline growth)
+    minDate = addDays(minDate, -3 - dragExpandLeft);
+    maxDate = addDays(maxDate, 7 + dragExpandRight);
 
     return {
       rangeStart: minDate,
       rangeEnd: maxDate,
       totalDays: daysBetween(minDate, maxDate),
     };
-  }, [tasks]);
+  }, [tasks, dragExpandLeft, dragExpandRight]);
 
   // Generate date header labels
   const dateHeaders = useMemo(() => {
@@ -210,8 +218,10 @@ export function GanttChart({
 
   // Auto-scroll the timeline when dragging near edges.
   // Reads lastMouseX ref each frame so it always uses the latest cursor position.
+  // When the scroll hits its boundary, dynamically expands the timeline range.
   const startAutoScroll = () => {
     cancelAnimationFrame(autoScrollRAF.current);
+    const expandAmount = zoom === 'day' ? 3 : zoom === 'week' ? 7 : 30;
 
     const tick = () => {
       const el = scrollRef.current;
@@ -221,23 +231,48 @@ export function GanttChart({
       const edgeZone = 60;
       const maxSpeed = 14;
       const mx = lastMouseX.current;
+      const now = Date.now();
 
       const distFromLeft = mx - rect.left;
       const distFromRight = rect.right - mx;
 
-      if (distFromLeft < edgeZone && el.scrollLeft > 0) {
-        const speed = Math.round(
-          maxSpeed * (1 - Math.max(0, distFromLeft) / edgeZone),
-        );
-        el.scrollLeft -= speed;
-      } else if (
-        distFromRight < edgeZone &&
-        el.scrollLeft < el.scrollWidth - el.clientWidth
-      ) {
-        const speed = Math.round(
-          maxSpeed * (1 - Math.max(0, distFromRight) / edgeZone),
-        );
-        el.scrollLeft += speed;
+      let scrolled = false;
+
+      if (distFromLeft < edgeZone) {
+        if (el.scrollLeft > 1) {
+          const speed = Math.round(
+            maxSpeed * (1 - Math.max(0, distFromLeft) / edgeZone),
+          );
+          const before = el.scrollLeft;
+          el.scrollLeft -= speed;
+          dragScrollOffset.current += el.scrollLeft - before;
+          scrolled = true;
+        } else if (now - lastExpandTimeRef.current > 100) {
+          // At left boundary — expand the timeline range leftward
+          lastExpandTimeRef.current = now;
+          setDragExpandLeft((prev) => prev + expandAmount);
+        }
+      } else if (distFromRight < edgeZone) {
+        if (el.scrollLeft < el.scrollWidth - el.clientWidth - 1) {
+          const speed = Math.round(
+            maxSpeed * (1 - Math.max(0, distFromRight) / edgeZone),
+          );
+          const before = el.scrollLeft;
+          el.scrollLeft += speed;
+          dragScrollOffset.current += el.scrollLeft - before;
+          scrolled = true;
+        } else if (now - lastExpandTimeRef.current > 100) {
+          // At right boundary — expand the timeline range rightward
+          lastExpandTimeRef.current = now;
+          setDragExpandRight((prev) => prev + expandAmount);
+        }
+      }
+
+      // Update bar position to follow auto-scroll
+      if (scrolled) {
+        const newDx =
+          lastMouseX.current - dragStartX.current + dragScrollOffset.current;
+        setDragInfo((prev) => (prev ? { ...prev, dx: newDx } : null));
       }
 
       autoScrollRAF.current = requestAnimationFrame(tick);
@@ -248,6 +283,43 @@ export function GanttChart({
   const stopAutoScroll = () => {
     cancelAnimationFrame(autoScrollRAF.current);
   };
+
+  // When the timeline expands leftward, all content shifts right.
+  // Compensate by adjusting scrollLeft so the view stays stable.
+  useLayoutEffect(() => {
+    if (dragExpandLeft > prevExpandLeftRef.current && scrollRef.current) {
+      const diff = dragExpandLeft - prevExpandLeftRef.current;
+      const pixelShift =
+        zoom === 'day'
+          ? diff * cellWidth
+          : zoom === 'week'
+            ? (diff / 7) * cellWidth
+            : (diff / 30) * cellWidth;
+      scrollRef.current.scrollLeft += pixelShift;
+    }
+    prevExpandLeftRef.current = dragExpandLeft;
+  }, [dragExpandLeft, cellWidth, zoom]);
+
+  // When the timeline expands rightward, scroll into the new space immediately
+  // and update the bar position so it follows.
+  useLayoutEffect(() => {
+    if (dragExpandRight > prevExpandRightRef.current && scrollRef.current) {
+      const diff = dragExpandRight - prevExpandRightRef.current;
+      const pixelShift =
+        zoom === 'day'
+          ? diff * cellWidth
+          : zoom === 'week'
+            ? (diff / 7) * cellWidth
+            : (diff / 30) * cellWidth;
+      scrollRef.current.scrollLeft += pixelShift;
+      dragScrollOffset.current += pixelShift;
+      // Update bar position so it follows the scroll
+      const newDx =
+        lastMouseX.current - dragStartX.current + dragScrollOffset.current;
+      setDragInfo((prev) => (prev ? { ...prev, dx: newDx } : null));
+    }
+    prevExpandRightRef.current = dragExpandRight;
+  }, [dragExpandRight, cellWidth, zoom]);
 
   // Drag handlers for moving/resizing bars
   const handleBarMouseDown = (
@@ -263,11 +335,12 @@ export function GanttChart({
     dragOrigStart.current = task.start_date;
     dragOrigDuration.current = task.duration_days || 1;
     didDrag.current = false;
+    dragScrollOffset.current = 0;
 
     const onMouseMove = (me: MouseEvent) => {
       didDrag.current = true;
       lastMouseX.current = me.clientX;
-      const dx = me.clientX - dragStartX.current;
+      const dx = me.clientX - dragStartX.current + dragScrollOffset.current;
       setDragInfo({ taskId, type, dx });
     };
 
@@ -279,13 +352,15 @@ export function GanttChart({
       window.removeEventListener('mouseup', onMouseUp);
       stopAutoScroll();
 
-      const dx = me.clientX - dragStartX.current;
+      const dx = me.clientX - dragStartX.current + dragScrollOffset.current;
       const daysDelta = Math.round(
         (dx / cellWidth) * (zoom === 'day' ? 1 : zoom === 'week' ? 7 : 30),
       );
 
       if (!didDrag.current || daysDelta === 0) {
         setDragInfo(null);
+        setDragExpandLeft(0);
+        setDragExpandRight(0);
         return;
       }
 
@@ -308,6 +383,8 @@ export function GanttChart({
         // ignore
       }
       setDragInfo(null);
+      setDragExpandLeft(0);
+      setDragExpandRight(0);
     };
 
     window.addEventListener('mousemove', onMouseMove);
@@ -340,6 +417,78 @@ export function GanttChart({
       // ignore
     }
   };
+
+  // Scroll-wheel zoom: zoom in/out keeping the cursor position stable
+  const handleWheel = useCallback(
+    (e: React.WheelEvent) => {
+      // Only zoom on vertical scroll (not horizontal panning)
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      if (e.deltaY === 0) return;
+      e.preventDefault();
+
+      const el = scrollRef.current;
+      if (!el) return;
+
+      const zoomIn = e.deltaY < 0;
+      const newZoom: ZoomLevel = zoomIn
+        ? zoom === 'month'
+          ? 'week'
+          : zoom === 'week'
+            ? 'day'
+            : 'day'
+        : zoom === 'day'
+          ? 'week'
+          : zoom === 'week'
+            ? 'month'
+            : 'month';
+
+      if (newZoom === zoom) return;
+
+      // Find the content-x under the cursor before zoom
+      const rect = el.getBoundingClientRect();
+      const cursorOffset = e.clientX - rect.left; // px from left edge of viewport
+      const contentX = el.scrollLeft + cursorOffset; // px in content coords
+      const fraction = contentX / (timelineWidth || 1); // fraction of timeline
+
+      // Compute new timeline width after zoom change
+      const newCellWidth =
+        newZoom === 'day' ? 32 : newZoom === 'week' ? 100 : 120;
+      let newTimelineWidth: number;
+      if (newZoom === 'day') {
+        newTimelineWidth = totalDays * newCellWidth;
+      } else if (newZoom === 'week') {
+        // Approximate header count at week zoom
+        let count = 0;
+        let d = new Date(rangeStart);
+        while (d < rangeEnd) {
+          count++;
+          d = addDays(d, 7);
+        }
+        newTimelineWidth = count * newCellWidth;
+      } else {
+        let count = 0;
+        let d = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), 1);
+        while (d < rangeEnd) {
+          count++;
+          d = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+        }
+        newTimelineWidth = count * newCellWidth;
+      }
+
+      // Scroll so that the same fraction stays under the cursor
+      const newContentX = fraction * newTimelineWidth;
+      const newScrollLeft = newContentX - cursorOffset;
+
+      setZoom(newZoom);
+      // Defer scroll adjustment to after render
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollLeft = Math.max(0, newScrollLeft);
+        }
+      });
+    },
+    [zoom, timelineWidth, totalDays, rangeStart, rangeEnd],
+  );
 
   // Click-drag on the date header to pan the timeline
   const handleHeaderMouseDown = (e: React.MouseEvent) => {
@@ -518,11 +667,15 @@ export function GanttChart({
         </div>
 
         {/* Right panel: timeline */}
-        <div ref={scrollRef} className='flex-1 overflow-auto'>
+        <div
+          ref={scrollRef}
+          className='flex-1 overflow-auto'
+          onWheel={handleWheel}
+        >
           <div style={{ minWidth: timelineWidth, position: 'relative' }}>
             {/* Date headers — click-drag to pan */}
             <div
-              className='sticky top-0 z-10 bg-content1 border-b border-divider flex flex-col cursor-grab active:cursor-grabbing select-none'
+              className='sticky top-0 z-10 bg-content1 border-b border-divider flex flex-col cursor-ew-resize select-none'
               style={{ height: HEADER_HEIGHT }}
               onMouseDown={handleHeaderMouseDown}
             >
@@ -675,7 +828,7 @@ export function GanttChart({
                   >
                     {/* Bar */}
                     <div
-                      className='h-full w-full rounded cursor-pointer relative overflow-hidden'
+                      className='h-full w-full rounded cursor-grab active:cursor-grabbing relative overflow-hidden'
                       style={{ backgroundColor: `${barColor}30` }}
                       onClick={() => {
                         if (!didDrag.current) handleBarClick(task.id);
@@ -775,11 +928,32 @@ export function GanttChart({
                   const toIdx = taskIndex[dep.task_id];
                   if (fromIdx === undefined || toIdx === undefined) return null;
 
-                  const fromX =
-                    dateToX(parseDate(fromTask.start_date)) +
-                    durationToWidth(fromTask.duration_days || 1);
+                  let fromStartX = dateToX(parseDate(fromTask.start_date));
+                  let fromWidth = durationToWidth(fromTask.duration_days || 1);
+                  let toStartX = dateToX(parseDate(toTask.start_date));
+
+                  // Apply live drag offset to arrows
+                  if (dragInfo) {
+                    if (dragInfo.taskId === fromTask.id) {
+                      if (dragInfo.type === 'move') {
+                        fromStartX += dragInfo.dx;
+                      } else if (dragInfo.type === 'resize') {
+                        fromWidth = Math.max(
+                          cellWidth,
+                          fromWidth + dragInfo.dx,
+                        );
+                      }
+                    }
+                    if (dragInfo.taskId === toTask.id) {
+                      if (dragInfo.type === 'move') {
+                        toStartX += dragInfo.dx;
+                      }
+                    }
+                  }
+
+                  const fromX = fromStartX + fromWidth;
                   const fromY = fromIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
-                  const toX = dateToX(parseDate(toTask.start_date));
+                  const toX = toStartX;
                   const toY = toIdx * ROW_HEIGHT + ROW_HEIGHT / 2;
 
                   // Simple path: horizontal out, then vertical, then horizontal in

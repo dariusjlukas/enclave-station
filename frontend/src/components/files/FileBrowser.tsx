@@ -773,7 +773,7 @@ export function FileBrowser({ spaceId }: Props) {
                 />
                 <Input
                   size='sm'
-                  variant='flat'
+                  variant='bordered'
                   placeholder='Folder name'
                   value={newFolderName}
                   onValueChange={setNewFolderName}

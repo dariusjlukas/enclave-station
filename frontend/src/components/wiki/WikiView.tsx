@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Button,
   Spinner,
@@ -23,6 +23,7 @@ import {
 import * as api from '../../services/api';
 import type { WikiPage } from '../../types';
 import type { WikiPagePath } from '../../services/api';
+import { useChatStore } from '../../stores/chatStore';
 import { WikiSidebar } from './WikiSidebar';
 import { WikiBreadcrumb } from './WikiBreadcrumb';
 import { WikiVersionHistory } from './WikiVersionHistory';
@@ -44,12 +45,14 @@ export function WikiView({ spaceId }: Props) {
   >(null);
   const [pageLoading, setPageLoading] = useState(false);
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const sidebarOpen = useChatStore((s) => s.wikiSidebarOpen);
+  const setSidebarOpen = useChatStore((s) => s.setWikiSidebarOpen);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [editing, setEditing] = useState(false);
+  const flushSaveRef = useRef<(() => Promise<void>) | null>(null);
 
   const canEdit = myPermission === 'edit' || myPermission === 'owner';
 
@@ -227,22 +230,22 @@ export function WikiView({ spaceId }: Props) {
     <div className='flex-1 flex flex-col overflow-hidden'>
       <div className='flex flex-1 overflow-hidden'>
         {/* Sidebar */}
-        {sidebarOpen && (
-          <div className='w-[280px] shrink-0 border-r border-divider flex flex-col overflow-hidden bg-content1'>
-            <div className='flex items-center justify-between px-3 py-2 border-b border-divider'>
-              <span className='text-sm font-semibold text-foreground'>
-                Pages
-              </span>
-              <Button
-                isIconOnly
-                variant='light'
-                size='sm'
-                onPress={() => setSidebarOpen(false)}
-                title='Collapse sidebar'
-              >
-                <FontAwesomeIcon icon={faXmark} className='text-xs' />
-              </Button>
-            </div>
+        <div
+          className={`shrink-0 border-r border-default-100 flex flex-col overflow-hidden transition-[width] duration-300 ease-in-out ${sidebarOpen ? 'w-[280px]' : 'w-0 border-r-0'}`}
+        >
+          <div className='flex items-center justify-between px-3 py-2 border-b border-default-100 min-w-[280px]'>
+            <span className='text-sm font-semibold text-foreground'>Pages</span>
+            <Button
+              isIconOnly
+              variant='light'
+              size='sm'
+              onPress={() => setSidebarOpen(false)}
+              title='Collapse sidebar'
+            >
+              <FontAwesomeIcon icon={faXmark} className='text-xs' />
+            </Button>
+          </div>
+          <div className='min-w-[280px] flex-1 overflow-hidden'>
             <WikiSidebar
               spaceId={spaceId}
               pages={pages}
@@ -257,12 +260,12 @@ export function WikiView({ spaceId }: Props) {
               onRefreshTree={loadTree}
             />
           </div>
-        )}
+        </div>
 
         {/* Main content */}
         <div className='flex-1 flex flex-col overflow-hidden min-w-0'>
           {/* Header */}
-          <div className='flex items-center gap-2 px-4 py-2 border-b border-divider'>
+          <div className='flex items-center gap-2 px-4 py-2 border-b border-default-100'>
             {!sidebarOpen && (
               <Button
                 isIconOnly
@@ -291,7 +294,7 @@ export function WikiView({ spaceId }: Props) {
                 {canEdit && (
                   <Button
                     size='sm'
-                    variant={editing ? 'flat' : 'solid'}
+                    variant='solid'
                     color='primary'
                     startContent={
                       <FontAwesomeIcon
@@ -301,8 +304,11 @@ export function WikiView({ spaceId }: Props) {
                     }
                     onPress={async () => {
                       if (editing && activePageId && activePage) {
-                        // Leaving edit mode — create a major version
+                        // Flush any pending auto-save, then create a major version
                         try {
+                          if (flushSaveRef.current) {
+                            await flushSaveRef.current();
+                          }
                           await api.updateWikiPage(spaceId, activePageId, {
                             create_version: true,
                           });
@@ -371,6 +377,7 @@ export function WikiView({ spaceId }: Props) {
                   spaceId={spaceId}
                   page={activePage}
                   canEdit={canEdit && editing}
+                  flushSaveRef={flushSaveRef}
                   onSave={(updated) => {
                     setActivePage((prev) =>
                       prev ? { ...prev, ...updated } : null,

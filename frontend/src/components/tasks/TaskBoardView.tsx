@@ -182,23 +182,7 @@ export function TaskBoardView({ spaceId }: Props) {
                 onClick={() => loadBoard(board.id)}
                 className='text-left p-4 rounded-lg bg-content2 hover:bg-content3 border border-divider transition-colors group'
               >
-                <div className='flex items-start justify-between'>
-                  <h3 className='font-semibold text-foreground'>
-                    {board.name}
-                  </h3>
-                  {canEdit && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteBoard(board.id);
-                      }}
-                      className='opacity-0 group-hover:opacity-100 text-danger text-xs p-1 transition-opacity'
-                      title='Delete board'
-                    >
-                      <FontAwesomeIcon icon={faTrash} />
-                    </button>
-                  )}
-                </div>
+                <h3 className='font-semibold text-foreground'>{board.name}</h3>
                 {board.description && (
                   <p className='text-sm text-default-400 mt-1 line-clamp-2'>
                     {board.description}
@@ -309,6 +293,16 @@ export function TaskBoardView({ spaceId }: Props) {
               onPress={() => setEditingBoard(false)}
             >
               Cancel
+            </Button>
+            <Button
+              isIconOnly
+              size='sm'
+              variant='light'
+              color='danger'
+              onPress={() => handleDeleteBoard(activeBoard.id)}
+              title='Delete board'
+            >
+              <FontAwesomeIcon icon={faTrash} className='text-xs' />
             </Button>
           </div>
         ) : (

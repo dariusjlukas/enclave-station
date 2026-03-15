@@ -35,9 +35,16 @@ interface Props {
   page: WikiPage;
   canEdit: boolean;
   onSave?: (page: WikiPage) => void;
+  flushSaveRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 }
 
-export function WikiPageEditor({ spaceId, page, canEdit, onSave }: Props) {
+export function WikiPageEditor({
+  spaceId,
+  page,
+  canEdit,
+  onSave,
+  flushSaveRef,
+}: Props) {
   const [title, setTitle] = useState(page.title);
   const [sourceMode, setSourceMode] = useState(false);
   const [sourceText, setSourceText] = useState('');
@@ -97,6 +104,23 @@ export function WikiPageEditor({ spaceId, page, canEdit, onSave }: Props) {
     [doSave],
   );
 
+  // Expose a flush function so the parent can force-save before creating a version
+  const flushSave = useCallback(async () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const md = getMarkdown();
+    await doSave(md, titleRef.current);
+  }, [getMarkdown, doSave]);
+
+  useEffect(() => {
+    if (flushSaveRef) flushSaveRef.current = flushSave;
+    return () => {
+      if (flushSaveRef) flushSaveRef.current = null;
+    };
+  }, [flushSaveRef, flushSave]);
+
   // Cleanup save timer on unmount
   useEffect(() => {
     return () => {
@@ -111,6 +135,8 @@ export function WikiPageEditor({ spaceId, page, canEdit, onSave }: Props) {
       extensions: [
         StarterKit.configure({
           codeBlock: false,
+          link: false,
+          underline: false,
         }),
         Markdown.configure({
           html: true,

@@ -141,11 +141,11 @@ export function WikiVersionHistory({
                           <span className='text-sm font-medium'>
                             v{v.version_number}
                           </span>
-                          <span className='text-xs text-default-400'>
+                          <span className='text-xs text-default-600'>
                             {v.title}
                           </span>
                         </div>
-                        <div className='text-xs text-default-400'>
+                        <div className='text-xs text-default-500'>
                           by {v.edited_by_username} &middot;{' '}
                           {formatRelativeTime(v.created_at)}
                         </div>
@@ -153,7 +153,7 @@ export function WikiVersionHistory({
                     </div>
                     <Button
                       size='sm'
-                      variant='flat'
+                      variant='bordered'
                       color='primary'
                       isLoading={reverting === v.id}
                       onPress={() => {

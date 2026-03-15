@@ -1364,6 +1364,10 @@ export interface FileSearchResult {
   file_type: string;
   file_size: number;
   created_at: string;
+  source: 'message' | 'space';
+  space_id: string;
+  space_name: string;
+  is_folder: boolean;
 }
 
 export interface SearchResponse<T> {

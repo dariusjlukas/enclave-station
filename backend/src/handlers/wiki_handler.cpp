@@ -286,9 +286,16 @@ void WikiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 }
 
                 // Create a major version snapshot when explicitly requested (e.g. leaving edit mode)
+                // but only if content or title actually changed since the last version
                 if (create_version) {
-                    db.create_wiki_page_version(page_id, existing->title,
-                                                 existing->content, existing->content_text, user_id, true);
+                    auto prev_versions = db.list_wiki_page_versions(page_id);
+                    bool changed = prev_versions.empty()
+                        || prev_versions[0].title != existing->title
+                        || prev_versions[0].content != existing->content;
+                    if (changed) {
+                        db.create_wiki_page_version(page_id, existing->title,
+                                                     existing->content, existing->content_text, user_id, true);
+                    }
                 }
 
                 // Update page

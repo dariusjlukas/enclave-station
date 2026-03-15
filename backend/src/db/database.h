@@ -309,6 +309,9 @@ public:
         std::string user_id, username;
         std::string file_id, file_name, file_type, created_at;
         int64_t file_size;
+        std::string source;  // "message" or "space"
+        std::string space_id, space_name;
+        bool is_folder;
     };
     struct SpaceSearchResult {
         std::string id, name, description;
@@ -632,7 +635,9 @@ public:
         std::string created_by_username;
     };
     std::vector<WikiSearchResult> search_wiki_pages(const std::string& tsquery_expr,
-        const std::string& user_id, bool is_admin, int limit, int offset);
+        const std::string& query, const std::string& user_id, bool is_admin, int limit, int offset);
+    std::vector<WikiSearchResult> browse_wiki_pages(const std::string& user_id,
+        bool is_admin, int limit, int offset);
 
 private:
     pqxx::connection& get_conn();

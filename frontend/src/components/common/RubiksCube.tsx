@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useMemo, useEffect } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, GizmoHelper, GizmoViewport } from '@react-three/drei';
+import { OrbitControls } from '@react-three/drei';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faArrowsRotate, faTrophy } from '@fortawesome/free-solid-svg-icons';
 import * as THREE from 'three';
@@ -61,125 +61,96 @@ function cloneState(s: CubeState): CubeState {
   return c;
 }
 
-function rotateFaceCW(face: FaceName[], times: number): FaceName[] {
-  const f = [...face];
-  for (let t = 0; t < times; t++) {
-    const copy = [...f];
-    f[0] = copy[6];
-    f[1] = copy[3];
-    f[2] = copy[0];
-    f[3] = copy[7];
-    f[4] = copy[4];
-    f[5] = copy[1];
-    f[6] = copy[8];
-    f[7] = copy[5];
-    f[8] = copy[2];
+// CW rotation transform for each face, matching the Three.js animation.
+// Each maps [x,y,z] → [x',y',z'] for one 90° CW turn as seen from that face.
+type Vec3 = [number, number, number];
+type DirName = 'px' | 'nx' | 'py' | 'ny' | 'pz' | 'nz';
+const DIR_VECS: Record<DirName, Vec3> = {
+  px: [1, 0, 0],
+  nx: [-1, 0, 0],
+  py: [0, 1, 0],
+  ny: [0, -1, 0],
+  pz: [0, 0, 1],
+  nz: [0, 0, -1],
+};
+const VEC_TO_DIR = new Map<string, DirName>([
+  ['1,0,0', 'px'],
+  ['-1,0,0', 'nx'],
+  ['0,1,0', 'py'],
+  ['0,-1,0', 'ny'],
+  ['0,0,1', 'pz'],
+  ['0,0,-1', 'nz'],
+]);
+
+function faceCWTransform(face: FaceName, [x, y, z]: Vec3): Vec3 {
+  switch (face) {
+    // Derived from the Euler rotation matrices in faceRotationEuler
+    case 'U':
+      return [-z, y, x]; // Euler(0, -π/2, 0)
+    case 'D':
+      return [z, y, -x]; // Euler(0, +π/2, 0)
+    case 'R':
+      return [x, z, -y]; // Euler(-π/2, 0, 0)
+    case 'L':
+      return [x, -z, y]; // Euler(+π/2, 0, 0)
+    case 'F':
+      return [y, -x, z]; // Euler(0, 0, -π/2)
+    case 'B':
+      return [-y, x, z]; // Euler(0, 0, +π/2)
   }
-  return f;
 }
 
+function onFace(face: FaceName, x: number, y: number, z: number): boolean {
+  switch (face) {
+    case 'U':
+      return y === 1;
+    case 'D':
+      return y === -1;
+    case 'R':
+      return x === 1;
+    case 'L':
+      return x === -1;
+    case 'F':
+      return z === 1;
+    case 'B':
+      return z === -1;
+  }
+}
+
+/**
+ * Apply a move by physically rotating cubies and remapping stickers.
+ * Instead of hand-coded edge cycles, this derives the correct mapping
+ * from the rotation transform and getStickerInfo — correct by construction.
+ */
 function applyMove(state: CubeState, move: Move): CubeState {
-  const s = cloneState(state);
-  const base = move[0] as FaceName;
+  const face = move[0] as FaceName;
   const prime = move.length > 1;
-  const times = prime ? 3 : 1; // CCW = 3 × CW
+  const times = prime ? 3 : 1;
+  const s = cloneState(state);
 
-  s[base] = rotateFaceCW(s[base], times);
-
-  // Cycle the edge stickers
   for (let t = 0; t < times; t++) {
-    let temp: FaceName[];
-    switch (base) {
-      case 'U':
-        temp = [s.F[0], s.F[1], s.F[2]];
-        s.F[0] = s.R[0];
-        s.F[1] = s.R[1];
-        s.F[2] = s.R[2];
-        s.R[0] = s.B[0];
-        s.R[1] = s.B[1];
-        s.R[2] = s.B[2];
-        s.B[0] = s.L[0];
-        s.B[1] = s.L[1];
-        s.B[2] = s.L[2];
-        s.L[0] = temp[0];
-        s.L[1] = temp[1];
-        s.L[2] = temp[2];
-        break;
-      case 'D':
-        temp = [s.F[6], s.F[7], s.F[8]];
-        s.F[6] = s.L[6];
-        s.F[7] = s.L[7];
-        s.F[8] = s.L[8];
-        s.L[6] = s.B[6];
-        s.L[7] = s.B[7];
-        s.L[8] = s.B[8];
-        s.B[6] = s.R[6];
-        s.B[7] = s.R[7];
-        s.B[8] = s.R[8];
-        s.R[6] = temp[0];
-        s.R[7] = temp[1];
-        s.R[8] = temp[2];
-        break;
-      case 'F':
-        temp = [s.U[6], s.U[7], s.U[8]];
-        s.U[6] = s.L[8];
-        s.U[7] = s.L[5];
-        s.U[8] = s.L[2];
-        s.L[2] = s.D[0];
-        s.L[5] = s.D[1];
-        s.L[8] = s.D[2];
-        s.D[0] = s.R[6];
-        s.D[1] = s.R[3];
-        s.D[2] = s.R[0];
-        s.R[0] = temp[0];
-        s.R[3] = temp[1];
-        s.R[6] = temp[2];
-        break;
-      case 'B':
-        temp = [s.U[0], s.U[1], s.U[2]];
-        s.U[0] = s.R[2];
-        s.U[1] = s.R[5];
-        s.U[2] = s.R[8];
-        s.R[2] = s.D[8];
-        s.R[5] = s.D[7];
-        s.R[8] = s.D[6];
-        s.D[6] = s.L[0];
-        s.D[7] = s.L[3];
-        s.D[8] = s.L[6];
-        s.L[0] = temp[2];
-        s.L[3] = temp[1];
-        s.L[6] = temp[0];
-        break;
-      case 'R':
-        temp = [s.U[2], s.U[5], s.U[8]];
-        s.U[2] = s.F[2];
-        s.U[5] = s.F[5];
-        s.U[8] = s.F[8];
-        s.F[2] = s.D[2];
-        s.F[5] = s.D[5];
-        s.F[8] = s.D[8];
-        s.D[2] = s.B[6];
-        s.D[5] = s.B[3];
-        s.D[8] = s.B[0];
-        s.B[0] = temp[2];
-        s.B[3] = temp[1];
-        s.B[6] = temp[0];
-        break;
-      case 'L':
-        temp = [s.U[0], s.U[3], s.U[6]];
-        s.U[0] = s.B[8];
-        s.U[3] = s.B[5];
-        s.U[6] = s.B[2];
-        s.B[2] = s.D[6];
-        s.B[5] = s.D[3];
-        s.B[8] = s.D[0];
-        s.D[0] = s.F[0];
-        s.D[3] = s.F[3];
-        s.D[6] = s.F[6];
-        s.F[0] = temp[0];
-        s.F[3] = temp[1];
-        s.F[6] = temp[2];
-        break;
+    const prev = cloneState(s);
+
+    // Rotate ALL stickers (face + edges) via the physical transform.
+    // No separate rotateFaceCW needed — the transform handles everything
+    // correctly regardless of each face's index layout orientation.
+    for (let cx = -1; cx <= 1; cx++) {
+      for (let cy = -1; cy <= 1; cy++) {
+        for (let cz = -1; cz <= 1; cz++) {
+          if (!onFace(face, cx, cy, cz)) continue;
+          const np = faceCWTransform(face, [cx, cy, cz]);
+          for (const dn of Object.keys(DIR_VECS) as DirName[]) {
+            const oldInfo = getStickerInfo(cx, cy, cz, dn);
+            if (!oldInfo) continue;
+            const ndv = faceCWTransform(face, DIR_VECS[dn]);
+            const ndn = VEC_TO_DIR.get(ndv.join(','));
+            if (!ndn) continue;
+            const newInfo = getStickerInfo(np[0], np[1], np[2], ndn);
+            if (!newInfo) continue;
+            s[newInfo.face][newInfo.index] = prev[oldInfo.face][oldInfo.index];
+          }
+        }
+      }
     }
   }
   return s;
@@ -330,29 +301,12 @@ function Cubie({
   );
 }
 
-function isOnFace(face: FaceName, x: number, y: number, z: number): boolean {
-  switch (face) {
-    case 'U':
-      return y === 1;
-    case 'D':
-      return y === -1;
-    case 'R':
-      return x === 1;
-    case 'L':
-      return x === -1;
-    case 'F':
-      return z === 1;
-    case 'B':
-      return z === -1;
-  }
-}
-
 function faceRotationEuler(face: FaceName, angle: number): THREE.Euler {
   switch (face) {
     case 'U':
-      return new THREE.Euler(0, angle, 0);
-    case 'D':
       return new THREE.Euler(0, -angle, 0);
+    case 'D':
+      return new THREE.Euler(0, angle, 0);
     case 'R':
       return new THREE.Euler(-angle, 0, 0);
     case 'L':
@@ -366,6 +320,8 @@ function faceRotationEuler(face: FaceName, angle: number): THREE.Euler {
 
 // ── Clickable face overlay for move input ───────────────────────────────────
 
+const DRAG_THRESHOLD = 5; // pixels — movement beyond this counts as a drag
+
 function FaceClickZone({
   face,
   onMove,
@@ -375,6 +331,7 @@ function FaceClickZone({
 }) {
   const size = 3.2;
   const offset = 1.55;
+  const pointerStart = useRef<{ x: number; y: number } | null>(null);
 
   const posRot: {
     position: [number, number, number];
@@ -396,29 +353,48 @@ function FaceClickZone({
     }
   }, [face]);
 
+  const handlePointerDown = useCallback((e: ThreeEvent<PointerEvent>) => {
+    pointerStart.current = {
+      x: e.nativeEvent.clientX,
+      y: e.nativeEvent.clientY,
+    };
+  }, []);
+
+  const wasDrag = useCallback(
+    (e: { nativeEvent: { clientX: number; clientY: number } }) => {
+      if (!pointerStart.current) return true;
+      const dx = e.nativeEvent.clientX - pointerStart.current.x;
+      const dy = e.nativeEvent.clientY - pointerStart.current.y;
+      return Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD;
+    },
+    [],
+  );
+
   const handleClick = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       e.stopPropagation();
-      // Left click = CW, right click handled via context menu in the wrapper
+      if (wasDrag(e)) return;
       const move: Move = e.nativeEvent.shiftKey ? (`${face}'` as Move) : face;
       onMove(move);
     },
-    [face, onMove],
+    [face, onMove, wasDrag],
   );
 
   const handleContextMenu = useCallback(
     (e: ThreeEvent<MouseEvent>) => {
       e.stopPropagation();
       e.nativeEvent.preventDefault();
+      if (wasDrag(e)) return;
       onMove(`${face}'` as Move);
     },
-    [face, onMove],
+    [face, onMove, wasDrag],
   );
 
   return (
     <mesh
       position={posRot.position}
       rotation={new THREE.Euler(...posRot.rotation)}
+      onPointerDown={handlePointerDown}
       onClick={handleClick}
       onContextMenu={handleContextMenu}
     >
@@ -460,7 +436,7 @@ function CubeScene({
       {COORDS.map((x) =>
         COORDS.map((y) =>
           COORDS.map((z) => {
-            if (animatingFace && isOnFace(animatingFace, x, y, z)) return null;
+            if (animatingFace && onFace(animatingFace, x, y, z)) return null;
             return (
               <Cubie
                 key={`${x},${y},${z}`}
@@ -480,7 +456,7 @@ function CubeScene({
           {COORDS.map((x) =>
             COORDS.map((y) =>
               COORDS.map((z) => {
-                if (!isOnFace(animatingFace, x, y, z)) return null;
+                if (!onFace(animatingFace, x, y, z)) return null;
                 return (
                   <Cubie
                     key={`a${x},${y},${z}`}
@@ -503,15 +479,11 @@ function CubeScene({
 
       <OrbitControls
         enablePan={false}
-        enableZoom={false}
+        enableZoom={true}
         minDistance={6}
-        maxDistance={6}
+        maxDistance={12}
         dampingFactor={0.15}
       />
-
-      <GizmoHelper alignment='bottom-left' margin={[60, 60]}>
-        <GizmoViewport labelColor='white' axisHeadScale={0.8} />
-      </GizmoHelper>
     </>
   );
 }
@@ -604,17 +576,18 @@ export function RubiksCube() {
 
   const doScramble = useCallback((len: number) => {
     const moves = scramble(len);
-    setCubeState(solvedState());
+    // Apply all scramble moves instantly (no animation)
+    let state = solvedState();
+    for (const m of moves) {
+      state = applyMove(state, m);
+    }
+    setCubeState(state);
     setSolved(false);
     setMoveCount(0);
-    setStarted(false);
-    setMoveQueue(moves);
-    // Mark as started after scramble finishes (tracked by queue emptying)
-    const waitForScramble = () => {
-      setStarted(true);
-    };
-    // Schedule start after all scramble animations would complete
-    setTimeout(waitForScramble, moves.length * 200 + 100);
+    setMoveQueue([]);
+    setAnimatingMove(null);
+    setAnimAngle(0);
+    setStarted(true);
   }, []);
 
   // Initial scramble
@@ -674,11 +647,16 @@ export function RubiksCube() {
 
       {/* 3D Canvas */}
       <div
-        className='rounded-lg overflow-hidden'
-        style={{ width: 480, height: 480, background: '#0d1520' }}
+        className='rounded-lg overflow-hidden rubiks-viewport'
+        style={{
+          width: '100%',
+          maxWidth: 600,
+          aspectRatio: '1',
+          background: '#0d1520',
+        }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <Canvas camera={{ position: [3.5, 3, 3.5], fov: 45 }}>
+        <Canvas camera={{ position: [5, 4, 5], fov: 45 }}>
           <CubeScene
             cubeState={cubeState}
             onMove={handleMove}
@@ -701,8 +679,7 @@ export function RubiksCube() {
           Solved in {moveCount} moves!
         </p>
       )}
-      {!started && <p className='text-xs text-default-400'>Scrambling...</p>}
-      {started && !solved && (
+      {!solved && (
         <p className='text-xs text-default-400'>
           Click a face to rotate CW. Shift+click or right-click for CCW.
         </p>

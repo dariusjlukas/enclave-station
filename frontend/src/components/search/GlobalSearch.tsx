@@ -5,6 +5,7 @@ import {
   faMagnifyingGlass,
   faDownload,
   faFile,
+  faFolder,
   faMessage,
   faArrowUpRightFromSquare,
   faHashtag,
@@ -279,6 +280,7 @@ export function GlobalSearch() {
     'files',
     'channels',
     'spaces',
+    'wiki',
   ];
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -435,8 +437,25 @@ export function GlobalSearch() {
           <FileResultItem
             key={f.file_id}
             result={f}
-            onDownload={() => handleDownload(f.file_id, f.file_name)}
-            onJump={() => handleJumpToMessage(f.channel_id, f.message_id)}
+            onDownload={
+              f.source === 'space'
+                ? () =>
+                    api.downloadSpaceFile(f.space_id, f.file_id, f.file_name)
+                : () => handleDownload(f.file_id, f.file_name)
+            }
+            onJump={
+              f.source === 'space'
+                ? () => {
+                    const store = useChatStore.getState();
+                    store.setActiveView({ type: 'space', spaceId: f.space_id });
+                    store.setActiveToolView({
+                      type: 'files',
+                      spaceId: f.space_id,
+                    });
+                    clearSearch();
+                  }
+                : () => handleJumpToMessage(f.channel_id, f.message_id)
+            }
           />
         ));
       case 'channels':
@@ -661,6 +680,7 @@ export function GlobalSearch() {
               <Tab key='files' title='Files' />
               <Tab key='channels' title='Channels' />
               <Tab key='spaces' title='Spaces' />
+              <Tab key='wiki' title='Wiki' />
             </Tabs>
             <div className='flex items-center gap-0 flex-shrink-0 border border-default-200 rounded-lg overflow-hidden'>
               <button
@@ -775,31 +795,34 @@ function FileResultItem({
   return (
     <div className='flex items-center gap-2 p-2 mx-1 rounded-lg hover:bg-content2/50 transition-colors'>
       <FontAwesomeIcon
-        icon={faFile}
-        className='text-default-400 flex-shrink-0'
+        icon={result.is_folder ? faFolder : faFile}
+        className={`${result.is_folder ? 'text-warning' : 'text-default-400'} flex-shrink-0`}
       />
       <div className='flex-1 min-w-0'>
         <p className='text-sm font-medium truncate'>{result.file_name}</p>
         <p className='text-xs text-default-400'>
-          {formatSize(result.file_size)} &middot; @{result.username} &middot;{' '}
-          {result.channel_name}
+          {result.is_folder ? 'Folder' : formatSize(result.file_size)} &middot;
+          @{result.username} &middot;{' '}
+          {result.source === 'space' ? result.space_name : result.channel_name}
         </p>
       </div>
-      <Button
-        isIconOnly
-        size='sm'
-        variant='light'
-        onPress={onDownload}
-        title='Download'
-      >
-        <FontAwesomeIcon icon={faDownload} className='text-xs' />
-      </Button>
+      {!result.is_folder && (
+        <Button
+          isIconOnly
+          size='sm'
+          variant='light'
+          onPress={onDownload}
+          title='Download'
+        >
+          <FontAwesomeIcon icon={faDownload} className='text-xs' />
+        </Button>
+      )}
       <Button
         isIconOnly
         size='sm'
         variant='light'
         onPress={onJump}
-        title='Jump to message'
+        title={result.source === 'space' ? 'Open in Files' : 'Jump to message'}
       >
         <FontAwesomeIcon icon={faArrowUpRightFromSquare} className='text-xs' />
       </Button>

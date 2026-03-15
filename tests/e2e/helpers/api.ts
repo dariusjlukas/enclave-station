@@ -805,3 +805,69 @@ export async function apiCreateTask(
   }
   return (await res.json()) as { id: string; title: string; column_id: string };
 }
+
+/**
+ * Enable the "wiki" tool on a space.
+ */
+export async function apiEnableWikiTool(
+  spaceId: string,
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<void> {
+  const res = await apiPut(
+    `/api/spaces/${spaceId}/tools`,
+    { tool: "wiki", enabled: true },
+    token,
+    config,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`apiEnableWikiTool failed (${res.status}): ${text}`);
+  }
+}
+
+/**
+ * Create a wiki page in a space.
+ */
+export async function apiCreateWikiPage(
+  spaceId: string,
+  title: string,
+  token: string,
+  options?: { content?: string; parent_id?: string; is_folder?: boolean },
+  config: ApiConfig = defaultConfig,
+): Promise<{ id: string; title: string }> {
+  const res = await apiPost(
+    `/api/spaces/${spaceId}/wiki/pages`,
+    { title, ...options },
+    token,
+    config,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`apiCreateWikiPage failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as { id: string; title: string };
+}
+
+/**
+ * Update a wiki page's content.
+ */
+export async function apiUpdateWikiPage(
+  spaceId: string,
+  pageId: string,
+  updates: { title?: string; content?: string },
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<{ id: string; title: string }> {
+  const res = await apiPut(
+    `/api/spaces/${spaceId}/wiki/pages/${pageId}`,
+    updates,
+    token,
+    config,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`apiUpdateWikiPage failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as { id: string; title: string };
+}

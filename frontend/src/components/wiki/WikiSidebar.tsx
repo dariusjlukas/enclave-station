@@ -188,14 +188,14 @@ export function WikiSidebar({
     return (
       <div key={page.id}>
         <div
-          className={`group flex items-center gap-1 py-1 px-2 rounded-md cursor-pointer transition-colors text-sm ${
+          className={`group flex items-center gap-1 py-1.5 px-3 rounded-md cursor-pointer transition-colors text-sm ${
             isActive
               ? 'bg-primary/20 text-primary font-medium'
               : isDragOver && page.is_folder
                 ? 'bg-primary/10 ring-1 ring-primary/40'
-                : 'text-foreground hover:bg-content2'
+                : 'text-default-500 hover:bg-content2/50 hover:text-foreground'
           }`}
-          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+          style={{ paddingLeft: `${depth * 16 + 12}px` }}
           draggable={canEdit}
           onDragStart={(e) => handleDragStart(e, page.id)}
           onDragOver={(e) => {
@@ -258,7 +258,7 @@ export function WikiSidebar({
                 if (e.key === 'Escape') setRenamingId(null);
               }}
               onBlur={() => handleRenameSubmit(page.id)}
-              className='flex-1 min-w-0 px-1 py-0 bg-content2 border border-divider rounded text-sm'
+              className='flex-1 min-w-0 px-1 py-0 bg-content2 border border-default-100 rounded text-sm'
               autoFocus
               onClick={(e) => e.stopPropagation()}
             />
@@ -312,11 +312,11 @@ export function WikiSidebar({
     >
       {/* Header buttons */}
       {canEdit && (
-        <div className='flex items-center gap-1 p-2 border-b border-divider'>
+        <div className='flex items-center gap-1 px-2 py-1.5 border-b border-default-100'>
           <Tooltip content='New Page'>
             <Button
               size='sm'
-              variant='flat'
+              variant='light'
               startContent={
                 <FontAwesomeIcon icon={faPlus} className='text-xs' />
               }
@@ -324,7 +324,6 @@ export function WikiSidebar({
                 setCreatingType('page');
                 setNewItemTitle('');
               }}
-              className='flex-1'
             >
               Page
             </Button>
@@ -332,7 +331,7 @@ export function WikiSidebar({
           <Tooltip content='New Folder'>
             <Button
               size='sm'
-              variant='flat'
+              variant='light'
               startContent={
                 <FontAwesomeIcon icon={faFolderPlus} className='text-xs' />
               }
@@ -340,7 +339,6 @@ export function WikiSidebar({
                 setCreatingType('folder');
                 setNewItemTitle('');
               }}
-              className='flex-1'
             >
               Folder
             </Button>
@@ -350,7 +348,7 @@ export function WikiSidebar({
 
       {/* Inline create input */}
       {creatingType && (
-        <div className='p-2 border-b border-divider'>
+        <div className='p-2 border-b border-default-100'>
           <div className='flex items-center gap-1.5'>
             <FontAwesomeIcon
               icon={creatingType === 'folder' ? faFolder : faFileLines}
@@ -361,7 +359,7 @@ export function WikiSidebar({
               value={newItemTitle}
               onChange={(e) => setNewItemTitle(e.target.value)}
               placeholder={`New ${creatingType} name...`}
-              className='flex-1 min-w-0 px-2 py-1 bg-content2 border border-divider rounded text-sm'
+              className='flex-1 min-w-0 px-2 py-1 bg-content2 border border-default-100 rounded text-sm'
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === 'Enter') handleCreateSubmit();
@@ -376,7 +374,7 @@ export function WikiSidebar({
       )}
 
       {/* Tree */}
-      <div className='flex-1 overflow-y-auto py-1'>
+      <div className='flex-1 overflow-y-auto p-2'>
         {tree.length === 0 ? (
           <div className='text-center py-8 px-4'>
             <p className='text-sm text-default-400'>No pages yet</p>
@@ -400,12 +398,12 @@ export function WikiSidebar({
             onClick={() => setContextMenu(null)}
           />
           <div
-            className='fixed z-50 bg-content1 border border-divider rounded-lg shadow-lg py-1 min-w-[140px]'
+            className='fixed z-50 bg-content1 border border-default-100 rounded-lg shadow-lg py-1 min-w-[140px]'
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
             <button
               onClick={() => handleContextAction('rename', contextMenu.pageId)}
-              className='w-full text-left px-3 py-1.5 text-sm hover:bg-content2 flex items-center gap-2'
+              className='w-full text-left px-3 py-1.5 text-sm hover:bg-content2/50 flex items-center gap-2'
             >
               <FontAwesomeIcon icon={faPen} className='text-xs w-4' />
               Rename
@@ -415,7 +413,7 @@ export function WikiSidebar({
                 onClick={() =>
                   handleContextAction('new-page', contextMenu.pageId)
                 }
-                className='w-full text-left px-3 py-1.5 text-sm hover:bg-content2 flex items-center gap-2'
+                className='w-full text-left px-3 py-1.5 text-sm hover:bg-content2/50 flex items-center gap-2'
               >
                 <FontAwesomeIcon icon={faPlus} className='text-xs w-4' />
                 New Page Inside
@@ -423,7 +421,7 @@ export function WikiSidebar({
             )}
             <button
               onClick={() => handleContextAction('delete', contextMenu.pageId)}
-              className='w-full text-left px-3 py-1.5 text-sm hover:bg-content2 text-danger flex items-center gap-2'
+              className='w-full text-left px-3 py-1.5 text-sm hover:bg-content2/50 text-danger flex items-center gap-2'
             >
               <FontAwesomeIcon icon={faTrash} className='text-xs w-4' />
               Delete

@@ -2959,10 +2959,13 @@ std::vector<Database::FileSearchResult> Database::search_files(
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
 
-    std::string sql =
-        "SELECT m.id, m.channel_id, c.name, "
-        "m.user_id, u.username, m.file_id, m.file_name, m.file_type, "
-        "m.created_at::text, m.file_size "
+    // Search message-attached files
+    std::string msg_sql =
+        "SELECT m.id::text, m.channel_id::text, c.name, "
+        "m.user_id::text, u.username, m.file_id, m.file_name, m.file_type, "
+        "m.created_at::text, m.file_size::bigint, "
+        "'message'::text AS source, ''::text AS space_id, ''::text AS space_name, "
+        "false AS is_folder "
         "FROM messages m "
         "JOIN users u ON m.user_id = u.id "
         "JOIN channels c ON m.channel_id = c.id "
@@ -2971,9 +2974,29 @@ std::vector<Database::FileSearchResult> Database::search_files(
         "AND m.is_deleted = false "
         "AND (EXISTS (SELECT 1 FROM channel_members cm WHERE cm.channel_id = m.channel_id AND cm.user_id = $2)";
     if (is_admin) {
-        sql += " OR c.is_direct = false";
+        msg_sql += " OR c.is_direct = false";
     }
-    sql += ") ORDER BY m.created_at DESC LIMIT $3 OFFSET $4";
+    msg_sql += ")";
+
+    // Search space files and folders
+    std::string sf_sql =
+        "SELECT ''::text, ''::text, ''::text, "
+        "sf.created_by::text, u.username, sf.id::text, sf.name, "
+        "COALESCE(sf.mime_type, ''), sf.created_at::text, COALESCE(sf.file_size, 0)::bigint, "
+        "'space'::text AS source, sf.space_id::text, s.name, "
+        "sf.is_folder "
+        "FROM space_files sf "
+        "JOIN users u ON sf.created_by = u.id "
+        "JOIN spaces s ON sf.space_id = s.id "
+        "WHERE sf.is_deleted = false "
+        "AND sf.name ILIKE '%' || $1 || '%' "
+        "AND (EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = sf.space_id AND sm.user_id = $2)";
+    if (is_admin) {
+        sf_sql += " OR true";
+    }
+    sf_sql += ")";
+
+    std::string sql = "(" + msg_sql + " UNION ALL " + sf_sql + ") ORDER BY created_at DESC LIMIT $3 OFFSET $4";
 
     auto r = txn.exec_params(sql, query, user_id, limit, offset);
     txn.commit();
@@ -2987,7 +3010,11 @@ std::vector<Database::FileSearchResult> Database::search_files(
             row[5].as<std::string>(), row[6].as<std::string>(),
             row[7].is_null() ? "" : row[7].as<std::string>(),
             row[8].as<std::string>(),
-            row[9].is_null() ? 0 : row[9].as<int64_t>()});
+            row[9].is_null() ? 0 : row[9].as<int64_t>(),
+            row[10].as<std::string>(),
+            row[11].is_null() ? "" : row[11].as<std::string>(),
+            row[12].is_null() ? "" : row[12].as<std::string>(),
+            row[13].as<bool>()});
     }
     return results;
 }
@@ -3144,9 +3171,11 @@ std::vector<Database::FileSearchResult> Database::search_composite_files(
     pqxx::work txn(get_conn());
 
     std::string sql =
-        "SELECT m.id, m.channel_id, c.name, "
-        "m.user_id, u.username, m.file_id, m.file_name, m.file_type, "
-        "m.created_at::text, m.file_size "
+        "SELECT m.id::text, m.channel_id::text, c.name, "
+        "m.user_id::text, u.username, m.file_id, m.file_name, m.file_type, "
+        "m.created_at::text, m.file_size::bigint, "
+        "'message'::text AS source, ''::text AS space_id, ''::text AS space_name, "
+        "false AS is_folder "
         "FROM messages m "
         "JOIN users u ON m.user_id = u.id "
         "JOIN channels c ON m.channel_id = c.id "
@@ -3161,7 +3190,7 @@ std::vector<Database::FileSearchResult> Database::search_composite_files(
     std::vector<std::string> clauses;
     build_message_clauses(txn, filters, clauses);
     sql += join_clauses(clauses, mode);
-    sql += " ORDER BY m.created_at DESC LIMIT " + std::to_string(limit) +
+    sql += " ORDER BY created_at DESC LIMIT " + std::to_string(limit) +
            " OFFSET " + std::to_string(offset);
 
     auto r = txn.exec(sql);
@@ -3176,7 +3205,11 @@ std::vector<Database::FileSearchResult> Database::search_composite_files(
             row[5].as<std::string>(), row[6].as<std::string>(),
             row[7].is_null() ? "" : row[7].as<std::string>(),
             row[8].as<std::string>(),
-            row[9].is_null() ? 0 : row[9].as<int64_t>()});
+            row[9].is_null() ? 0 : row[9].as<int64_t>(),
+            row[10].as<std::string>(),
+            row[11].is_null() ? "" : row[11].as<std::string>(),
+            row[12].is_null() ? "" : row[12].as<std::string>(),
+            row[13].as<bool>()});
     }
     return results;
 }
@@ -5521,7 +5554,7 @@ WikiPage Database::create_wiki_page(const std::string& space_id, const std::stri
         "content_text, icon, position, created_by, last_edited_by, "
         "content_tsv) "
         "VALUES ($1, NULLIF($2, '')::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $10, "
-        "to_tsvector('english', $11 || ' ' || $12)) "
+        "to_tsvector('simple', $11 || ' ' || $12)) "
         "RETURNING id::text, created_at::text, updated_at::text",
         space_id, parent_val, title, slug, is_folder, content, content_text, icon, position, created_by,
         title, content_text);
@@ -5641,7 +5674,7 @@ WikiPage Database::update_wiki_page(const std::string& page_id, const std::strin
         "UPDATE wiki_pages SET title = $2, slug = $3, content = $4, content_text = $5, "
         "icon = $6, cover_image_file_id = NULLIF($7, ''), last_edited_by = $8, "
         "updated_at = NOW(), "
-        "content_tsv = to_tsvector('english', $9 || ' ' || $10) "
+        "content_tsv = to_tsvector('simple', $9 || ' ' || $10) "
         "WHERE id = $1 "
         "RETURNING id::text, space_id::text, parent_id::text, title, slug, is_folder, "
         "content, content_text, icon, cover_image_file_id::text, position, is_deleted, "
@@ -6008,21 +6041,62 @@ std::string Database::get_wiki_permission(const std::string& space_id, const std
 // --- Wiki Search ---
 
 std::vector<Database::WikiSearchResult> Database::search_wiki_pages(
-    const std::string& tsquery_expr, const std::string& user_id,
+    const std::string& tsquery_expr, const std::string& query,
+    const std::string& user_id,
     bool is_admin, int limit, int offset) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
 
+    // Match by full-text content/title search OR partial title ILIKE
     std::string sql =
         "SELECT wp.id::text, wp.space_id::text, s.name, wp.title, "
-        "ts_headline('english', wp.content_text, " + tsquery_expr + ", "
+        "ts_headline('simple', wp.content_text, " + tsquery_expr + ", "
         "'MaxWords=40, MinWords=20, StartSel=<mark>, StopSel=</mark>'), "
         "wp.created_at::text, u.username "
         "FROM wiki_pages wp "
         "JOIN spaces s ON wp.space_id = s.id "
         "LEFT JOIN users u ON u.id = wp.created_by "
-        "WHERE wp.content_tsv @@ (" + tsquery_expr + ") "
+        "WHERE (wp.content_tsv @@ (" + tsquery_expr + ") "
+        "OR wp.title ILIKE '%' || $1 || '%') "
         "AND wp.is_deleted = FALSE "
+        "AND wp.is_folder = FALSE "
+        "AND (EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = wp.space_id AND sm.user_id = $2)";
+    if (is_admin) {
+        sql += " OR TRUE";
+    }
+    sql += ") ORDER BY wp.updated_at DESC LIMIT $3 OFFSET $4";
+
+    auto r = txn.exec_params(sql, query, user_id, limit, offset);
+    txn.commit();
+
+    std::vector<WikiSearchResult> results;
+    for (const auto& row : r) {
+        WikiSearchResult res;
+        res.id = row[0].as<std::string>();
+        res.space_id = row[1].as<std::string>();
+        res.space_name = row[2].is_null() ? "" : row[2].as<std::string>();
+        res.title = row[3].as<std::string>();
+        res.snippet = row[4].is_null() ? "" : row[4].as<std::string>();
+        res.created_at = row[5].as<std::string>();
+        res.created_by_username = row[6].is_null() ? "" : row[6].as<std::string>();
+        results.push_back(res);
+    }
+    return results;
+}
+
+std::vector<Database::WikiSearchResult> Database::browse_wiki_pages(
+    const std::string& user_id, bool is_admin, int limit, int offset) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+
+    std::string sql =
+        "SELECT wp.id::text, wp.space_id::text, s.name, wp.title, "
+        "'' AS snippet, wp.created_at::text, u.username "
+        "FROM wiki_pages wp "
+        "JOIN spaces s ON wp.space_id = s.id "
+        "LEFT JOIN users u ON u.id = wp.created_by "
+        "WHERE wp.is_deleted = FALSE "
+        "AND wp.is_folder = FALSE "
         "AND (EXISTS (SELECT 1 FROM space_members sm WHERE sm.space_id = wp.space_id AND sm.user_id = $1)";
     if (is_admin) {
         sql += " OR TRUE";
@@ -6039,7 +6113,7 @@ std::vector<Database::WikiSearchResult> Database::search_wiki_pages(
         res.space_id = row[1].as<std::string>();
         res.space_name = row[2].is_null() ? "" : row[2].as<std::string>();
         res.title = row[3].as<std::string>();
-        res.snippet = row[4].is_null() ? "" : row[4].as<std::string>();
+        res.snippet = "";
         res.created_at = row[5].as<std::string>();
         res.created_by_username = row[6].is_null() ? "" : row[6].as<std::string>();
         results.push_back(res);

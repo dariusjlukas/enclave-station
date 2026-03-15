@@ -244,7 +244,11 @@ export function SpacePanel({
           {enabledTools.has('wiki') && (
             <button
               onClick={() => {
-                setActiveToolView({ type: 'wiki', spaceId });
+                if (isWikiActive) {
+                  useChatStore.getState().toggleWikiSidebar();
+                } else {
+                  setActiveToolView({ type: 'wiki', spaceId });
+                }
                 onSelect?.();
               }}
               className={`w-full text-left flex items-center gap-2 py-2.5 text-sm rounded-md px-3 transition-colors cursor-pointer ${

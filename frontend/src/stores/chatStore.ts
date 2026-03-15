@@ -36,6 +36,7 @@ interface ChatState {
     | { type: 'tasks'; spaceId: string }
     | { type: 'wiki'; spaceId: string }
     | null;
+  wikiSidebarOpen: boolean;
 
   // Server state
   serverArchived: boolean;
@@ -91,6 +92,8 @@ interface ChatState {
       | { type: 'wiki'; spaceId: string }
       | null,
   ) => void;
+  setWikiSidebarOpen: (open: boolean) => void;
+  toggleWikiSidebar: () => void;
   setUnreadCounts: (counts: Record<string, number>) => void;
   setMentionCounts: (counts: Record<string, number>) => void;
   incrementUnread: (channelId: string) => void;
@@ -149,6 +152,7 @@ export const useChatStore = create<ChatState>((set) => ({
   activeView: null,
   sidePanelCollapsed: false,
   activeToolView: null,
+  wikiSidebarOpen: true,
   serverArchived: false,
   serverLockedDown: false,
   serverName: 'EnclaveStation',
@@ -365,6 +369,10 @@ export const useChatStore = create<ChatState>((set) => ({
       // Clear active channel when entering a tool view
       activeChannelId: view ? null : state.activeChannelId,
     })),
+
+  setWikiSidebarOpen: (open) => set({ wikiSidebarOpen: open }),
+  toggleWikiSidebar: () =>
+    set((state) => ({ wikiSidebarOpen: !state.wikiSidebarOpen })),
 
   setUnreadCounts: (counts) => set({ unreadCounts: counts }),
   setMentionCounts: (counts) => set({ mentionCounts: counts }),

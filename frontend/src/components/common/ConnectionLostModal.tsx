@@ -42,7 +42,7 @@ export function ConnectionLostModal() {
       isDismissable={false}
       hideCloseButton
       backdrop='blur'
-      size={effectiveGame ? 'lg' : 'sm'}
+      size={effectiveGame === 'rubiks' ? 'xl' : effectiveGame ? 'lg' : 'sm'}
       classNames={{ wrapper: '!items-center !pt-0' }}
     >
       <ModalContent>
