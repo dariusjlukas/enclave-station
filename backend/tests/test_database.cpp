@@ -544,7 +544,7 @@ TEST_F(DatabaseTest, UpdateSpaceProfileColor) {
     auto user = db_->create_user("alice", "Alice", "KEY_A");
     auto space = db_->create_space("Team", "", true, user.id);
 
-    auto updated = db_->update_space(space.id, "Team", "", true, "write", "#00ff00");
+    auto updated = db_->update_space(space.id, "Team", "", true, "user", "#00ff00");
     EXPECT_EQ(updated.profile_color, "#00ff00");
 }
 

@@ -373,7 +373,7 @@ test.describe("Task permissions", () => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${admin.token}`,
         },
-        body: JSON.stringify({ user_id: viewer.userId, role: "read" }),
+        body: JSON.stringify({ user_id: viewer.userId, role: "user" }),
       },
     );
     expect(res.ok).toBeTruthy();
@@ -424,7 +424,7 @@ test.describe("Task permissions", () => {
           "Content-Type": "application/json",
           Authorization: `Bearer ${admin.token}`,
         },
-        body: JSON.stringify({ user_id: viewer.userId, role: "read" }),
+        body: JSON.stringify({ user_id: viewer.userId, role: "user" }),
       },
     );
     expect(res.ok).toBeTruthy();

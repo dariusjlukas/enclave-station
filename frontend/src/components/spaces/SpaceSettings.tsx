@@ -29,8 +29,8 @@ import { useChatStore } from '../../stores/chatStore';
 import * as api from '../../services/api';
 import type {
   Space,
-  ChannelMemberInfo,
-  ChannelRole,
+  SpaceMemberInfo,
+  SpaceRole,
   SpaceToolName,
 } from '../../types';
 import { UserPicker } from '../common/UserPicker';
@@ -83,13 +83,11 @@ export function SpaceSettings({ space, onClose }: Props) {
   const [name, setName] = useState(space.name);
   const [description, setDescription] = useState(space.description);
   const [isPublic, setIsPublic] = useState(space.is_public);
-  const [defaultRole, setDefaultRole] = useState<ChannelRole>(
-    space.default_role,
-  );
+  const [defaultRole, setDefaultRole] = useState<SpaceRole>(space.default_role);
   const [profileColor, setProfileColor] = useState(space.profile_color || '');
   const [saving, setSaving] = useState(false);
   const [inviteUserId, setInviteUserId] = useState<string[]>([]);
-  const [inviteRole, setInviteRole] = useState('write');
+  const [inviteRole, setInviteRole] = useState('user');
   const [inviting, setInviting] = useState(false);
   const [inviteSent, setInviteSent] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
@@ -144,10 +142,9 @@ export function SpaceSettings({ space, onClose }: Props) {
   const removeSpace = useChatStore((s) => s.removeSpace);
 
   const SPACE_RANK: Record<string, number> = {
-    owner: 3,
-    admin: 2,
-    write: 1,
-    read: 0,
+    owner: 2,
+    admin: 1,
+    user: 0,
   };
 
   // Actor's effective rank is the higher of space role and server role
@@ -199,7 +196,7 @@ export function SpaceSettings({ space, onClose }: Props) {
     }
   };
 
-  const handleKick = async (member: ChannelMemberInfo) => {
+  const handleKick = async (member: SpaceMemberInfo) => {
     if (!confirm(`Remove ${member.display_name} from ${space.name}?`)) return;
     try {
       await api.kickFromSpace(space.id, member.id);
@@ -499,15 +496,10 @@ export function SpaceSettings({ space, onClose }: Props) {
                       variant='bordered'
                       selectedKeys={[defaultRole]}
                       onChange={(e) =>
-                        setDefaultRole(e.target.value as ChannelRole)
+                        setDefaultRole(e.target.value as SpaceRole)
                       }
                     >
-                      <SelectItem key='write'>
-                        Write (can send messages)
-                      </SelectItem>
-                      <SelectItem key='read'>
-                        Read Only (can view only)
-                      </SelectItem>
+                      <SelectItem key='user'>User</SelectItem>
                     </Select>
                     <Button
                       color={isDirty ? 'warning' : 'primary'}
@@ -549,10 +541,9 @@ export function SpaceSettings({ space, onClose }: Props) {
                         const canEditMember =
                           canManage && (targetRank < actorRank || isSelf);
                         const roleItems = [
-                          { key: 'owner', label: 'Owner', rank: 3 },
-                          { key: 'admin', label: 'Admin', rank: 2 },
-                          { key: 'write', label: 'Write', rank: 1 },
-                          { key: 'read', label: 'Read', rank: 0 },
+                          { key: 'owner', label: 'Owner', rank: 2 },
+                          { key: 'admin', label: 'Admin', rank: 1 },
+                          { key: 'user', label: 'User', rank: 0 },
                         ].filter((r) => r.rank <= actorRank);
                         return canEditMember ? (
                           <div className='flex items-center gap-2 flex-shrink-0'>
@@ -613,8 +604,7 @@ export function SpaceSettings({ space, onClose }: Props) {
                       onChange={(e) => setInviteRole(e.target.value)}
                     >
                       <SelectItem key='admin'>Admin</SelectItem>
-                      <SelectItem key='write'>Write</SelectItem>
-                      <SelectItem key='read'>Read Only</SelectItem>
+                      <SelectItem key='user'>User</SelectItem>
                     </Select>
                     <Button
                       color='primary'

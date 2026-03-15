@@ -104,7 +104,7 @@ inline bool is_auth_method_enabled(Database& db, const std::string& method) {
 // Server role rank (owner=2, admin=1, user=0)
 int server_role_rank(const std::string& role);
 
-// Space/channel role rank (owner=3, admin=2, write=1, read=0)
+// Space role rank (owner=2, admin=1, user=0)
 int space_role_rank(const std::string& role);
 
 // Channel role rank (admin=2, write=1, read=0)

@@ -7,7 +7,7 @@ struct Space {
     std::string name;
     std::string description;
     bool is_public = true;
-    std::string default_role = "write";
+    std::string default_role = "user";
     std::string created_by;
     std::string created_at;
     bool is_archived = false;

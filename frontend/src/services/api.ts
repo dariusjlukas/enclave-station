@@ -856,7 +856,7 @@ export function createSpace(
   name: string,
   description?: string,
   isPublic = true,
-  defaultRole = 'write',
+  defaultRole = 'user',
 ) {
   return request<Space>('/spaces', {
     method: 'POST',

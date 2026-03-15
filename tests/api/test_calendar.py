@@ -436,22 +436,10 @@ class TestCalendarPermissions:
         assert r.status_code == 200
         assert r.json()["my_permission"] == "owner"
 
-    def test_write_member_gets_edit(self, client, admin_user, regular_user):
+    def test_user_member_gets_view(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         client.post(f"/api/spaces/{sp['id']}/join",
                     headers=regular_user["headers"])
-
-        r = client.get(
-            f"/api/spaces/{sp['id']}/calendar/events",
-            params={"start": "2026-03-01", "end": "2026-03-31"},
-            headers=regular_user["headers"])
-        assert r.status_code == 200
-        assert r.json()["my_permission"] == "edit"
-
-    def test_read_member_gets_view(self, client, admin_user, regular_user):
-        sp = _create_space(client, admin_user["headers"])
-        _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
 
         r = client.get(
             f"/api/spaces/{sp['id']}/calendar/events",
@@ -464,7 +452,7 @@ class TestCalendarPermissions:
                                             regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
 
         r = _create_event(client, sp["id"], regular_user["headers"])
         assert r.status_code == 403
@@ -473,7 +461,7 @@ class TestCalendarPermissions:
                                             regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
 
         r = _create_event(client, sp["id"], admin_user["headers"])
         event_id = r.json()["id"]
@@ -489,6 +477,11 @@ class TestCalendarPermissions:
         sp = _create_space(client, admin_user["headers"])
         client.post(f"/api/spaces/{sp['id']}/join",
                     headers=regular_user["headers"])
+        # Grant edit permission (user role defaults to view)
+        client.post(f"/api/spaces/{sp['id']}/calendar/permissions",
+                    json={"user_id": regular_user["user"]["id"],
+                          "permission": "edit"},
+                    headers=admin_user["headers"])
 
         r = _create_event(client, sp["id"], regular_user["headers"],
                           title="User Event")
@@ -499,6 +492,11 @@ class TestCalendarPermissions:
         sp = _create_space(client, admin_user["headers"])
         client.post(f"/api/spaces/{sp['id']}/join",
                     headers=regular_user["headers"])
+        # Grant edit permission (user role defaults to view)
+        client.post(f"/api/spaces/{sp['id']}/calendar/permissions",
+                    json={"user_id": regular_user["user"]["id"],
+                          "permission": "edit"},
+                    headers=admin_user["headers"])
 
         r = _create_event(client, sp["id"], regular_user["headers"])
         event_id = r.json()["id"]
@@ -513,6 +511,11 @@ class TestCalendarPermissions:
         sp = _create_space(client, admin_user["headers"])
         client.post(f"/api/spaces/{sp['id']}/join",
                     headers=regular_user["headers"])
+        # Grant edit permission (user role defaults to view)
+        client.post(f"/api/spaces/{sp['id']}/calendar/permissions",
+                    json={"user_id": regular_user["user"]["id"],
+                          "permission": "edit"},
+                    headers=admin_user["headers"])
 
         r = _create_event(client, sp["id"], admin_user["headers"])
         event_id = r.json()["id"]
@@ -525,9 +528,9 @@ class TestCalendarPermissions:
 
     def test_permission_escalation(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
-        # Add as read member
+        # Add as user member (defaults to view)
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
 
         # Without escalation: view
         r = client.get(
@@ -554,7 +557,7 @@ class TestCalendarPermissions:
     def test_get_permissions(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
         client.post(
             f"/api/spaces/{sp['id']}/calendar/permissions",
             json={"user_id": regular_user["user"]["id"],
@@ -573,7 +576,7 @@ class TestCalendarPermissions:
     def test_remove_permission(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
         client.post(
             f"/api/spaces/{sp['id']}/calendar/permissions",
             json={"user_id": regular_user["user"]["id"],
@@ -585,7 +588,7 @@ class TestCalendarPermissions:
             headers=admin_user["headers"])
         assert r.status_code == 200
 
-        # Should go back to view (base from read role)
+        # Should go back to view (base from user role)
         r = client.get(
             f"/api/spaces/{sp['id']}/calendar/events",
             params={"start": "2026-03-01", "end": "2026-03-31"},

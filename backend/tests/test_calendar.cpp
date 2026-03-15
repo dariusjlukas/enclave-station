@@ -290,7 +290,7 @@ TEST_F(CalendarTest, UpsertRsvp) {
 TEST_F(CalendarTest, MultipleUserRsvps) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "write");
+    db_->add_space_member(space.id, bob.id, "user");
 
     auto event = db_->create_calendar_event(
         space.id, "Team Lunch", "", "", "green",
@@ -308,7 +308,7 @@ TEST_F(CalendarTest, MultipleUserRsvps) {
 TEST_F(CalendarTest, SetAndGetPermission) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
 
     db_->set_calendar_permission(space.id, bob.id, "edit", alice.id);
 
@@ -319,7 +319,7 @@ TEST_F(CalendarTest, SetAndGetPermission) {
 TEST_F(CalendarTest, UpsertPermission) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
 
     db_->set_calendar_permission(space.id, bob.id, "view", alice.id);
     db_->set_calendar_permission(space.id, bob.id, "owner", alice.id);
@@ -331,7 +331,7 @@ TEST_F(CalendarTest, UpsertPermission) {
 TEST_F(CalendarTest, RemovePermission) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
 
     db_->set_calendar_permission(space.id, bob.id, "edit", alice.id);
     db_->remove_calendar_permission(space.id, bob.id);
@@ -344,8 +344,8 @@ TEST_F(CalendarTest, GetAllPermissions) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
     auto carol = db_->create_user("carol", "Carol", "KEY_CAROL");
-    db_->add_space_member(space.id, bob.id, "read");
-    db_->add_space_member(space.id, carol.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
+    db_->add_space_member(space.id, carol.id, "user");
 
     db_->set_calendar_permission(space.id, bob.id, "edit", alice.id);
     db_->set_calendar_permission(space.id, carol.id, "owner", alice.id);

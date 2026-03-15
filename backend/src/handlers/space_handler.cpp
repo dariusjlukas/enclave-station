@@ -104,7 +104,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     std::string name = j.at("name");
                     std::string description = j.value("description", "");
                     bool is_public = j.value("is_public", true);
-                    std::string default_role = j.value("default_role", "write");
+                    std::string default_role = j.value("default_role", "user");
 
                     auto sp = db.create_space(name, description, is_public, user_id, default_role);
 
@@ -330,7 +330,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     auto j = json::parse(body);
                     std::string target_user_id = j.at("user_id");
                     auto sp = db.find_space_by_id(space_id);
-                    std::string member_role = j.value("role", sp ? sp->default_role : "write");
+                    std::string member_role = j.value("role", sp ? sp->default_role : "user");
 
                     if (db.is_space_member(space_id, target_user_id)) {
                         res->writeStatus("400")->writeHeader("Content-Type", "application/json")
@@ -436,7 +436,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 try {
                     auto j = json::parse(body);
                     std::string new_role = j.at("role");
-                    if (new_role != "owner" && new_role != "admin" && new_role != "write" && new_role != "read") {
+                    if (new_role != "owner" && new_role != "admin" && new_role != "user") {
                         res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                             ->writeHeader("Access-Control-Allow-Origin", "*")
                             ->end(R"({"error":"Invalid role"})");

@@ -46,9 +46,8 @@ int server_role_rank(const std::string& role) {
 }
 
 int space_role_rank(const std::string& role) {
-    if (role == "owner") return 3;
-    if (role == "admin") return 2;
-    if (role == "write") return 1;
+    if (role == "owner") return 2;
+    if (role == "admin") return 1;
     return 0;
 }
 

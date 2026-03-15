@@ -601,20 +601,10 @@ class TestTaskPermissions:
         assert r.status_code == 200
         assert r.json()["my_permission"] == "owner"
 
-    def test_write_member_gets_edit(self, client, admin_user, regular_user):
+    def test_user_member_gets_view(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         client.post(f"/api/spaces/{sp['id']}/join",
                     headers=regular_user["headers"])
-
-        r = client.get(f"/api/spaces/{sp['id']}/tasks/boards",
-                       headers=regular_user["headers"])
-        assert r.status_code == 200
-        assert r.json()["my_permission"] == "edit"
-
-    def test_read_member_gets_view(self, client, admin_user, regular_user):
-        sp = _create_space(client, admin_user["headers"])
-        _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
 
         r = client.get(f"/api/spaces/{sp['id']}/tasks/boards",
                        headers=regular_user["headers"])
@@ -625,7 +615,7 @@ class TestTaskPermissions:
                                             regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
 
         r = _create_board(client, sp["id"], regular_user["headers"])
         assert r.status_code == 403
@@ -634,7 +624,7 @@ class TestTaskPermissions:
                                            regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
 
         r = _create_board(client, sp["id"], admin_user["headers"])
         board = r.json()
@@ -647,7 +637,7 @@ class TestTaskPermissions:
     def test_permission_escalation(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
 
         # Without escalation: view
         r = client.get(f"/api/spaces/{sp['id']}/tasks/boards",
@@ -670,7 +660,7 @@ class TestTaskPermissions:
     def test_get_permissions(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
         client.post(
             f"/api/spaces/{sp['id']}/tasks/permissions",
             json={"user_id": regular_user["user"]["id"],
@@ -685,7 +675,7 @@ class TestTaskPermissions:
     def test_remove_permission(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         _add_member_with_role(client, sp["id"], admin_user["headers"],
-                              regular_user, "read")
+                              regular_user, "user")
         client.post(
             f"/api/spaces/{sp['id']}/tasks/permissions",
             json={"user_id": regular_user["user"]["id"],

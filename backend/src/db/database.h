@@ -53,7 +53,7 @@ public:
     // Spaces
     Space create_space(const std::string& name, const std::string& description,
                        bool is_public, const std::string& created_by,
-                       const std::string& default_role = "write");
+                       const std::string& default_role = "user");
     std::vector<Space> list_user_spaces(const std::string& user_id);
     std::optional<Space> find_space_by_id(const std::string& id);
     Space update_space(const std::string& space_id, const std::string& name,
@@ -69,7 +69,7 @@ public:
     // Space membership
     bool is_space_member(const std::string& space_id, const std::string& user_id);
     void add_space_member(const std::string& space_id, const std::string& user_id,
-                          const std::string& role = "write");
+                          const std::string& role = "user");
     void remove_space_member(const std::string& space_id, const std::string& user_id);
     void update_space_member_role(const std::string& space_id, const std::string& user_id,
                                    const std::string& role);
@@ -207,7 +207,7 @@ public:
         std::string role, status, created_at;
     };
     std::string create_space_invite(const std::string& space_id, const std::string& invited_user_id,
-                                     const std::string& invited_by, const std::string& role = "write");
+                                     const std::string& invited_by, const std::string& role = "user");
     std::vector<SpaceInvite> list_pending_space_invites(const std::string& user_id);
     std::optional<SpaceInvite> get_space_invite(const std::string& invite_id);
     void update_space_invite_status(const std::string& invite_id, const std::string& status);

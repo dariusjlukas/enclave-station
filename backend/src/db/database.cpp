@@ -288,7 +288,7 @@ void Database::run_migrations() {
             description TEXT,
             icon VARCHAR(10) DEFAULT '',
             is_public BOOLEAN DEFAULT TRUE,
-            default_role VARCHAR(20) DEFAULT 'write',
+            default_role VARCHAR(20) DEFAULT 'user',
             created_by UUID REFERENCES users(id),
             created_at TIMESTAMPTZ DEFAULT NOW()
         );
@@ -296,7 +296,7 @@ void Database::run_migrations() {
         CREATE TABLE IF NOT EXISTS space_members (
             space_id UUID REFERENCES spaces(id) ON DELETE CASCADE,
             user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-            role VARCHAR(20) DEFAULT 'write',
+            role VARCHAR(20) DEFAULT 'user',
             joined_at TIMESTAMPTZ DEFAULT NOW(),
             PRIMARY KEY (space_id, user_id)
         );
@@ -328,7 +328,7 @@ void Database::run_migrations() {
             space_id UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
             invited_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             invited_by UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            role VARCHAR(20) DEFAULT 'write',
+            role VARCHAR(20) DEFAULT 'user',
             status VARCHAR(20) DEFAULT 'pending',
             created_at TIMESTAMPTZ DEFAULT NOW()
         );

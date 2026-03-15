@@ -136,8 +136,8 @@ class TestSpaceAccessControl:
                         headers=regular_user["headers"])
         assert r.status_code == 403
 
-    def test_write_member_cannot_create_space_channel(self, client, admin_user,
-                                                        regular_user):
+    def test_user_member_cannot_create_space_channel(self, client, admin_user,
+                                                       regular_user):
         r = client.post("/api/spaces", json={"name": "Team"},
                         headers=admin_user["headers"])
         sp_id = r.json()["id"]
@@ -148,7 +148,7 @@ class TestSpaceAccessControl:
                         headers=regular_user["headers"])
         assert r.status_code == 403
 
-    def test_write_member_cannot_update_space(self, client, admin_user, regular_user):
+    def test_user_member_cannot_update_space(self, client, admin_user, regular_user):
         r = client.post("/api/spaces", json={"name": "Team"},
                         headers=admin_user["headers"])
         sp_id = r.json()["id"]
@@ -158,8 +158,8 @@ class TestSpaceAccessControl:
                        headers=regular_user["headers"])
         assert r.status_code == 403
 
-    def test_write_member_cannot_invite(self, client, admin_user, regular_user,
-                                         second_regular_user):
+    def test_user_member_cannot_invite(self, client, admin_user, regular_user,
+                                        second_regular_user):
         r = client.post("/api/spaces", json={"name": "Team"},
                         headers=admin_user["headers"])
         sp_id = r.json()["id"]
@@ -271,7 +271,7 @@ class TestSpaceRoleHierarchy:
         # Admin tries to demote the other admin
         r = client.put(
             f"/api/spaces/{sp_id}/members/{second_regular_user['user']['id']}",
-            json={"role": "write"}, headers=regular_user["headers"])
+            json={"role": "user"}, headers=regular_user["headers"])
         assert r.status_code == 403
 
     def test_space_admin_cannot_promote_to_owner(self, client, admin_user,
@@ -288,32 +288,32 @@ class TestSpaceRoleHierarchy:
             json={"role": "owner"}, headers=regular_user["headers"])
         assert r.status_code == 403
 
-    def test_space_admin_can_promote_write_to_admin(self, client, admin_user,
-                                                      regular_user,
-                                                      second_regular_user):
+    def test_space_admin_can_promote_user_to_admin(self, client, admin_user,
+                                                     regular_user,
+                                                     second_regular_user):
         sp_id = self._create_space_with_members(client, admin_user, regular_user,
                                                  second_regular_user)
         # Promote regular to admin
         client.put(f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
                    json={"role": "admin"}, headers=admin_user["headers"])
-        # Admin promotes write member to admin (same rank, allowed)
+        # Admin promotes user member to admin (same rank, allowed)
         r = client.put(
             f"/api/spaces/{sp_id}/members/{second_regular_user['user']['id']}",
             json={"role": "admin"}, headers=regular_user["headers"])
         assert r.status_code == 200
 
-    def test_space_admin_can_demote_write_to_read(self, client, admin_user,
+    def test_space_owner_can_demote_admin_to_user(self, client, admin_user,
                                                     regular_user,
                                                     second_regular_user):
         sp_id = self._create_space_with_members(client, admin_user, regular_user,
                                                  second_regular_user)
-        # Promote regular to admin
+        # Promote both to admin
         client.put(f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
                    json={"role": "admin"}, headers=admin_user["headers"])
-        # Admin can demote write member (lower rank) to read
+        # Owner can demote admin to user
         r = client.put(
-            f"/api/spaces/{sp_id}/members/{second_regular_user['user']['id']}",
-            json={"role": "read"}, headers=regular_user["headers"])
+            f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
+            json={"role": "user"}, headers=admin_user["headers"])
         assert r.status_code == 200
 
 
@@ -338,7 +338,7 @@ class TestSelfDemotion:
         assert r.status_code == 200
 
     def test_space_admin_can_demote_self(self, client, admin_user, regular_user):
-        """Space admin can demote themselves to write."""
+        """Space admin can demote themselves to user."""
         r = client.post("/api/spaces", json={"name": "Team"},
                         headers=admin_user["headers"])
         sp_id = r.json()["id"]
@@ -347,10 +347,10 @@ class TestSelfDemotion:
         # Promote regular to admin
         client.put(f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
                    json={"role": "admin"}, headers=admin_user["headers"])
-        # Admin demotes themselves to write
+        # Admin demotes themselves to user
         r = client.put(
             f"/api/spaces/{sp_id}/members/{regular_user['user']['id']}",
-            json={"role": "write"}, headers=regular_user["headers"])
+            json={"role": "user"}, headers=regular_user["headers"])
         assert r.status_code == 200
 
     def test_channel_admin_can_demote_self(self, client, admin_user, regular_user):

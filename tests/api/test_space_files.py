@@ -153,16 +153,16 @@ class TestSpaceFilePermissions:
         # Space owner gets "owner" effective permission
         assert r.json()["my_permission"] == "owner"
 
-    def test_write_member_gets_edit(self, client, admin_user, regular_user):
+    def test_user_member_gets_view(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
-        # Join as default "write" role
+        # Join as default "user" role
         client.post(f"/api/spaces/{sp['id']}/join",
                     headers=regular_user["headers"])
 
         r = client.get(f"/api/spaces/{sp['id']}/files",
                        headers=regular_user["headers"])
         assert r.status_code == 200
-        assert r.json()["my_permission"] == "edit"
+        assert r.json()["my_permission"] == "view"
 
     def test_get_file_permissions(self, client, admin_user):
         sp = _create_space(client, admin_user["headers"])
@@ -245,7 +245,7 @@ class TestSpaceFilePermissions:
         r = _upload_file(client, sp["id"], admin_user["headers"])
         file_id = r.json()["id"]
 
-        # regular_user has "edit" on root, not "owner" on this file
+        # regular_user has "view" on root (user role), not "owner" on this file
         r = client.put(
             f"/api/spaces/{sp['id']}/files/{file_id}/permissions",
             json={"user_id": admin_user["user"]["id"], "permission": "view"},
@@ -255,9 +255,9 @@ class TestSpaceFilePermissions:
 
     def test_view_user_cannot_create_folder(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
-        # Add regular_user with read role
+        # Add regular_user with user role (defaults to "view" on tools)
         client.post(f"/api/spaces/{sp['id']}/members",
-                    json={"user_id": regular_user["user"]["id"], "role": "read"},
+                    json={"user_id": regular_user["user"]["id"], "role": "user"},
                     headers=admin_user["headers"])
 
         r = client.post(f"/api/spaces/{sp['id']}/files/folder",
@@ -268,7 +268,7 @@ class TestSpaceFilePermissions:
     def test_view_user_cannot_upload(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
         client.post(f"/api/spaces/{sp['id']}/members",
-                    json={"user_id": regular_user["user"]["id"], "role": "read"},
+                    json={"user_id": regular_user["user"]["id"], "role": "user"},
                     headers=admin_user["headers"])
 
         r = _upload_file(client, sp["id"], regular_user["headers"])
@@ -282,6 +282,13 @@ class TestSpaceFilePermissions:
         # Admin uploads file
         r = _upload_file(client, sp["id"], admin_user["headers"])
         file_id = r.json()["id"]
+
+        # Grant edit permission to regular user (user role defaults to view)
+        client.put(
+            f"/api/spaces/{sp['id']}/files/{file_id}/permissions",
+            json={"user_id": regular_user["user"]["id"], "permission": "edit"},
+            headers=admin_user["headers"],
+        )
 
         # Regular user (edit level) cannot delete (requires owner)
         r = client.delete(f"/api/spaces/{sp['id']}/files/{file_id}",
@@ -391,9 +398,9 @@ class TestSpaceFileVersions:
 
     def test_view_user_cannot_upload_version(self, client, admin_user, regular_user):
         sp = _create_space(client, admin_user["headers"])
-        # Add regular as read
+        # Add regular as user (defaults to "view" on tools)
         client.post(f"/api/spaces/{sp['id']}/members",
-                    json={"user_id": regular_user["user"]["id"], "role": "read"},
+                    json={"user_id": regular_user["user"]["id"], "role": "user"},
                     headers=admin_user["headers"])
 
         r = _upload_file(client, sp["id"], admin_user["headers"])

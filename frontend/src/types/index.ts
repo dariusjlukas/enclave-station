@@ -14,6 +14,7 @@ export interface User {
 }
 
 export type ChannelRole = 'owner' | 'admin' | 'write' | 'read';
+export type SpaceRole = 'owner' | 'admin' | 'user';
 
 export interface ChannelMemberInfo {
   id: string;
@@ -40,18 +41,27 @@ export interface Channel {
   conversation_name?: string;
 }
 
+export interface SpaceMemberInfo {
+  id: string;
+  username: string;
+  display_name: string;
+  is_online: boolean;
+  last_seen?: string;
+  role: SpaceRole;
+}
+
 export interface Space {
   id: string;
   name: string;
   description: string;
   is_public: boolean;
-  default_role: ChannelRole;
+  default_role: SpaceRole;
   is_archived?: boolean;
   avatar_file_id?: string;
   profile_color?: string;
-  my_role: ChannelRole;
+  my_role: SpaceRole;
   created_at: string;
-  members: ChannelMemberInfo[];
+  members: SpaceMemberInfo[];
   enabled_tools?: string[];
 }
 
@@ -165,7 +175,7 @@ export interface SpaceInvite {
   space_id: string;
   space_name: string;
   invited_by_username: string;
-  role: ChannelRole;
+  role: SpaceRole;
   created_at: string;
 }
 

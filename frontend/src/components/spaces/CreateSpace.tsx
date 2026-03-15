@@ -65,7 +65,7 @@ export function CreateSpace({ onClose }: Props) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isPublic, setIsPublic] = useState(true);
-  const [defaultRole, setDefaultRole] = useState('write');
+  const [defaultRole, setDefaultRole] = useState('user');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const setActiveView = useChatStore((s) => s.setActiveView);
@@ -263,8 +263,7 @@ export function CreateSpace({ onClose }: Props) {
                 selectedKeys={[defaultRole]}
                 onChange={(e) => setDefaultRole(e.target.value)}
               >
-                <SelectItem key='write'>Write (can send messages)</SelectItem>
-                <SelectItem key='read'>Read Only (can view only)</SelectItem>
+                <SelectItem key='user'>User</SelectItem>
               </Select>
             </ModalBody>
             <ModalFooter>

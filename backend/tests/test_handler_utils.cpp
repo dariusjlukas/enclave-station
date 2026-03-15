@@ -32,19 +32,15 @@ TEST(ServerRoleRank, Ordering) {
 // --- Space Role Rank Tests ---
 
 TEST(SpaceRoleRank, Owner) {
-    EXPECT_EQ(space_role_rank("owner"), 3);
+    EXPECT_EQ(space_role_rank("owner"), 2);
 }
 
 TEST(SpaceRoleRank, Admin) {
-    EXPECT_EQ(space_role_rank("admin"), 2);
+    EXPECT_EQ(space_role_rank("admin"), 1);
 }
 
-TEST(SpaceRoleRank, Write) {
-    EXPECT_EQ(space_role_rank("write"), 1);
-}
-
-TEST(SpaceRoleRank, Read) {
-    EXPECT_EQ(space_role_rank("read"), 0);
+TEST(SpaceRoleRank, User) {
+    EXPECT_EQ(space_role_rank("user"), 0);
 }
 
 TEST(SpaceRoleRank, UnknownRole) {
@@ -54,8 +50,7 @@ TEST(SpaceRoleRank, UnknownRole) {
 
 TEST(SpaceRoleRank, Ordering) {
     EXPECT_GT(space_role_rank("owner"), space_role_rank("admin"));
-    EXPECT_GT(space_role_rank("admin"), space_role_rank("write"));
-    EXPECT_GT(space_role_rank("write"), space_role_rank("read"));
+    EXPECT_GT(space_role_rank("admin"), space_role_rank("user"));
 }
 
 // --- Channel Role Rank Tests ---

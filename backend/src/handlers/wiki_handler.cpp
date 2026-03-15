@@ -940,14 +940,13 @@ std::string WikiHandler<SSL>::get_access_level(const std::string& space_id,
     auto space_role = db.get_space_member_role(space_id, user_id);
     if (space_role == "admin" || space_role == "owner") return "owner";
 
-    std::string base = (space_role == "write") ? "edit" : "view";
-
+    // "user" role members default to "view"; tool-level permissions can escalate
     auto wiki_perm = db.get_wiki_permission(space_id, user_id);
-    if (!wiki_perm.empty() && perm_rank(wiki_perm) > perm_rank(base)) {
+    if (!wiki_perm.empty()) {
         return wiki_perm;
     }
 
-    return base;
+    return "view";
 }
 
 template <bool SSL>

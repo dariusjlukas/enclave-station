@@ -566,16 +566,13 @@ std::string CalendarHandler<SSL>::get_access_level(const std::string& space_id,
     auto space_role = db.get_space_member_role(space_id, user_id);
     if (space_role == "admin" || space_role == "owner") return "owner";
 
-    // Base from space role
-    std::string base = (space_role == "write") ? "edit" : "view";
-
-    // Calendar-level permission escalation (monotonic: can only go up)
+    // "user" role members default to "view"; calendar-level permissions can escalate
     auto cal_perm = db.get_calendar_permission(space_id, user_id);
-    if (!cal_perm.empty() && perm_rank(cal_perm) > perm_rank(base)) {
+    if (!cal_perm.empty()) {
         return cal_perm;
     }
 
-    return base;
+    return "view";
 }
 
 template <bool SSL>

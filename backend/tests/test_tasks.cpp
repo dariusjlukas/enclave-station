@@ -473,7 +473,7 @@ TEST_F(TaskBoardTest, DuplicateDependencyUpserts) {
 TEST_F(TaskBoardTest, SetAndGetPermission) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
 
     db_->set_task_permission(space.id, bob.id, "edit", alice.id);
 
@@ -484,7 +484,7 @@ TEST_F(TaskBoardTest, SetAndGetPermission) {
 TEST_F(TaskBoardTest, UpsertPermission) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
 
     db_->set_task_permission(space.id, bob.id, "view", alice.id);
     db_->set_task_permission(space.id, bob.id, "owner", alice.id);
@@ -496,7 +496,7 @@ TEST_F(TaskBoardTest, UpsertPermission) {
 TEST_F(TaskBoardTest, RemovePermission) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
 
     db_->set_task_permission(space.id, bob.id, "edit", alice.id);
     db_->remove_task_permission(space.id, bob.id);
@@ -509,8 +509,8 @@ TEST_F(TaskBoardTest, GetAllPermissions) {
     auto [alice, space] = create_user_and_space("alice");
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
     auto carol = db_->create_user("carol", "Carol", "KEY_CAROL");
-    db_->add_space_member(space.id, bob.id, "read");
-    db_->add_space_member(space.id, carol.id, "read");
+    db_->add_space_member(space.id, bob.id, "user");
+    db_->add_space_member(space.id, carol.id, "user");
 
     db_->set_task_permission(space.id, bob.id, "edit", alice.id);
     db_->set_task_permission(space.id, carol.id, "owner", alice.id);

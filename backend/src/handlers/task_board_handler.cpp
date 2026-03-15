@@ -1181,14 +1181,13 @@ std::string TaskBoardHandler<SSL>::get_access_level(const std::string& space_id,
     auto space_role = db.get_space_member_role(space_id, user_id);
     if (space_role == "admin" || space_role == "owner") return "owner";
 
-    std::string base = (space_role == "write") ? "edit" : "view";
-
+    // "user" role members default to "view"; task-level permissions can escalate
     auto task_perm = db.get_task_permission(space_id, user_id);
-    if (!task_perm.empty() && perm_rank(task_perm) > perm_rank(base)) {
+    if (!task_perm.empty()) {
         return task_perm;
     }
 
-    return base;
+    return "view";
 }
 
 template <bool SSL>

@@ -7,6 +7,7 @@ import type {
   User,
   Channel,
   ChannelRole,
+  SpaceRole,
   Space,
   SpaceInvite,
   ChannelMemberInfo,
@@ -158,7 +159,7 @@ export function useWebSocketConnection() {
       wsService.on('space_role_changed', (data: unknown) => {
         const { space_id, role } = data as {
           space_id: string;
-          role: ChannelRole;
+          role: SpaceRole;
         };
         useChatStore.getState().updateSpace({ id: space_id, my_role: role });
       }),
@@ -196,7 +197,7 @@ export function useWebSocketConnection() {
         const { space_id, user_id, role } = data as {
           space_id: string;
           user_id: string;
-          role: ChannelRole;
+          role: SpaceRole;
         };
         const store = useChatStore.getState();
         const sp = store.spaces.find((s) => s.id === space_id);

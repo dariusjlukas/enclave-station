@@ -187,7 +187,7 @@ TEST_F(SpaceFileTest, AutoGrantOwnerOnFileCreate) {
 TEST_F(SpaceFileTest, SetAndGetPermission) {
     auto [user, space] = create_user_and_space();
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "write");
+    db_->add_space_member(space.id, bob.id, "user");
 
     auto folder = db_->create_space_folder(space.id, "", "Shared", user.id);
 
@@ -209,7 +209,7 @@ TEST_F(SpaceFileTest, SetAndGetPermission) {
 TEST_F(SpaceFileTest, UpsertPermission) {
     auto [user, space] = create_user_and_space();
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "write");
+    db_->add_space_member(space.id, bob.id, "user");
 
     auto folder = db_->create_space_folder(space.id, "", "Shared", user.id);
 
@@ -227,7 +227,7 @@ TEST_F(SpaceFileTest, UpsertPermission) {
 TEST_F(SpaceFileTest, RemovePermission) {
     auto [user, space] = create_user_and_space();
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "write");
+    db_->add_space_member(space.id, bob.id, "user");
 
     auto folder = db_->create_space_folder(space.id, "", "Shared", user.id);
     db_->set_file_permission(folder.id, bob.id, "edit", user.id);
@@ -242,7 +242,7 @@ TEST_F(SpaceFileTest, RemovePermission) {
 TEST_F(SpaceFileTest, GetEffectivePermissionDirect) {
     auto [user, space] = create_user_and_space();
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "write");
+    db_->add_space_member(space.id, bob.id, "user");
 
     auto folder = db_->create_space_folder(space.id, "", "Shared", user.id);
     db_->set_file_permission(folder.id, bob.id, "edit", user.id);
@@ -254,7 +254,7 @@ TEST_F(SpaceFileTest, GetEffectivePermissionDirect) {
 TEST_F(SpaceFileTest, GetEffectivePermissionInherited) {
     auto [user, space] = create_user_and_space();
     auto bob = db_->create_user("bob", "Bob", "KEY_BOB");
-    db_->add_space_member(space.id, bob.id, "write");
+    db_->add_space_member(space.id, bob.id, "user");
 
     auto parent = db_->create_space_folder(space.id, "", "Parent", user.id);
     db_->set_file_permission(parent.id, bob.id, "edit", user.id);

@@ -1367,16 +1367,14 @@ std::string SpaceFileHandler<SSL>::get_access_level(const std::string& space_id,
     auto space_role = db.get_space_member_role(space_id, user_id);
     if (space_role == "admin" || space_role == "owner") return "owner";
 
-    // Base from space role
-    std::string base = (space_role == "write") ? "edit" : "view";
+    // "user" role members default to "view"; file-level permissions can override
+    if (file_id.empty()) return "view";
 
-    if (file_id.empty()) return base;
-
-    // Get file-level permission (may be higher due to explicit grants)
+    // Get file-level permission
     auto file_perm = db.get_effective_file_permission(file_id, user_id);
+    if (!file_perm.empty()) return file_perm;
 
-    // Monotonic escalation: return the higher of base and file permission
-    return (perm_rank(file_perm) >= perm_rank(base)) ? file_perm : base;
+    return "view";
 }
 
 template <bool SSL>
