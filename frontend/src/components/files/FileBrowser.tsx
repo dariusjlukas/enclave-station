@@ -8,8 +8,6 @@ import {
   ModalHeader,
   ModalBody,
   ModalFooter,
-  Select,
-  SelectItem,
   Progress,
 } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -34,8 +32,6 @@ import {
   faClockRotateLeft,
   faEye,
   faRotateLeft,
-  faUserPlus,
-  faUserMinus,
   faXmark,
   faCheck,
 } from '@fortawesome/free-solid-svg-icons';
@@ -47,6 +43,7 @@ import type {
   SpaceFilePermission,
   SpaceFileVersion,
 } from '../../types';
+import { PermissionEditor } from '../common/PermissionEditor';
 
 function formatSize(bytes: number): string {
   if (bytes === 0) return '—';
@@ -143,8 +140,15 @@ interface Props {
 export function FileBrowser({ spaceId }: Props) {
   const spaces = useChatStore((s) => s.spaces);
   const space = spaces.find((s) => s.id === spaceId);
-  const currentUser = useChatStore((s) => s.user);
-  const users = useChatStore((s) => s.users);
+  const spaceMembers = useMemo(
+    () =>
+      (space?.members || []).map((m) => ({
+        id: m.id,
+        username: m.username,
+        display_name: m.display_name,
+      })),
+    [space?.members],
+  );
 
   const [files, setFiles] = useState<SpaceFile[]>([]);
   const [path, setPath] = useState<SpaceFilePath[]>([]);
@@ -175,9 +179,6 @@ export function FileBrowser({ spaceId }: Props) {
   const [permissions, setPermissions] = useState<SpaceFilePermission[]>([]);
   const [permLoading, setPermLoading] = useState(false);
   const [permMyLevel, setPermMyLevel] = useState('view');
-  const [addPermUserId, setAddPermUserId] = useState('');
-  const [addPermLevel, setAddPermLevel] = useState('view');
-  const [addPermSearch, setAddPermSearch] = useState('');
 
   // Version panel state
   const [versionFile, setVersionFile] = useState<SpaceFile | null>(null);
@@ -437,9 +438,6 @@ export function FileBrowser({ spaceId }: Props) {
   const openPermissions = async (file: SpaceFile) => {
     setPermFile(file);
     setPermLoading(true);
-    setAddPermSearch('');
-    setAddPermUserId('');
-    setAddPermLevel('view');
     try {
       const result = await api.getFilePermissions(spaceId, file.id);
       setPermissions(result.permissions);
@@ -452,49 +450,22 @@ export function FileBrowser({ spaceId }: Props) {
     }
   };
 
-  const handleSetPermission = async () => {
-    if (!permFile || !addPermUserId) return;
-    try {
-      await api.setFilePermission(
-        spaceId,
-        permFile.id,
-        addPermUserId,
-        addPermLevel,
-      );
-      const result = await api.getFilePermissions(spaceId, permFile.id);
-      setPermissions(result.permissions);
-      setAddPermUserId('');
-      setAddPermSearch('');
-      setAddPermLevel('view');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to set permission');
-    }
-  };
-
-  const handleRemovePermission = async (userId: string) => {
+  const handleSetFilePermission = async (
+    userId: string,
+    permission: string,
+  ) => {
     if (!permFile) return;
-    try {
-      await api.removeFilePermission(spaceId, permFile.id, userId);
-      const result = await api.getFilePermissions(spaceId, permFile.id);
-      setPermissions(result.permissions);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to remove permission');
-    }
+    await api.setFilePermission(spaceId, permFile.id, userId, permission);
+    const result = await api.getFilePermissions(spaceId, permFile.id);
+    setPermissions(result.permissions);
   };
 
-  const permUserSearch = useMemo(() => {
-    if (!addPermSearch.trim()) return [];
-    const q = addPermSearch.toLowerCase();
-    const existingIds = new Set(permissions.map((p) => p.user_id));
-    return users
-      .filter(
-        (u) =>
-          !existingIds.has(u.id) &&
-          (u.username.toLowerCase().includes(q) ||
-            (u.display_name && u.display_name.toLowerCase().includes(q))),
-      )
-      .slice(0, 8);
-  }, [users, permissions, addPermSearch]);
+  const handleRemoveFilePermission = async (userId: string) => {
+    if (!permFile) return;
+    await api.removeFilePermission(spaceId, permFile.id, userId);
+    const result = await api.getFilePermissions(spaceId, permFile.id);
+    setPermissions(result.permissions);
+  };
 
   // --- Versions ---
 
@@ -1037,167 +1008,21 @@ export function FileBrowser({ spaceId }: Props) {
       </div>
 
       {/* Permissions Modal */}
-      <Modal
+      <PermissionEditor
+        title={`Permissions — ${permFile?.name ?? ''}`}
+        description='Control who can view and edit this file. Space admins and owners always have full access.'
         isOpen={!!permFile}
         onClose={() => setPermFile(null)}
-        size='lg'
-        scrollBehavior='inside'
-      >
-        <ModalContent>
-          <ModalHeader className='flex items-center gap-2'>
-            <FontAwesomeIcon icon={faShield} className='text-primary' />
-            Permissions — {permFile?.name}
-          </ModalHeader>
-          <ModalBody>
-            {permLoading ? (
-              <div className='flex justify-center py-8'>
-                <Spinner />
-              </div>
-            ) : (
-              <>
-                {/* Current permissions list */}
-                {permissions.length > 0 ? (
-                  <div className='space-y-2'>
-                    {permissions.map((p) => (
-                      <div
-                        key={p.id}
-                        className='flex items-center justify-between px-3 py-2 rounded-lg bg-content2/50'
-                      >
-                        <div className='min-w-0'>
-                          <span className='text-sm font-medium'>
-                            {p.display_name || p.username}
-                          </span>
-                          <span className='text-xs text-default-400 ml-1'>
-                            @{p.username}
-                          </span>
-                        </div>
-                        <div className='flex items-center gap-2'>
-                          <span
-                            className={`text-xs px-2 py-0.5 rounded-full ${
-                              p.permission === 'owner'
-                                ? 'bg-warning/20 text-warning'
-                                : p.permission === 'edit'
-                                  ? 'bg-primary/20 text-primary'
-                                  : 'bg-default-100 text-default-500'
-                            }`}
-                          >
-                            {p.permission}
-                          </span>
-                          {canOwn(permMyLevel) &&
-                            p.user_id !== currentUser?.id && (
-                              <Button
-                                isIconOnly
-                                size='sm'
-                                variant='light'
-                                color='danger'
-                                title='Remove permission'
-                                onPress={() =>
-                                  handleRemovePermission(p.user_id)
-                                }
-                              >
-                                <FontAwesomeIcon
-                                  icon={faUserMinus}
-                                  className='text-xs'
-                                />
-                              </Button>
-                            )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className='text-sm text-default-400 text-center py-4'>
-                    No explicit permissions set. Access is inherited from the
-                    space role.
-                  </p>
-                )}
-
-                {/* Add permission - only for owners */}
-                {canOwn(permMyLevel) && (
-                  <div className='mt-4 pt-4 border-t border-divider'>
-                    <p className='text-sm font-medium mb-2'>
-                      <FontAwesomeIcon icon={faUserPlus} className='mr-1.5' />
-                      Grant Permission
-                    </p>
-                    <div className='flex gap-2 items-end'>
-                      <div className='flex-1 relative'>
-                        <Input
-                          size='sm'
-                          variant='bordered'
-                          placeholder='Search user...'
-                          value={addPermSearch}
-                          onValueChange={(v) => {
-                            setAddPermSearch(v);
-                            if (!v) setAddPermUserId('');
-                          }}
-                          description={
-                            addPermUserId
-                              ? `Selected: ${users.find((u) => u.id === addPermUserId)?.username}`
-                              : undefined
-                          }
-                        />
-                        {addPermSearch && !addPermUserId && (
-                          <div className='absolute z-20 top-full left-0 right-0 mt-1 bg-content1 border border-divider rounded-lg shadow-lg max-h-40 overflow-y-auto'>
-                            {permUserSearch.map((u) => (
-                              <button
-                                key={u.id}
-                                className='w-full text-left px-3 py-2 text-sm hover:bg-content2 transition-colors'
-                                onClick={() => {
-                                  setAddPermUserId(u.id);
-                                  setAddPermSearch(
-                                    u.display_name || u.username,
-                                  );
-                                }}
-                              >
-                                {u.display_name || u.username}{' '}
-                                <span className='text-default-400'>
-                                  @{u.username}
-                                </span>
-                              </button>
-                            ))}
-                            {permUserSearch.length === 0 && (
-                              <p className='px-3 py-2 text-sm text-default-400'>
-                                No users found
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <Select
-                        size='sm'
-                        variant='bordered'
-                        className='w-28'
-                        selectedKeys={[addPermLevel]}
-                        onSelectionChange={(keys) => {
-                          const val = Array.from(keys)[0] as string;
-                          if (val) setAddPermLevel(val);
-                        }}
-                      >
-                        <SelectItem key='view'>View</SelectItem>
-                        <SelectItem key='edit'>Edit</SelectItem>
-                        <SelectItem key='owner'>Owner</SelectItem>
-                      </Select>
-                      <Button
-                        size='sm'
-                        color='primary'
-                        isDisabled={!addPermUserId}
-                        onPress={handleSetPermission}
-                      >
-                        Grant
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant='flat' onPress={() => setPermFile(null)}>
-              Close
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+        permissions={permissions}
+        loading={permLoading}
+        availableUsers={spaceMembers}
+        canManage={canOwn(permMyLevel)}
+        onSet={handleSetFilePermission}
+        onRemove={handleRemoveFilePermission}
+        inlineEdit={false}
+        hideOwnerLevel={space?.is_personal}
+        searchAllUsers={space?.is_personal}
+      />
 
       {/* Versions Modal */}
       <Modal

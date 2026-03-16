@@ -35,6 +35,19 @@ struct Snapshot {
     std::optional<std::string> mfa_required_password;
     std::optional<std::string> mfa_required_pki;
     std::optional<std::string> mfa_required_passkey;
+
+    // Space storage
+    std::optional<std::string> default_space_storage_limit;
+
+    // Personal spaces
+    std::optional<std::string> personal_spaces_enabled;
+    std::optional<std::string> personal_spaces_files_enabled;
+    std::optional<std::string> personal_spaces_calendar_enabled;
+    std::optional<std::string> personal_spaces_tasks_enabled;
+    std::optional<std::string> personal_spaces_wiki_enabled;
+    std::optional<std::string> personal_spaces_minigames_enabled;
+    std::optional<std::string> personal_spaces_storage_limit;
+    std::optional<std::string> personal_spaces_total_storage_limit;
 };
 
 json build_settings_response(const Snapshot& snapshot);

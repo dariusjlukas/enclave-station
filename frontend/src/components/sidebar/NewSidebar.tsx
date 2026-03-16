@@ -8,6 +8,7 @@ interface Props {
   onBrowseChannels: () => void;
   onBrowseSpaces: () => void;
   onShowSpaceSettings: () => void;
+  onSharedWithMe?: () => void;
   open: boolean;
   onClose: () => void;
 }
@@ -18,6 +19,7 @@ export function NewSidebar({
   onBrowseChannels,
   onBrowseSpaces,
   onShowSpaceSettings,
+  onSharedWithMe,
   open,
   onClose,
 }: Props) {
@@ -36,7 +38,10 @@ export function NewSidebar({
           open ? 'translate-x-0' : '-translate-x-full'
         } ${sidePanelCollapsed ? 'w-16' : 'w-72'}`}
       >
-        <IconRail onBrowseSpaces={onBrowseSpaces} />
+        <IconRail
+          onBrowseSpaces={onBrowseSpaces}
+          onSharedWithMe={onSharedWithMe}
+        />
         <div
           className={`flex flex-col overflow-hidden transition-all duration-200 ${
             sidePanelCollapsed ? 'w-0 opacity-0' : 'flex-1 opacity-100'

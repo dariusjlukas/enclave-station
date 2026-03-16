@@ -525,7 +525,7 @@ function AnimationDriver({
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-export function RubiksCube() {
+export function RubiksCube({ large }: { large?: boolean } = {}) {
   const [cubeState, setCubeState] = useState<CubeState>(solvedState);
   const [moveCount, setMoveCount] = useState(0);
   const [solved, setSolved] = useState(false);
@@ -650,7 +650,8 @@ export function RubiksCube() {
         className='rounded-lg overflow-hidden rubiks-viewport'
         style={{
           width: '100%',
-          maxWidth: 600,
+          maxWidth: large ? 800 : 600,
+          maxHeight: large ? 'calc(100vh - 400px)' : undefined,
           aspectRatio: '1',
           background: '#0d1520',
         }}

@@ -871,3 +871,24 @@ export async function apiUpdateWikiPage(
   }
   return (await res.json()) as { id: string; title: string };
 }
+
+/**
+ * Enable personal spaces via admin settings.
+ */
+export async function apiEnablePersonalSpaces(
+  token: string,
+  config: ApiConfig = defaultConfig,
+): Promise<void> {
+  const res = await apiPut(
+    "/api/admin/settings",
+    { personal_spaces_enabled: true },
+    token,
+    config,
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `apiEnablePersonalSpaces failed (${res.status}): ${text.slice(0, 200)}`,
+    );
+  }
+}

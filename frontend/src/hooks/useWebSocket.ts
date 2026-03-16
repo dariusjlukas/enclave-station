@@ -146,6 +146,12 @@ export function useWebSocketConnection() {
         useChatStore.getState().updateChannel(channel);
       }),
 
+      wsService.on('refresh_spaces', () => {
+        api.listSpaces().then((spaces) => {
+          useChatStore.getState().setSpaces(spaces);
+        });
+      }),
+
       wsService.on('space_added', (data: unknown) => {
         const { space } = data as { space: Space };
         useChatStore.getState().addSpace(space);

@@ -1,4 +1,5 @@
 #include "db/database.h"
+#include <algorithm>
 #include <iostream>
 #include <random>
 #include <sstream>
@@ -854,6 +855,18 @@ void Database::run_migrations() {
         ALTER TABLE wiki_page_versions ADD COLUMN IF NOT EXISTS is_major BOOLEAN DEFAULT FALSE;
     )SQL");
 
+    // Personal spaces
+    txn.exec(R"SQL(
+        ALTER TABLE spaces ADD COLUMN IF NOT EXISTS is_personal BOOLEAN DEFAULT FALSE;
+    )SQL");
+    txn.exec(R"SQL(
+        ALTER TABLE spaces ADD COLUMN IF NOT EXISTS personal_owner_id UUID REFERENCES users(id) ON DELETE CASCADE;
+    )SQL");
+    txn.exec(R"SQL(
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_spaces_personal_owner
+            ON spaces(personal_owner_id) WHERE is_personal = TRUE;
+    )SQL");
+
     txn.commit();
     std::cout << "[DB] Migrations complete" << std::endl;
 }
@@ -1483,11 +1496,14 @@ static Space row_to_space(const pqxx::row& row) {
     sp.is_archived = row[7].as<bool>();
     sp.avatar_file_id = row[8].is_null() ? "" : row[8].as<std::string>();
     sp.profile_color = row[9].is_null() ? "" : row[9].as<std::string>();
+    sp.is_personal = row[10].as<bool>();
+    sp.personal_owner_id = row[11].is_null() ? "" : row[11].as<std::string>();
     return sp;
 }
 
 static const char* SP_COLS = "s.id, s.name, s.description, s.is_public, s.default_role, "
-    "s.created_by, s.created_at::text, s.is_archived, s.avatar_file_id, s.profile_color";
+    "s.created_by, s.created_at::text, s.is_archived, s.avatar_file_id, s.profile_color, "
+    "s.is_personal, s.personal_owner_id";
 
 Space Database::create_space(const std::string& name, const std::string& description,
                               bool is_public, const std::string& created_by,
@@ -1503,6 +1519,18 @@ Space Database::create_space(const std::string& name, const std::string& descrip
     txn.exec_params(
         "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'owner')",
         space_id, created_by);
+    // Apply default space storage limit if set
+    auto limit_row = txn.exec_params(
+        "SELECT value FROM server_settings WHERE key = 'default_space_storage_limit'");
+    if (!limit_row.empty()) {
+        int64_t limit = std::stoll(limit_row[0][0].as<std::string>());
+        if (limit > 0) {
+            txn.exec_params(
+                "INSERT INTO server_settings (key, value) VALUES ($1, $2) "
+                "ON CONFLICT (key) DO UPDATE SET value = $2",
+                "space_storage_limit_" + space_id, limit_row[0][0].as<std::string>());
+        }
+    }
     auto r = txn.exec_params(
         std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", space_id);
     txn.commit();
@@ -1603,6 +1631,198 @@ void Database::clear_space_avatar(const std::string& space_id) {
     pqxx::work txn(get_conn());
     txn.exec_params("UPDATE spaces SET avatar_file_id = '' WHERE id = $1", space_id);
     txn.commit();
+}
+
+// --- Personal Spaces ---
+
+Space Database::create_personal_space(const std::string& user_id, const std::string& display_name) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::string space_name = display_name + "'s Space";
+    auto ins = txn.exec_params(
+        "INSERT INTO spaces (name, description, is_public, default_role, created_by, is_personal, personal_owner_id) "
+        "VALUES ($1, '', FALSE, 'user', $2, TRUE, $2) RETURNING id",
+        space_name, user_id);
+    std::string space_id = ins[0][0].as<std::string>();
+    txn.exec_params(
+        "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'owner')",
+        space_id, user_id);
+    // Enable tools based on admin settings
+    const std::string tools[] = {"files", "calendar", "tasks", "wiki", "minigames"};
+    for (const auto& tool : tools) {
+        auto setting = txn.exec_params(
+            "SELECT value FROM server_settings WHERE key = $1",
+            "personal_spaces_" + tool + "_enabled");
+        bool allowed = setting.empty() || setting[0][0].as<std::string>() != "false";
+        if (allowed) {
+            txn.exec_params(
+                "INSERT INTO space_tools (space_id, tool_name, enabled_by) VALUES ($1, $2, $3) "
+                "ON CONFLICT DO NOTHING",
+                space_id, tool, user_id);
+        }
+    }
+    // Apply storage limit if set
+    auto limit_row = txn.exec_params(
+        "SELECT value FROM server_settings WHERE key = 'personal_spaces_storage_limit'");
+    if (!limit_row.empty()) {
+        std::string limit_str = limit_row[0][0].as<std::string>();
+        int64_t limit = std::stoll(limit_str);
+        if (limit > 0) {
+            txn.exec_params(
+                "INSERT INTO server_settings (key, value) VALUES ($1, $2) "
+                "ON CONFLICT (key) DO UPDATE SET value = $2",
+                "space_storage_limit_" + space_id, limit_str);
+        }
+    }
+    auto r = txn.exec_params(
+        std::string("SELECT ") + SP_COLS + " FROM spaces s WHERE s.id = $1", space_id);
+    txn.commit();
+    return row_to_space(r[0]);
+}
+
+std::optional<Space> Database::find_personal_space(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec_params(
+        std::string("SELECT ") + SP_COLS +
+        " FROM spaces s WHERE s.is_personal = TRUE AND s.personal_owner_id = $1",
+        user_id);
+    txn.commit();
+    if (r.empty()) return std::nullopt;
+    return row_to_space(r[0]);
+}
+
+Space Database::get_or_create_personal_space(const std::string& user_id, const std::string& display_name) {
+    auto existing = find_personal_space(user_id);
+    if (existing) return *existing;
+    return create_personal_space(user_id, display_name);
+}
+
+void Database::sync_personal_space_tools(const std::string& space_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    const std::string tools[] = {"files", "calendar", "tasks", "wiki", "minigames"};
+    for (const auto& tool : tools) {
+        auto setting = txn.exec_params(
+            "SELECT value FROM server_settings WHERE key = $1",
+            "personal_spaces_" + tool + "_enabled");
+        bool allowed = setting.empty() || setting[0][0].as<std::string>() != "false";
+        auto enabled = txn.exec_params(
+            "SELECT 1 FROM space_tools WHERE space_id = $1 AND tool_name = $2",
+            space_id, tool);
+        bool currently_enabled = !enabled.empty();
+        // Only force-disable tools the admin has disallowed.
+        // Don't force-enable — the user may have manually disabled an allowed tool.
+        if (!allowed && currently_enabled) {
+            txn.exec_params(
+                "DELETE FROM space_tools WHERE space_id = $1 AND tool_name = $2",
+                space_id, tool);
+        }
+    }
+    txn.commit();
+}
+
+bool Database::has_resource_permission_in_space(const std::string& space_id, const std::string& user_id,
+                                                  const std::string& tool_type) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    pqxx::result r;
+    if (tool_type == "files") {
+        r = txn.exec_params(
+            "SELECT 1 FROM space_file_permissions sfp "
+            "JOIN space_files sf ON sfp.file_id = sf.id "
+            "WHERE sf.space_id = $1 AND sfp.user_id = $2 LIMIT 1",
+            space_id, user_id);
+    } else if (tool_type == "wiki") {
+        r = txn.exec_params(
+            "SELECT 1 FROM wiki_permissions WHERE space_id = $1 AND user_id = $2 "
+            "UNION ALL "
+            "SELECT 1 FROM wiki_page_permissions wpp "
+            "JOIN wiki_pages wp ON wpp.page_id = wp.id "
+            "WHERE wp.space_id = $1 AND wpp.user_id = $2 LIMIT 1",
+            space_id, user_id);
+    } else if (tool_type == "calendar") {
+        r = txn.exec_params(
+            "SELECT 1 FROM calendar_permissions WHERE space_id = $1 AND user_id = $2 LIMIT 1",
+            space_id, user_id);
+    } else if (tool_type == "tasks") {
+        r = txn.exec_params(
+            "SELECT 1 FROM task_board_permissions WHERE space_id = $1 AND user_id = $2 LIMIT 1",
+            space_id, user_id);
+    }
+    txn.commit();
+    return !r.empty();
+}
+
+std::vector<Database::SharedResource> Database::list_shared_with_user(const std::string& user_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::vector<SharedResource> results;
+
+    // Files shared from personal spaces
+    auto files = txn.exec_params(
+        "SELECT sf.id, sf.name, sf.space_id, u.username, sfp.permission "
+        "FROM space_file_permissions sfp "
+        "JOIN space_files sf ON sfp.file_id = sf.id "
+        "JOIN spaces s ON sf.space_id = s.id "
+        "JOIN users u ON s.personal_owner_id = u.id "
+        "WHERE s.is_personal = TRUE AND sfp.user_id = $1 AND sf.is_deleted = FALSE "
+        "AND s.personal_owner_id != $1",
+        user_id);
+    for (const auto& row : files) {
+        results.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
+                           row[2].as<std::string>(), row[3].as<std::string>(),
+                           row[4].as<std::string>(), "file"});
+    }
+
+    // Wiki pages shared from personal spaces
+    auto wiki = txn.exec_params(
+        "SELECT wp.id, wp.title, wp.space_id, u.username, wpp.permission "
+        "FROM wiki_page_permissions wpp "
+        "JOIN wiki_pages wp ON wpp.page_id = wp.id "
+        "JOIN spaces s ON wp.space_id = s.id "
+        "JOIN users u ON s.personal_owner_id = u.id "
+        "WHERE s.is_personal = TRUE AND wpp.user_id = $1 AND wp.is_deleted = FALSE "
+        "AND s.personal_owner_id != $1",
+        user_id);
+    for (const auto& row : wiki) {
+        results.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
+                           row[2].as<std::string>(), row[3].as<std::string>(),
+                           row[4].as<std::string>(), "wiki_page"});
+    }
+
+    // Calendar permissions from personal spaces
+    auto cal = txn.exec_params(
+        "SELECT s.id, s.name, s.id, u.username, cp.permission "
+        "FROM calendar_permissions cp "
+        "JOIN spaces s ON cp.space_id = s.id "
+        "JOIN users u ON s.personal_owner_id = u.id "
+        "WHERE s.is_personal = TRUE AND cp.user_id = $1 "
+        "AND s.personal_owner_id != $1",
+        user_id);
+    for (const auto& row : cal) {
+        results.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
+                           row[2].as<std::string>(), row[3].as<std::string>(),
+                           row[4].as<std::string>(), "calendar"});
+    }
+
+    // Task board permissions from personal spaces
+    auto tasks = txn.exec_params(
+        "SELECT s.id, s.name, s.id, u.username, tp.permission "
+        "FROM task_board_permissions tp "
+        "JOIN spaces s ON tp.space_id = s.id "
+        "JOIN users u ON s.personal_owner_id = u.id "
+        "WHERE s.is_personal = TRUE AND tp.user_id = $1 "
+        "AND s.personal_owner_id != $1",
+        user_id);
+    for (const auto& row : tasks) {
+        results.push_back({row[0].as<std::string>(), row[1].as<std::string>(),
+                           row[2].as<std::string>(), row[3].as<std::string>(),
+                           row[4].as<std::string>(), "task_board"});
+    }
+
+    txn.commit();
+    return results;
 }
 
 bool Database::is_space_member(const std::string& space_id, const std::string& user_id) {
@@ -3824,6 +4044,62 @@ void Database::soft_delete_space_file(const std::string& file_id) {
     txn.commit();
 }
 
+std::vector<std::string> Database::hard_delete_space_file(const std::string& file_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+
+    // Find all descendant file IDs (recursive for folders)
+    auto descendants = txn.exec_params(
+        "WITH RECURSIVE descendants AS ("
+        "  SELECT id FROM space_files WHERE id = $1 "
+        "  UNION ALL "
+        "  SELECT sf.id FROM space_files sf "
+        "  JOIN descendants d ON sf.parent_id = d.id"
+        ") "
+        "SELECT id FROM descendants",
+        file_id);
+
+    std::vector<std::string> file_ids;
+    for (const auto& row : descendants) {
+        file_ids.push_back(row[0].as<std::string>());
+    }
+
+    // Collect all disk_file_ids from versions of these files
+    std::vector<std::string> disk_ids;
+    for (const auto& fid : file_ids) {
+        auto versions = txn.exec_params(
+            "SELECT disk_file_id FROM space_file_versions WHERE file_id = $1", fid);
+        for (const auto& vrow : versions) {
+            std::string did = vrow[0].as<std::string>();
+            if (!did.empty()) disk_ids.push_back(did);
+        }
+        // Also get the file's own disk_file_id (for the current version pointer)
+        auto file_row = txn.exec_params(
+            "SELECT disk_file_id FROM space_files WHERE id = $1", fid);
+        if (!file_row.empty()) {
+            std::string did = file_row[0][0].is_null() ? "" : file_row[0][0].as<std::string>();
+            if (!did.empty()) disk_ids.push_back(did);
+        }
+    }
+
+    // Delete versions, permissions, then files (respecting FK order)
+    for (const auto& fid : file_ids) {
+        txn.exec_params("DELETE FROM space_file_versions WHERE file_id = $1", fid);
+        txn.exec_params("DELETE FROM space_file_permissions WHERE file_id = $1", fid);
+    }
+    // Delete files in reverse order (children first) to avoid FK issues
+    for (auto it = file_ids.rbegin(); it != file_ids.rend(); ++it) {
+        txn.exec_params("DELETE FROM space_files WHERE id = $1", *it);
+    }
+
+    txn.commit();
+
+    // Deduplicate disk_ids (a file and its version may reference the same disk_file_id)
+    std::sort(disk_ids.begin(), disk_ids.end());
+    disk_ids.erase(std::unique(disk_ids.begin(), disk_ids.end()), disk_ids.end());
+    return disk_ids;
+}
+
 void Database::set_space_file_tool_source(const std::string& file_id, const std::string& tool_source) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
@@ -3831,15 +4107,73 @@ void Database::set_space_file_tool_source(const std::string& file_id, const std:
     txn.commit();
 }
 
+std::vector<Database::StorageBreakdownEntry> Database::get_space_storage_breakdown(
+    const std::string& space_id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    std::vector<StorageBreakdownEntry> result;
+
+    // Space files grouped by tool_source
+    auto tools = txn.exec_params(
+        "SELECT COALESCE(sf.tool_source, 'files'), SUM(v.file_size) "
+        "FROM space_file_versions v "
+        "JOIN space_files sf ON sf.id = v.file_id "
+        "WHERE sf.space_id = $1 AND sf.is_deleted = FALSE "
+        "GROUP BY COALESCE(sf.tool_source, 'files') "
+        "ORDER BY SUM(v.file_size) DESC",
+        space_id);
+    // Map tool_source to display names
+    const std::map<std::string, std::string> tool_labels = {
+        {"files", "Files"}, {"wiki", "Wiki"}, {"calendar", "Calendar"}, {"tasks", "Tasks"}
+    };
+    for (const auto& row : tools) {
+        std::string source = row[0].as<std::string>();
+        int64_t used = row[1].as<int64_t>();
+        std::string name = tool_labels.count(source) ? tool_labels.at(source) : source;
+        result.push_back({name, "tool", used});
+    }
+
+    // Channel message attachments grouped by channel
+    auto channels = txn.exec_params(
+        "SELECT c.name, COALESCE(SUM(m.file_size), 0) "
+        "FROM messages m "
+        "JOIN channels c ON c.id = m.channel_id "
+        "WHERE c.space_id = $1 AND m.file_id IS NOT NULL AND m.file_size > 0 "
+        "GROUP BY c.id, c.name "
+        "ORDER BY SUM(m.file_size) DESC",
+        space_id);
+    for (const auto& row : channels) {
+        std::string name = "#" + row[0].as<std::string>();
+        int64_t used = row[1].as<int64_t>();
+        result.push_back({name, "channel", used});
+    }
+
+    txn.commit();
+    return result;
+}
+
+int64_t Database::get_total_personal_spaces_storage_used() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    pqxx::work txn(get_conn());
+    auto r = txn.exec(
+        "SELECT COALESCE(SUM(v.file_size), 0) "
+        "FROM space_file_versions v "
+        "JOIN space_files sf ON sf.id = v.file_id "
+        "JOIN spaces s ON s.id = sf.space_id "
+        "WHERE s.is_personal = TRUE AND sf.is_deleted = FALSE");
+    txn.commit();
+    return r[0][0].as<int64_t>();
+}
+
 int64_t Database::get_space_storage_used(const std::string& space_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     pqxx::work txn(get_conn());
-    // Include all versions, not just current files (old versions count against storage)
+    // Include all versions of non-deleted files
     auto r = txn.exec_params(
         "SELECT COALESCE(SUM(v.file_size), 0) "
         "FROM space_file_versions v "
         "JOIN space_files sf ON sf.id = v.file_id "
-        "WHERE sf.space_id = $1",
+        "WHERE sf.space_id = $1 AND sf.is_deleted = FALSE",
         space_id);
     txn.commit();
     return r[0][0].as<int64_t>();
@@ -4060,10 +4394,13 @@ std::vector<Database::SpaceStorageInfo> Database::get_all_space_storage() {
     auto r = txn.exec(
         "SELECT s.id::text, s.name, "
         "COALESCE((SELECT SUM(v.file_size) FROM space_file_versions v "
-        "  JOIN space_files sf ON sf.id = v.file_id WHERE sf.space_id = s.id), 0), "
-        "s.storage_limit, "
+        "  JOIN space_files sf ON sf.id = v.file_id WHERE sf.space_id = s.id AND sf.is_deleted = FALSE), 0), "
+        "COALESCE((SELECT ss.value::bigint FROM server_settings ss "
+        "  WHERE ss.key = 'space_storage_limit_' || s.id::text), 0), "
         "COALESCE((SELECT COUNT(*) FROM space_files sf2 "
-        "  WHERE sf2.space_id = s.id AND sf2.is_deleted = FALSE AND sf2.is_folder = FALSE), 0) "
+        "  WHERE sf2.space_id = s.id AND sf2.is_deleted = FALSE AND sf2.is_folder = FALSE), 0), "
+        "s.is_personal, "
+        "COALESCE((SELECT u.display_name FROM users u WHERE u.id = s.personal_owner_id), '') "
         "FROM spaces s ORDER BY s.name");
     txn.commit();
     std::vector<SpaceStorageInfo> result;
@@ -4074,6 +4411,8 @@ std::vector<Database::SpaceStorageInfo> Database::get_all_space_storage() {
         info.storage_used = row[2].as<int64_t>();
         info.storage_limit = row[3].as<int64_t>();
         info.file_count = row[4].as<int>();
+        info.is_personal = row[5].as<bool>();
+        info.personal_owner_name = row[6].is_null() ? "" : row[6].as<std::string>();
         result.push_back(info);
     }
     return result;

@@ -209,6 +209,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     return;
                 }
 
+                // Check aggregate personal spaces storage limit
+                if (check_personal_total_limit(res, space_id, static_cast<int64_t>(body->size()))) return;
+
                 std::string disk_file_id = format_utils::random_hex(32);
                 std::string path = config.upload_dir + "/" + disk_file_id;
                 std::ofstream out(path, std::ios::binary);
@@ -319,6 +322,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                         ->end(R"({"error":"Space storage limit reached"})");
                     return;
                 }
+
+                // Check aggregate personal spaces storage limit
+                if (check_personal_total_limit(res, space_id, total_size)) return;
 
                 json metadata = {
                     {"filename", filename}, {"content_type", content_type},
@@ -538,6 +544,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                         ->end(R"({"error":"Space storage limit reached"})");
                     return;
                 }
+
+                // Check aggregate personal spaces storage limit
+                if (check_personal_total_limit(res, space_id, total_size)) return;
 
                 json metadata = {
                     {"space_id", space_id}, {"file_id", file_id},
@@ -876,7 +885,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         res->onAborted([]() {});
     });
 
-    // Delete file/folder (soft delete) — requires "owner" permission
+    // Delete file/folder — requires "owner" permission
     app.del("/api/spaces/:spaceId/files/:fileId", [this](auto* res, auto* req) {
         std::string user_id = get_user_id(res, req);
         if (user_id.empty()) return;
@@ -894,7 +903,14 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             return;
         }
 
-        db.soft_delete_space_file(file_id);
+        // Hard delete: remove DB records and collect disk file IDs
+        auto disk_ids = db.hard_delete_space_file(file_id);
+
+        // Remove files from disk
+        for (const auto& did : disk_ids) {
+            std::string path = config.upload_dir + "/" + did;
+            std::filesystem::remove(path);
+        }
 
         res->writeHeader("Content-Type", "application/json")
             ->writeHeader("Access-Control-Allow-Origin", "*")
@@ -910,8 +926,21 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (!check_space_access(res, space_id, user_id)) return;
 
         int64_t used = db.get_space_storage_used(space_id);
+        int64_t limit = 0;
+        auto limit_str = db.get_setting("space_storage_limit_" + space_id);
+        if (limit_str) {
+            try { limit = std::stoll(*limit_str); } catch (...) {}
+        }
 
-        json resp = {{"used", used}};
+        auto breakdown = db.get_space_storage_breakdown(space_id);
+        json breakdown_arr = json::array();
+        for (const auto& entry : breakdown) {
+            if (entry.used > 0) {
+                breakdown_arr.push_back({{"name", entry.name}, {"type", entry.type}, {"used", entry.used}});
+            }
+        }
+
+        json resp = {{"used", used}, {"limit", limit}, {"breakdown", breakdown_arr}};
         res->writeHeader("Content-Type", "application/json")
             ->writeHeader("Access-Control-Allow-Origin", "*")
             ->end(resp.dump());
@@ -982,6 +1011,15 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                         ->writeHeader("Access-Control-Allow-Origin", "*")
                         ->end(R"json({"error":"Invalid permission level (must be owner, edit, or view)"})json");
+                    return;
+                }
+
+                // Personal spaces: only view and edit allowed, not owner
+                auto space_perm_check = db.find_space_by_id(space_id);
+                if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->writeHeader("Access-Control-Allow-Origin", "*")
+                        ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
                     return;
                 }
 
@@ -1131,6 +1169,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     return;
                 }
 
+                // Check aggregate personal spaces storage limit
+                if (check_personal_total_limit(res, space_id, static_cast<int64_t>(body->size()))) return;
+
                 std::string disk_file_id = format_utils::random_hex(32);
                 std::string path = config.upload_dir + "/" + disk_file_id;
                 std::ofstream out(path, std::ios::binary);
@@ -1276,7 +1317,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             arr.push_back({
                 {"space_id", s.space_id}, {"space_name", s.space_name},
                 {"storage_used", s.storage_used}, {"storage_limit", s.storage_limit},
-                {"file_count", s.file_count}
+                {"file_count", s.file_count},
+                {"is_personal", s.is_personal},
+                {"personal_owner_name", s.personal_owner_name}
             });
         }
 
@@ -1349,6 +1392,12 @@ bool SpaceFileHandler<SSL>::check_space_access(uWS::HttpResponse<SSL>* res,
     auto user = db.find_user_by_id(user_id);
     if (user && (user->role == "admin" || user->role == "owner")) return true;
 
+    // Allow access to personal spaces if user has per-resource permissions
+    auto space = db.find_space_by_id(space_id);
+    if (space && space->is_personal) {
+        if (db.has_resource_permission_in_space(space_id, user_id, "files")) return true;
+    }
+
     res->writeStatus("403")->writeHeader("Content-Type", "application/json")
         ->writeHeader("Access-Control-Allow-Origin", "*")
         ->end(R"({"error":"Not a member of this space"})");
@@ -1366,6 +1415,14 @@ std::string SpaceFileHandler<SSL>::get_access_level(const std::string& space_id,
     // Space admin/owner → full access
     auto space_role = db.get_space_member_role(space_id, user_id);
     if (space_role == "admin" || space_role == "owner") return "owner";
+
+    // For personal spaces, non-members only get access via explicit file permissions
+    auto space = db.find_space_by_id(space_id);
+    if (space && space->is_personal && space_role.empty()) {
+        if (file_id.empty()) return "none";
+        auto file_perm = db.get_effective_file_permission(file_id, user_id);
+        return file_perm.empty() ? "none" : file_perm;
+    }
 
     // "user" role members default to "view"; file-level permissions can override
     if (file_id.empty()) return "view";
@@ -1397,6 +1454,29 @@ int SpaceFileHandler<SSL>::perm_rank(const std::string& p) {
     if (p == "owner") return 2;
     if (p == "edit") return 1;
     return 0;
+}
+
+template <bool SSL>
+bool SpaceFileHandler<SSL>::check_personal_total_limit(uWS::HttpResponse<SSL>* res,
+                                                         const std::string& space_id,
+                                                         int64_t upload_size) {
+    auto space = db.find_space_by_id(space_id);
+    if (!space || !space->is_personal) return false;
+
+    auto limit_str = db.get_setting("personal_spaces_total_storage_limit");
+    if (!limit_str) return false;
+    int64_t limit = 0;
+    try { limit = std::stoll(*limit_str); } catch (...) { return false; }
+    if (limit <= 0) return false;
+
+    int64_t total_used = db.get_total_personal_spaces_storage_used();
+    if (total_used + upload_size > limit) {
+        res->writeStatus("413")->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Total personal spaces storage limit reached"})");
+        return true;
+    }
+    return false;
 }
 
 template struct SpaceFileHandler<false>;

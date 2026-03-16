@@ -131,10 +131,63 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
   const [fileUploadsEnabled, setFileUploadsEnabled] = useState(true);
   const [sessionExpiryHours, setSessionExpiryHours] = useState('168');
 
+  // Space storage limit
+  const [spaceStorageLimitValue, setSpaceStorageLimitValue] = useState('0');
+  const [spaceStorageLimitUnit, setSpaceStorageLimitUnit] = useState('GB');
+
+  const spaceStorageLimitBytes = useMemo(() => {
+    const val = parseFloat(spaceStorageLimitValue);
+    if (val === 0 || isNaN(val)) return 0;
+    return (
+      val *
+      (UNITS.find((u) => u.key === spaceStorageLimitUnit)?.bytes || 1073741824)
+    );
+  }, [spaceStorageLimitValue, spaceStorageLimitUnit]);
+
   // MFA requirements
   const [mfaRequiredPassword, setMfaRequiredPassword] = useState(false);
   const [mfaRequiredPki, setMfaRequiredPki] = useState(false);
   const [mfaRequiredPasskey, setMfaRequiredPasskey] = useState(false);
+
+  // Personal Spaces
+  const [personalSpacesEnabled, setPersonalSpacesEnabled] = useState(false);
+  const [personalSpacesFilesEnabled, setPersonalSpacesFilesEnabled] =
+    useState(true);
+  const [personalSpacesCalendarEnabled, setPersonalSpacesCalendarEnabled] =
+    useState(true);
+  const [personalSpacesTasksEnabled, setPersonalSpacesTasksEnabled] =
+    useState(true);
+  const [personalSpacesWikiEnabled, setPersonalSpacesWikiEnabled] =
+    useState(true);
+  const [personalSpacesMinigamesEnabled, setPersonalSpacesMinigamesEnabled] =
+    useState(true);
+  const [personalSpacesStorageValue, setPersonalSpacesStorageValue] =
+    useState('0');
+  const [personalSpacesStorageUnit, setPersonalSpacesStorageUnit] =
+    useState('GB');
+  const [personalSpacesTotalStorageValue, setPersonalSpacesTotalStorageValue] =
+    useState('0');
+  const [personalSpacesTotalStorageUnit, setPersonalSpacesTotalStorageUnit] =
+    useState('GB');
+
+  const personalSpacesTotalStorageBytes = useMemo(() => {
+    const val = parseFloat(personalSpacesTotalStorageValue);
+    if (val === 0 || isNaN(val)) return 0;
+    return (
+      val *
+      (UNITS.find((u) => u.key === personalSpacesTotalStorageUnit)?.bytes ||
+        1073741824)
+    );
+  }, [personalSpacesTotalStorageValue, personalSpacesTotalStorageUnit]);
+
+  const personalSpacesStorageBytes = useMemo(() => {
+    const val = parseFloat(personalSpacesStorageValue);
+    if (val === 0 || isNaN(val)) return 0;
+    return (
+      val *
+      (UNITS.find((u) => u.key === personalSpacesStorageUnit)?.bytes || 1048576)
+    );
+  }, [personalSpacesStorageValue, personalSpacesStorageUnit]);
 
   // Password policy
   const [pwMinLength, setPwMinLength] = useState('8');
@@ -174,6 +227,8 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
         maxFileUnit,
         maxStorageValue,
         maxStorageUnit,
+        spaceStorageLimitValue,
+        spaceStorageLimitUnit,
         pwMinLength,
         pwRequireUpper,
         pwRequireLower,
@@ -184,6 +239,16 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
         mfaRequiredPassword,
         mfaRequiredPki,
         mfaRequiredPasskey,
+        personalSpacesEnabled,
+        personalSpacesFilesEnabled,
+        personalSpacesCalendarEnabled,
+        personalSpacesTasksEnabled,
+        personalSpacesWikiEnabled,
+        personalSpacesMinigamesEnabled,
+        personalSpacesStorageValue,
+        personalSpacesStorageUnit,
+        personalSpacesTotalStorageValue,
+        personalSpacesTotalStorageUnit,
       }),
     [
       serverName,
@@ -195,6 +260,8 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       maxFileUnit,
       maxStorageValue,
       maxStorageUnit,
+      spaceStorageLimitValue,
+      spaceStorageLimitUnit,
       pwMinLength,
       pwRequireUpper,
       pwRequireLower,
@@ -205,6 +272,16 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       mfaRequiredPassword,
       mfaRequiredPki,
       mfaRequiredPasskey,
+      personalSpacesEnabled,
+      personalSpacesFilesEnabled,
+      personalSpacesCalendarEnabled,
+      personalSpacesTasksEnabled,
+      personalSpacesWikiEnabled,
+      personalSpacesMinigamesEnabled,
+      personalSpacesStorageValue,
+      personalSpacesStorageUnit,
+      personalSpacesTotalStorageValue,
+      personalSpacesTotalStorageUnit,
     ],
   );
 
@@ -227,6 +304,8 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       maxFileUnit,
       maxStorageValue,
       maxStorageUnit,
+      spaceStorageLimitValue,
+      spaceStorageLimitUnit,
       pwMinLength,
       pwRequireUpper,
       pwRequireLower,
@@ -237,6 +316,16 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       mfaRequiredPassword,
       mfaRequiredPki,
       mfaRequiredPasskey,
+      personalSpacesEnabled,
+      personalSpacesFilesEnabled,
+      personalSpacesCalendarEnabled,
+      personalSpacesTasksEnabled,
+      personalSpacesWikiEnabled,
+      personalSpacesMinigamesEnabled,
+      personalSpacesStorageValue,
+      personalSpacesStorageUnit,
+      personalSpacesTotalStorageValue,
+      personalSpacesTotalStorageUnit,
     });
   };
 
@@ -271,6 +360,15 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
     setServerArchivedGlobal(data.server_archived);
     setServerLockedDownGlobal(data.server_locked_down);
 
+    if (data.default_space_storage_limit > 0) {
+      const ssl = toHumanUnit(data.default_space_storage_limit);
+      setSpaceStorageLimitValue(String(ssl.value));
+      setSpaceStorageLimitUnit(ssl.unit);
+    } else {
+      setSpaceStorageLimitValue('0');
+      setSpaceStorageLimitUnit('GB');
+    }
+
     setPwMinLength(String(data.password_min_length));
     setPwRequireUpper(data.password_require_uppercase);
     setPwRequireLower(data.password_require_lowercase);
@@ -282,6 +380,30 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
     setMfaRequiredPassword(data.mfa_required_password);
     setMfaRequiredPki(data.mfa_required_pki);
     setMfaRequiredPasskey(data.mfa_required_passkey);
+
+    setPersonalSpacesEnabled(data.personal_spaces_enabled);
+    setPersonalSpacesFilesEnabled(data.personal_spaces_files_enabled);
+    setPersonalSpacesCalendarEnabled(data.personal_spaces_calendar_enabled);
+    setPersonalSpacesTasksEnabled(data.personal_spaces_tasks_enabled);
+    setPersonalSpacesWikiEnabled(data.personal_spaces_wiki_enabled);
+    setPersonalSpacesMinigamesEnabled(data.personal_spaces_minigames_enabled);
+    if (data.personal_spaces_storage_limit > 0) {
+      const ps = toHumanUnit(data.personal_spaces_storage_limit);
+      setPersonalSpacesStorageValue(String(ps.value));
+      setPersonalSpacesStorageUnit(ps.unit);
+    } else {
+      setPersonalSpacesStorageValue('0');
+      setPersonalSpacesStorageUnit('GB');
+    }
+
+    if (data.personal_spaces_total_storage_limit > 0) {
+      const pst = toHumanUnit(data.personal_spaces_total_storage_limit);
+      setPersonalSpacesTotalStorageValue(String(pst.value));
+      setPersonalSpacesTotalStorageUnit(pst.unit);
+    } else {
+      setPersonalSpacesTotalStorageValue('0');
+      setPersonalSpacesTotalStorageUnit('GB');
+    }
   };
 
   useEffect(() => {
@@ -310,6 +432,7 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       session_expiry_hours: parseInt(sessionExpiryHours) || 168,
       max_file_size: Math.round(maxFileBytes),
       max_storage_size: Math.round(maxStorageBytes),
+      default_space_storage_limit: Math.round(spaceStorageLimitBytes),
       password_min_length: parseInt(pwMinLength) || 8,
       password_require_uppercase: pwRequireUpper,
       password_require_lowercase: pwRequireLower,
@@ -320,6 +443,16 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       mfa_required_password: mfaRequiredPassword,
       mfa_required_pki: mfaRequiredPki,
       mfa_required_passkey: mfaRequiredPasskey,
+      personal_spaces_enabled: personalSpacesEnabled,
+      personal_spaces_files_enabled: personalSpacesFilesEnabled,
+      personal_spaces_calendar_enabled: personalSpacesCalendarEnabled,
+      personal_spaces_tasks_enabled: personalSpacesTasksEnabled,
+      personal_spaces_wiki_enabled: personalSpacesWikiEnabled,
+      personal_spaces_minigames_enabled: personalSpacesMinigamesEnabled,
+      personal_spaces_storage_limit: Math.round(personalSpacesStorageBytes),
+      personal_spaces_total_storage_limit: Math.round(
+        personalSpacesTotalStorageBytes,
+      ),
     };
   };
 
@@ -828,7 +961,7 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
 
               <div>
                 <p className='text-sm font-medium text-foreground mb-2'>
-                  Max File Upload Size (0 = unlimited)
+                  Max Individual File Upload Size (0 = unlimited)
                 </p>
                 <div className='flex gap-2'>
                   <Input
@@ -887,9 +1020,171 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
                   </Select>
                 </div>
               </div>
+
+              <div>
+                <p className='text-sm font-medium text-foreground mb-2'>
+                  Storage Limit per Space (0 = unlimited)
+                </p>
+                <div className='flex gap-2'>
+                  <Input
+                    type='number'
+                    value={spaceStorageLimitValue}
+                    onValueChange={setSpaceStorageLimitValue}
+                    variant='bordered'
+                    size='sm'
+                    className='w-28'
+                    min='0'
+                  />
+                  <Select
+                    selectedKeys={new Set([spaceStorageLimitUnit])}
+                    onSelectionChange={(keys) => {
+                      const val = Array.from(keys)[0] as string;
+                      if (val) setSpaceStorageLimitUnit(val);
+                    }}
+                    variant='bordered'
+                    size='sm'
+                    className='w-24'
+                  >
+                    {UNITS.map((u) => (
+                      <SelectItem key={u.key}>{u.label}</SelectItem>
+                    ))}
+                  </Select>
+                </div>
+              </div>
             </div>
           )}
         </div>
+
+        <>
+          <Divider />
+
+          {/* Personal Spaces */}
+          <div>
+            <div className='flex items-center justify-between mb-2'>
+              <p className='text-sm font-medium text-foreground'>
+                Personal Spaces
+              </p>
+              <Switch
+                isSelected={personalSpacesEnabled}
+                onValueChange={setPersonalSpacesEnabled}
+                size='sm'
+              />
+            </div>
+            <p className='text-xs text-default-400 mb-3'>
+              Allow users to create a personal space with private tools.
+            </p>
+
+            {personalSpacesEnabled && (
+              <div className='space-y-3 pl-1'>
+                <div className='space-y-2'>
+                  <p className='text-xs text-default-500'>Enabled Tools</p>
+                  <div className='flex items-center justify-between'>
+                    <span className='text-sm text-foreground'>Files</span>
+                    <Switch
+                      isSelected={personalSpacesFilesEnabled}
+                      onValueChange={setPersonalSpacesFilesEnabled}
+                      size='sm'
+                    />
+                  </div>
+                  <div className='flex items-center justify-between'>
+                    <span className='text-sm text-foreground'>Calendar</span>
+                    <Switch
+                      isSelected={personalSpacesCalendarEnabled}
+                      onValueChange={setPersonalSpacesCalendarEnabled}
+                      size='sm'
+                    />
+                  </div>
+                  <div className='flex items-center justify-between'>
+                    <span className='text-sm text-foreground'>Tasks</span>
+                    <Switch
+                      isSelected={personalSpacesTasksEnabled}
+                      onValueChange={setPersonalSpacesTasksEnabled}
+                      size='sm'
+                    />
+                  </div>
+                  <div className='flex items-center justify-between'>
+                    <span className='text-sm text-foreground'>Wiki</span>
+                    <Switch
+                      isSelected={personalSpacesWikiEnabled}
+                      onValueChange={setPersonalSpacesWikiEnabled}
+                      size='sm'
+                    />
+                  </div>
+                  <div className='flex items-center justify-between'>
+                    <span className='text-sm text-foreground'>Minigames</span>
+                    <Switch
+                      isSelected={personalSpacesMinigamesEnabled}
+                      onValueChange={setPersonalSpacesMinigamesEnabled}
+                      size='sm'
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <p className='text-sm font-medium text-foreground mb-2'>
+                    Total Storage Limit for All Personal Spaces (0 = unlimited)
+                  </p>
+                  <div className='flex gap-2'>
+                    <Input
+                      type='number'
+                      value={personalSpacesTotalStorageValue}
+                      onValueChange={setPersonalSpacesTotalStorageValue}
+                      variant='bordered'
+                      size='sm'
+                      className='w-28'
+                      min='0'
+                    />
+                    <Select
+                      selectedKeys={new Set([personalSpacesTotalStorageUnit])}
+                      onSelectionChange={(keys) => {
+                        const val = Array.from(keys)[0] as string;
+                        if (val) setPersonalSpacesTotalStorageUnit(val);
+                      }}
+                      variant='bordered'
+                      size='sm'
+                      className='w-24'
+                    >
+                      {UNITS.map((u) => (
+                        <SelectItem key={u.key}>{u.label}</SelectItem>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+
+                <div>
+                  <p className='text-sm font-medium text-foreground mb-2'>
+                    Storage Limit per User (0 = unlimited)
+                  </p>
+                  <div className='flex gap-2'>
+                    <Input
+                      type='number'
+                      value={personalSpacesStorageValue}
+                      onValueChange={setPersonalSpacesStorageValue}
+                      variant='bordered'
+                      size='sm'
+                      className='w-28'
+                      min='0'
+                    />
+                    <Select
+                      selectedKeys={new Set([personalSpacesStorageUnit])}
+                      onSelectionChange={(keys) => {
+                        const val = Array.from(keys)[0] as string;
+                        if (val) setPersonalSpacesStorageUnit(val);
+                      }}
+                      variant='bordered'
+                      size='sm'
+                      className='w-24'
+                    >
+                      {UNITS.map((u) => (
+                        <SelectItem key={u.key}>{u.label}</SelectItem>
+                      ))}
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
 
         <Button
           color={isDirty ? 'warning' : 'primary'}

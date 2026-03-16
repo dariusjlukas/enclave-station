@@ -85,9 +85,13 @@ add_executable(test_tasks test_tasks.cpp)
 target_link_libraries(test_tasks PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME TaskBoardTests COMMAND test_tasks)
 
+add_executable(test_personal_spaces test_personal_spaces.cpp)
+target_link_libraries(test_personal_spaces PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME PersonalSpacesTests COMMAND test_personal_spaces)
+
 # Labels for selective test running
 set_tests_properties(PkiTests ConfigTests TotpTests PasswordTests WebAuthnTests HandlerUtilsTests
     AuthUtilsTests AuthPayloadUtilsTests AdminSettingsUtilsTests FileAccessUtilsTests
     AdminApprovalUtilsTests SearchHandlerTests FileHandlerTests RecurrenceTests ZipBuilderTests
     PROPERTIES LABELS "unit")
-set_tests_properties(DatabaseTests SpaceFileTests CalendarTests TaskBoardTests PROPERTIES LABELS "integration")
+set_tests_properties(DatabaseTests SpaceFileTests CalendarTests TaskBoardTests PersonalSpacesTests PROPERTIES LABELS "integration")

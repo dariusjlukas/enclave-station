@@ -24,12 +24,14 @@ import { FileBrowser } from './components/files/FileBrowser';
 import { CalendarView } from './components/calendar/CalendarView';
 import { TaskBoardView } from './components/tasks/TaskBoardView';
 import { WikiView } from './components/wiki/WikiView';
+import { MinigamesView } from './components/minigames/MinigamesView';
 import { CreateChannel } from './components/channels/CreateChannel';
 import { ChannelBrowser } from './components/channels/ChannelBrowser';
 import { ChannelSettings } from './components/channels/ChannelSettings';
 import { CreateConversation } from './components/conversations/CreateConversation';
 import { CreateSpace } from './components/spaces/CreateSpace';
 import { SpaceBrowser } from './components/spaces/SpaceBrowser';
+import { SharedWithMe } from './components/spaces/SharedWithMe';
 import { SpaceSettings } from './components/spaces/SpaceSettings';
 import { SpaceInviteNotification } from './components/spaces/SpaceInviteNotification';
 import {
@@ -71,6 +73,7 @@ function App() {
   const [showCreateSpace, setShowCreateSpace] = useState(false);
   const [showSpaceBrowser, setShowSpaceBrowser] = useState(false);
   const [showSpaceSettings, setShowSpaceSettings] = useState(false);
+  const [showSharedWithMe, setShowSharedWithMe] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showChannelBrowser, setShowChannelBrowser] = useState(false);
@@ -335,6 +338,7 @@ function App() {
           onBrowseChannels={() => setShowChannelBrowser(true)}
           onBrowseSpaces={() => setShowSpaceBrowser(true)}
           onShowSpaceSettings={() => setShowSpaceSettings(true)}
+          onSharedWithMe={() => setShowSharedWithMe(true)}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
@@ -346,6 +350,8 @@ function App() {
           <TaskBoardView spaceId={activeToolView.spaceId} />
         ) : activeToolView?.type === 'wiki' ? (
           <WikiView spaceId={activeToolView.spaceId} />
+        ) : activeToolView?.type === 'minigames' ? (
+          <MinigamesView spaceId={activeToolView.spaceId} />
         ) : (
           <ChatArea />
         )}
@@ -374,6 +380,10 @@ function App() {
             setShowCreateSpace(true);
           }}
         />
+      )}
+
+      {showSharedWithMe && (
+        <SharedWithMe onClose={() => setShowSharedWithMe(false)} />
       )}
 
       {showSpaceSettings && activeSpace && (

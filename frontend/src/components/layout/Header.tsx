@@ -15,6 +15,7 @@ import {
   faHashtag,
   faListCheck,
   faLock,
+  faPuzzlePiece,
   faRightFromBracket,
   faShieldHalved,
   faSliders,
@@ -66,6 +67,7 @@ export function Header({
     calendar: { label: 'Calendar', icon: faCalendar },
     tasks: { label: 'Tasks', icon: faListCheck },
     wiki: { label: 'Wiki', icon: faBook },
+    minigames: { label: 'Minigames', icon: faPuzzlePiece },
   };
 
   const showChannelSettings = activeChannel && !activeChannel.is_direct;

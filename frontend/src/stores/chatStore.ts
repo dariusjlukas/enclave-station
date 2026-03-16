@@ -35,6 +35,7 @@ interface ChatState {
     | { type: 'calendar'; spaceId: string }
     | { type: 'tasks'; spaceId: string }
     | { type: 'wiki'; spaceId: string }
+    | { type: 'minigames'; spaceId: string }
     | null;
   wikiSidebarOpen: boolean;
 
@@ -90,6 +91,7 @@ interface ChatState {
       | { type: 'calendar'; spaceId: string }
       | { type: 'tasks'; spaceId: string }
       | { type: 'wiki'; spaceId: string }
+      | { type: 'minigames'; spaceId: string }
       | null,
   ) => void;
   setWikiSidebarOpen: (open: boolean) => void;

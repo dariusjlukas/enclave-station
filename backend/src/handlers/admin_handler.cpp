@@ -757,15 +757,60 @@ json AdminHandler<SSL>::build_settings_response() {
     snapshot.mfa_required_pki = db.get_setting("mfa_required_pki");
     snapshot.mfa_required_passkey = db.get_setting("mfa_required_passkey");
 
+    snapshot.default_space_storage_limit = db.get_setting("default_space_storage_limit");
+
+    snapshot.personal_spaces_enabled = db.get_setting("personal_spaces_enabled");
+    snapshot.personal_spaces_files_enabled = db.get_setting("personal_spaces_files_enabled");
+    snapshot.personal_spaces_calendar_enabled = db.get_setting("personal_spaces_calendar_enabled");
+    snapshot.personal_spaces_tasks_enabled = db.get_setting("personal_spaces_tasks_enabled");
+    snapshot.personal_spaces_wiki_enabled = db.get_setting("personal_spaces_wiki_enabled");
+    snapshot.personal_spaces_minigames_enabled = db.get_setting("personal_spaces_minigames_enabled");
+    snapshot.personal_spaces_storage_limit = db.get_setting("personal_spaces_storage_limit");
+    snapshot.personal_spaces_total_storage_limit = db.get_setting("personal_spaces_total_storage_limit");
+
     return admin_settings::build_settings_response(snapshot);
 }
 
 template <bool SSL>
 void AdminHandler<SSL>::save_settings(uWS::HttpResponse<SSL>* res, const std::string& body, bool mark_setup) {
     try {
-        auto updates = admin_settings::collect_settings_updates(json::parse(body), mark_setup);
+        auto settings = json::parse(body);
+        auto updates = admin_settings::collect_settings_updates(settings, mark_setup);
         for (const auto& [key, value] : updates) {
             db.set_setting(key, value);
+        }
+
+        // Propagate default space storage limit to existing non-personal spaces
+        if (updates.count("default_space_storage_limit")) {
+            int64_t limit = std::stoll(updates.at("default_space_storage_limit"));
+            auto all_spaces = db.list_all_spaces();
+            for (const auto& sp : all_spaces) {
+                if (!sp.is_personal) {
+                    db.set_setting("space_storage_limit_" + sp.id, std::to_string(limit));
+                }
+            }
+        }
+
+        // Propagate personal space storage limit to existing personal spaces
+        if (updates.count("personal_spaces_storage_limit")) {
+            int64_t limit = std::stoll(updates.at("personal_spaces_storage_limit"));
+            auto all_spaces = db.list_all_spaces();
+            for (const auto& sp : all_spaces) {
+                if (sp.is_personal) {
+                    db.set_setting("space_storage_limit_" + sp.id, std::to_string(limit));
+                }
+            }
+        }
+
+        // Notify all clients to refresh spaces when personal space settings change
+        if (updates.count("personal_spaces_enabled") ||
+            updates.count("personal_spaces_files_enabled") ||
+            updates.count("personal_spaces_calendar_enabled") ||
+            updates.count("personal_spaces_tasks_enabled") ||
+            updates.count("personal_spaces_wiki_enabled") ||
+            updates.count("personal_spaces_minigames_enabled")) {
+            json notify = {{"type", "refresh_spaces"}};
+            ws.broadcast_to_presence(notify.dump());
         }
 
         res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");

@@ -103,23 +103,27 @@ export function ConnectionLostModal() {
             <div className='mt-4 flex justify-center gap-3'>
               <button
                 onClick={() => setActiveGame('pcb')}
-                className='flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-lg bg-default-100 hover:bg-default-200 transition-colors cursor-pointer'
+                className='flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-lg bg-content2 hover:bg-content3 transition-colors cursor-pointer'
               >
                 <FontAwesomeIcon
                   icon={faMicrochip}
                   className='text-lg text-default-500'
                 />
-                <span className='text-xs text-default-500'>Route PCB</span>
+                <span className='text-xs font-medium text-foreground'>
+                  Route PCB
+                </span>
               </button>
               <button
                 onClick={() => setActiveGame('rubiks')}
-                className='flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-lg bg-default-100 hover:bg-default-200 transition-colors cursor-pointer'
+                className='flex flex-col items-center gap-1.5 px-4 py-2.5 rounded-lg bg-content2 hover:bg-content3 transition-colors cursor-pointer'
               >
                 <FontAwesomeIcon
                   icon={faCube}
                   className='text-lg text-default-500'
                 />
-                <span className='text-xs text-default-500'>Rubik's Cube</span>
+                <span className='text-xs font-medium text-foreground'>
+                  Rubik's Cube
+                </span>
               </button>
             </div>
           )}

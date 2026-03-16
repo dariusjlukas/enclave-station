@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import {
   Modal,
   ModalContent,
@@ -13,6 +13,7 @@ import {
   SelectItem,
   Button,
   Slider,
+  Tooltip,
 } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
@@ -22,6 +23,7 @@ import {
   faCalendar,
   faListCheck,
   faBook,
+  faPuzzlePiece,
 } from '@fortawesome/free-solid-svg-icons';
 import Cropper from 'react-easy-crop';
 import type { Area } from 'react-easy-crop';
@@ -72,6 +74,15 @@ async function getCroppedBlob(imageSrc: string, crop: Area): Promise<Blob> {
       'image/png',
     );
   });
+}
+
+function formatStorageSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  if (bytes < 1024 * 1024 * 1024)
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
 }
 
 interface Props {
@@ -134,6 +145,151 @@ export function SpaceSettings({ space, onClose }: Props) {
   const [enabledTools, setEnabledTools] = useState<Set<string>>(
     new Set(space.enabled_tools || []),
   );
+
+  const [storageUsed, setStorageUsed] = useState(0);
+  const [storageLimit, setStorageLimit] = useState(0);
+  const [storageBreakdown, setStorageBreakdown] = useState<
+    api.StorageBreakdownEntry[]
+  >([]);
+  const [storageLoaded, setStorageLoaded] = useState(false);
+
+  useEffect(() => {
+    api
+      .getSpaceStorage(space.id)
+      .then((data) => {
+        setStorageUsed(data.used);
+        setStorageLimit(data.limit);
+        setStorageBreakdown(data.breakdown.filter((e) => e.used > 0));
+        setStorageLoaded(true);
+      })
+      .catch(() => setStorageLoaded(true));
+  }, [space.id]);
+
+  const storagePct =
+    storageLimit > 0
+      ? Math.min((storageUsed / storageLimit) * 100, 100)
+      : storageUsed > 0
+        ? 100
+        : 0;
+
+  const BREAKDOWN_COLORS = [
+    '#3b82f6',
+    '#10b981',
+    '#f59e0b',
+    '#ef4444',
+    '#8b5cf6',
+    '#ec4899',
+    '#06b6d4',
+    '#f97316',
+  ];
+
+  const renderStorageSection = () => {
+    if (!storageLoaded) {
+      return (
+        <p className='text-xs text-default-400'>Loading storage info...</p>
+      );
+    }
+
+    const hasLimit = storageLimit > 0;
+    const nearLimit = hasLimit && storagePct >= 80;
+    // Denominator for bar segment widths: limit if set, otherwise total used (bar fills 100%)
+    const barDenom = hasLimit ? storageLimit : storageUsed;
+
+    return (
+      <>
+        {/* Header: used / limit */}
+        <div className='flex items-center justify-between mb-1'>
+          <span className='text-sm text-foreground'>
+            {hasLimit
+              ? `${formatStorageSize(storageUsed)} / ${formatStorageSize(storageLimit)}`
+              : formatStorageSize(storageUsed)}
+          </span>
+          {hasLimit && (
+            <span
+              className={`text-sm ${nearLimit ? 'text-warning' : 'text-default-400'}`}
+            >
+              {storagePct.toFixed(1)}%
+            </span>
+          )}
+        </div>
+
+        {/* Stacked color bar */}
+        <div className='h-3 bg-default-200 rounded-full overflow-hidden flex'>
+          {storageBreakdown.length > 0
+            ? storageBreakdown.map((entry, i) => {
+                const segPct = barDenom > 0 ? (entry.used / barDenom) * 100 : 0;
+                if (segPct < 0.3) return null;
+                const color = BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length];
+                return (
+                  <Tooltip
+                    key={entry.name + entry.type}
+                    content={`${entry.name}: ${formatStorageSize(entry.used)}`}
+                  >
+                    <div
+                      className='h-full transition-all cursor-default first:rounded-l-full'
+                      style={{
+                        width: `${segPct}%`,
+                        backgroundColor: color,
+                        minWidth: segPct > 0 ? 3 : 0,
+                      }}
+                    />
+                  </Tooltip>
+                );
+              })
+            : storageUsed > 0 && (
+                <div
+                  className='h-full rounded-full transition-all'
+                  style={{
+                    width: `${Math.max(storagePct, 1)}%`,
+                    backgroundColor: '#3b82f6',
+                  }}
+                />
+              )}
+        </div>
+
+        {nearLimit && (
+          <p className='text-[10px] mt-1 text-warning'>Approaching limit</p>
+        )}
+        {!hasLimit && storageUsed === 0 && (
+          <p className='text-xs text-default-400 mt-1'>No storage used.</p>
+        )}
+
+        {/* Breakdown list */}
+        {storageBreakdown.length > 0 && (
+          <div className='space-y-1.5 mt-3'>
+            <p className='text-xs font-semibold text-default-400 uppercase tracking-wider'>
+              Breakdown
+            </p>
+            {storageBreakdown.map((entry, i) => {
+              const pct =
+                storageUsed > 0 ? (entry.used / storageUsed) * 100 : 0;
+              const color = BREAKDOWN_COLORS[i % BREAKDOWN_COLORS.length];
+              return (
+                <div
+                  key={entry.name + entry.type}
+                  className='flex items-center gap-2'
+                >
+                  <span
+                    className='inline-block w-2.5 h-2.5 rounded-sm shrink-0'
+                    style={{ backgroundColor: color }}
+                  />
+                  <span className='text-sm text-foreground flex-1 truncate'>
+                    {entry.name}
+                  </span>
+                  <span className='text-xs text-default-400 shrink-0'>
+                    {formatStorageSize(entry.used)}
+                  </span>
+                  <span className='text-xs text-default-400 shrink-0 w-12 text-right'>
+                    {pct.toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </>
+    );
+  };
 
   const [leaveError, setLeaveError] = useState<string | null>(null);
   const user = useChatStore((s) => s.user);
@@ -331,6 +487,17 @@ export function SpaceSettings({ space, onClose }: Props) {
       icon: faBook,
       available: true,
     },
+    ...(space.is_personal
+      ? [
+          {
+            name: 'minigames' as const,
+            label: 'Minigames',
+            description: "Puzzle games including PCB routing and Rubik's Cube",
+            icon: faPuzzlePiece,
+            available: true,
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -347,7 +514,11 @@ export function SpaceSettings({ space, onClose }: Props) {
         <ModalContent>
           <ModalHeader>
             <div className='flex items-center gap-3'>
-              <span>Space Settings — {space.name}</span>
+              <span>
+                {space.is_personal
+                  ? 'My Space'
+                  : `Space Settings — ${space.name}`}
+              </span>
               {isDirty && (
                 <span className='text-xs font-normal text-warning bg-warning/10 px-2 py-0.5 rounded-full'>
                   Unsaved changes
@@ -356,392 +527,447 @@ export function SpaceSettings({ space, onClose }: Props) {
             </div>
           </ModalHeader>
           <ModalBody className='pb-6'>
-            <Tabs color='primary' classNames={{ tabList: 'bg-content2' }}>
-              {canManage && (
-                <Tab key='settings' title='Settings'>
+            {space.is_personal ? (
+              <Tabs color='primary' classNames={{ tabList: 'bg-content2' }}>
+                <Tab key='tools' title='Tools'>
                   <div className='space-y-4 pt-2'>
-                    {/* Space avatar */}
-                    <div className='flex items-center gap-4'>
-                      <div className='relative group'>
-                        <SpaceAvatar
-                          name={space.name}
-                          avatarFileId={space.avatar_file_id}
-                          profileColor={profileColor || space.profile_color}
-                          size='lg'
-                        />
-                        <button
-                          type='button'
-                          className='absolute inset-0 rounded-xl bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer'
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={uploading}
+                    <div className='text-sm text-default-500'>
+                      Toggle the tools you want to use. Available tools are
+                      managed by server administrators.
+                    </div>
+                    <div className='space-y-3'>
+                      {AVAILABLE_TOOLS.filter(
+                        (t) =>
+                          t.available &&
+                          (space.allowed_tools ?? []).includes(t.name),
+                      ).map((tool) => (
+                        <div
+                          key={tool.name}
+                          className='flex items-center gap-3 p-3 rounded-lg bg-content2'
                         >
                           <FontAwesomeIcon
-                            icon={faCamera}
-                            className='text-white text-lg'
+                            icon={tool.icon}
+                            className='text-default-500 w-5'
                           />
-                        </button>
-                        <input
-                          ref={fileInputRef}
-                          type='file'
-                          accept='image/*'
-                          className='hidden'
-                          onChange={handleFileSelect}
-                        />
-                      </div>
-                      <div className='flex flex-col gap-1'>
-                        <Button
-                          size='sm'
-                          variant='flat'
-                          onPress={() => fileInputRef.current?.click()}
-                          isLoading={uploading}
-                        >
-                          {uploading ? 'Uploading...' : 'Change Picture'}
-                        </Button>
-                        {space.avatar_file_id && (
-                          <Button
-                            size='sm'
-                            variant='light'
-                            color='danger'
-                            onPress={handleRemoveAvatar}
-                            isLoading={uploading}
-                            startContent={
-                              <FontAwesomeIcon
-                                icon={faTrashCan}
-                                className='text-xs'
-                              />
-                            }
-                          >
-                            Remove
-                          </Button>
-                        )}
-                        {avatarMsg && (
-                          <span className='text-xs text-danger'>
-                            {avatarMsg}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {/* Background color picker (for default avatar) */}
-                    <div>
-                      <p className='text-sm text-default-600 mb-2'>
-                        Background Color
-                      </p>
-                      <div className='flex flex-wrap gap-2'>
-                        {[
-                          '#e53e3e',
-                          '#dd6b20',
-                          '#d69e2e',
-                          '#38a169',
-                          '#319795',
-                          '#3182ce',
-                          '#5a67d8',
-                          '#805ad5',
-                          '#d53f8c',
-                          '#718096',
-                        ].map((color) => (
-                          <button
-                            key={color}
-                            type='button'
-                            className={`w-7 h-7 rounded-lg border-2 transition-all ${
-                              profileColor === color
-                                ? 'border-foreground scale-110'
-                                : 'border-transparent hover:scale-105'
-                            }`}
-                            style={{ backgroundColor: color }}
-                            onClick={() => setProfileColor(color)}
-                          />
-                        ))}
-                        {profileColor && (
-                          <button
-                            type='button'
-                            className='text-xs text-default-400 hover:text-foreground px-2'
-                            onClick={() => setProfileColor('')}
-                          >
-                            Reset
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <Input
-                      label='Space Name'
-                      variant='bordered'
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                    />
-                    <Input
-                      label='Description'
-                      variant='bordered'
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                    />
-                    <div className='flex items-center justify-between'>
-                      <div>
-                        <p className='text-sm font-medium text-foreground'>
-                          Public Space
-                        </p>
-                        <p className='text-xs text-default-400'>
-                          {isPublic
-                            ? 'Anyone can find and join'
-                            : 'Invite only'}
-                        </p>
-                      </div>
-                      <Switch
-                        isSelected={isPublic}
-                        onValueChange={setIsPublic}
-                        size='sm'
-                      />
-                    </div>
-                    <Select
-                      label='Default Role for New Members'
-                      variant='bordered'
-                      selectedKeys={[defaultRole]}
-                      onChange={(e) =>
-                        setDefaultRole(e.target.value as SpaceRole)
-                      }
-                    >
-                      <SelectItem key='user'>User</SelectItem>
-                    </Select>
-                    <Button
-                      color={isDirty ? 'warning' : 'primary'}
-                      onPress={handleSave}
-                      isLoading={saving}
-                    >
-                      {isDirty
-                        ? 'Save Settings (unsaved changes)'
-                        : 'Save Settings'}
-                    </Button>
-                  </div>
-                </Tab>
-              )}
-
-              <Tab key='members' title={`Members (${space.members.length})`}>
-                <div className='space-y-2 pt-2'>
-                  {space.members.map((m) => (
-                    <div
-                      key={m.id}
-                      className='flex items-center justify-between p-2 rounded-lg bg-content1'
-                    >
-                      <UserPopoverCard userId={m.id}>
-                        <div className='flex items-center gap-2 min-w-0 cursor-pointer'>
-                          <OnlineStatusDot
-                            isOnline={m.is_online}
-                            lastSeen={m.last_seen}
-                          />
-                          <span className='text-sm truncate hover:underline'>
-                            {m.display_name}
-                          </span>
-                          <span className='text-xs text-default-400'>
-                            @{m.username}
-                          </span>
-                        </div>
-                      </UserPopoverCard>
-                      {(() => {
-                        const targetRank = SPACE_RANK[m.role] ?? 0;
-                        const isSelf = m.id === user?.id;
-                        const canEditMember =
-                          canManage && (targetRank < actorRank || isSelf);
-                        const roleItems = [
-                          { key: 'owner', label: 'Owner', rank: 2 },
-                          { key: 'admin', label: 'Admin', rank: 1 },
-                          { key: 'user', label: 'User', rank: 0 },
-                        ].filter((r) => r.rank <= actorRank);
-                        return canEditMember ? (
-                          <div className='flex items-center gap-2 flex-shrink-0'>
-                            <Select
-                              size='sm'
-                              variant='bordered'
-                              className='w-28'
-                              selectedKeys={[m.role]}
-                              onChange={(e) =>
-                                handleChangeRole(m.id, e.target.value)
-                              }
-                              aria-label='Role'
-                              items={roleItems}
-                            >
-                              {(item) => (
-                                <SelectItem key={item.key}>
-                                  {item.label}
-                                </SelectItem>
-                              )}
-                            </Select>
-                            {!isSelf && (
-                              <Button
-                                size='sm'
-                                variant='flat'
-                                color='danger'
-                                onPress={() => handleKick(m)}
-                              >
-                                Kick
-                              </Button>
-                            )}
-                          </div>
-                        ) : (
-                          <span className='text-xs text-default-400 flex-shrink-0 capitalize'>
-                            {m.role}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              </Tab>
-
-              {canManage && (
-                <Tab key='invite' title='Invite'>
-                  <div className='space-y-4 pt-2'>
-                    <UserPicker
-                      mode='single'
-                      selected={inviteUserId}
-                      onChange={setInviteUserId}
-                      excludeIds={memberIds}
-                      label='Select user'
-                      placeholder='Search users...'
-                    />
-                    <Select
-                      label='Role'
-                      variant='bordered'
-                      selectedKeys={[inviteRole]}
-                      onChange={(e) => setInviteRole(e.target.value)}
-                    >
-                      <SelectItem key='admin'>Admin</SelectItem>
-                      <SelectItem key='user'>User</SelectItem>
-                    </Select>
-                    <Button
-                      color='primary'
-                      onPress={handleInvite}
-                      isLoading={inviting}
-                      isDisabled={inviteUserId.length === 0}
-                    >
-                      Send Invite
-                    </Button>
-                    {inviteSent && (
-                      <p className='text-xs text-success'>
-                        Invite sent successfully!
-                      </p>
-                    )}
-                    {inviteError && (
-                      <p className='text-xs text-danger'>{inviteError}</p>
-                    )}
-                  </div>
-                </Tab>
-              )}
-
-              {canManage && (
-                <Tab key='tools' title='Tools'>
-                  <div className='space-y-3 pt-2'>
-                    <p className='text-xs text-default-400'>
-                      Enable tools to add functionality to this space.
-                    </p>
-                    {AVAILABLE_TOOLS.map((tool) => (
-                      <div
-                        key={tool.name}
-                        className='flex items-center gap-3 p-3 rounded-lg bg-content2'
-                      >
-                        <FontAwesomeIcon
-                          icon={tool.icon}
-                          className='text-default-500 w-5'
-                        />
-                        <div className='flex-1 min-w-0'>
-                          <div className='flex items-center gap-2'>
+                          <div className='flex-1 min-w-0'>
                             <span className='text-sm font-medium text-foreground'>
                               {tool.label}
                             </span>
-                            {!tool.available && (
-                              <span className='text-[10px] bg-default-100 text-default-400 px-1.5 py-0.5 rounded'>
-                                Coming soon
-                              </span>
-                            )}
+                            <p className='text-xs text-default-400 mt-0.5'>
+                              {tool.description}
+                            </p>
                           </div>
-                          <p className='text-xs text-default-400 mt-0.5'>
-                            {tool.description}
+                          <Switch
+                            size='sm'
+                            isSelected={enabledTools.has(tool.name)}
+                            isDisabled={toolsLoading === tool.name}
+                            onValueChange={(checked) =>
+                              handleToggleTool(tool.name, checked)
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Tab>
+                <Tab key='storage' title='Storage'>
+                  <div className='space-y-3 pt-2'>{renderStorageSection()}</div>
+                </Tab>
+              </Tabs>
+            ) : (
+              <Tabs color='primary' classNames={{ tabList: 'bg-content2' }}>
+                {canManage && (
+                  <Tab key='settings' title='Settings'>
+                    <div className='space-y-4 pt-2'>
+                      {/* Space avatar */}
+                      <div className='flex items-center gap-4'>
+                        <div className='relative group'>
+                          <SpaceAvatar
+                            name={space.name}
+                            avatarFileId={space.avatar_file_id}
+                            profileColor={profileColor || space.profile_color}
+                            size='lg'
+                          />
+                          <button
+                            type='button'
+                            className='absolute inset-0 rounded-xl bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer'
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={uploading}
+                          >
+                            <FontAwesomeIcon
+                              icon={faCamera}
+                              className='text-white text-lg'
+                            />
+                          </button>
+                          <input
+                            ref={fileInputRef}
+                            type='file'
+                            accept='image/*'
+                            className='hidden'
+                            onChange={handleFileSelect}
+                          />
+                        </div>
+                        <div className='flex flex-col gap-1'>
+                          <Button
+                            size='sm'
+                            variant='flat'
+                            onPress={() => fileInputRef.current?.click()}
+                            isLoading={uploading}
+                          >
+                            {uploading ? 'Uploading...' : 'Change Picture'}
+                          </Button>
+                          {space.avatar_file_id && (
+                            <Button
+                              size='sm'
+                              variant='light'
+                              color='danger'
+                              onPress={handleRemoveAvatar}
+                              isLoading={uploading}
+                              startContent={
+                                <FontAwesomeIcon
+                                  icon={faTrashCan}
+                                  className='text-xs'
+                                />
+                              }
+                            >
+                              Remove
+                            </Button>
+                          )}
+                          {avatarMsg && (
+                            <span className='text-xs text-danger'>
+                              {avatarMsg}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Background color picker (for default avatar) */}
+                      <div>
+                        <p className='text-sm text-default-600 mb-2'>
+                          Background Color
+                        </p>
+                        <div className='flex flex-wrap gap-2'>
+                          {[
+                            '#e53e3e',
+                            '#dd6b20',
+                            '#d69e2e',
+                            '#38a169',
+                            '#319795',
+                            '#3182ce',
+                            '#5a67d8',
+                            '#805ad5',
+                            '#d53f8c',
+                            '#718096',
+                          ].map((color) => (
+                            <button
+                              key={color}
+                              type='button'
+                              className={`w-7 h-7 rounded-lg border-2 transition-all ${
+                                profileColor === color
+                                  ? 'border-foreground scale-110'
+                                  : 'border-transparent hover:scale-105'
+                              }`}
+                              style={{ backgroundColor: color }}
+                              onClick={() => setProfileColor(color)}
+                            />
+                          ))}
+                          {profileColor && (
+                            <button
+                              type='button'
+                              className='text-xs text-default-400 hover:text-foreground px-2'
+                              onClick={() => setProfileColor('')}
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <Input
+                        label='Space Name'
+                        variant='bordered'
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                      />
+                      <Input
+                        label='Description'
+                        variant='bordered'
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                      />
+                      <div className='flex items-center justify-between'>
+                        <div>
+                          <p className='text-sm font-medium text-foreground'>
+                            Public Space
+                          </p>
+                          <p className='text-xs text-default-400'>
+                            {isPublic
+                              ? 'Anyone can find and join'
+                              : 'Invite only'}
                           </p>
                         </div>
                         <Switch
+                          isSelected={isPublic}
+                          onValueChange={setIsPublic}
                           size='sm'
-                          isSelected={enabledTools.has(tool.name)}
-                          isDisabled={
-                            !tool.available || toolsLoading === tool.name
-                          }
-                          onValueChange={(checked) =>
-                            handleToggleTool(tool.name, checked)
-                          }
                         />
+                      </div>
+                      <Select
+                        label='Default Role for New Members'
+                        variant='bordered'
+                        selectedKeys={[defaultRole]}
+                        onChange={(e) =>
+                          setDefaultRole(e.target.value as SpaceRole)
+                        }
+                      >
+                        <SelectItem key='user'>User</SelectItem>
+                      </Select>
+                      <Button
+                        color={isDirty ? 'warning' : 'primary'}
+                        onPress={handleSave}
+                        isLoading={saving}
+                      >
+                        {isDirty
+                          ? 'Save Settings (unsaved changes)'
+                          : 'Save Settings'}
+                      </Button>
+                    </div>
+                  </Tab>
+                )}
+
+                <Tab key='members' title={`Members (${space.members.length})`}>
+                  <div className='space-y-2 pt-2'>
+                    {space.members.map((m) => (
+                      <div
+                        key={m.id}
+                        className='flex items-center justify-between p-2 rounded-lg bg-content1'
+                      >
+                        <UserPopoverCard userId={m.id}>
+                          <div className='flex items-center gap-2 min-w-0 cursor-pointer'>
+                            <OnlineStatusDot
+                              isOnline={m.is_online}
+                              lastSeen={m.last_seen}
+                            />
+                            <span className='text-sm truncate hover:underline'>
+                              {m.display_name}
+                            </span>
+                            <span className='text-xs text-default-400'>
+                              @{m.username}
+                            </span>
+                          </div>
+                        </UserPopoverCard>
+                        {(() => {
+                          const targetRank = SPACE_RANK[m.role] ?? 0;
+                          const isSelf = m.id === user?.id;
+                          const canEditMember =
+                            canManage && (targetRank < actorRank || isSelf);
+                          const roleItems = [
+                            { key: 'owner', label: 'Owner', rank: 2 },
+                            { key: 'admin', label: 'Admin', rank: 1 },
+                            { key: 'user', label: 'User', rank: 0 },
+                          ].filter((r) => r.rank <= actorRank);
+                          return canEditMember ? (
+                            <div className='flex items-center gap-2 flex-shrink-0'>
+                              <Select
+                                size='sm'
+                                variant='bordered'
+                                className='w-28'
+                                selectedKeys={[m.role]}
+                                onChange={(e) =>
+                                  handleChangeRole(m.id, e.target.value)
+                                }
+                                aria-label='Role'
+                                items={roleItems}
+                              >
+                                {(item) => (
+                                  <SelectItem key={item.key}>
+                                    {item.label}
+                                  </SelectItem>
+                                )}
+                              </Select>
+                              {!isSelf && (
+                                <Button
+                                  size='sm'
+                                  variant='flat'
+                                  color='danger'
+                                  onPress={() => handleKick(m)}
+                                >
+                                  Kick
+                                </Button>
+                              )}
+                            </div>
+                          ) : (
+                            <span className='text-xs text-default-400 flex-shrink-0 capitalize'>
+                              {m.role}
+                            </span>
+                          );
+                        })()}
                       </div>
                     ))}
                   </div>
                 </Tab>
-              )}
-            </Tabs>
 
-            <div className='border-t border-divider pt-4 mt-2 space-y-3'>
-              {leaveError && (
-                <p className='text-xs text-danger'>{leaveError}</p>
-              )}
-              <div className='flex gap-2'>
-                <Button
-                  variant='flat'
-                  color='warning'
-                  onPress={async () => {
-                    try {
-                      setLeaveError(null);
-                      await api.leaveSpace(space.id);
-                      removeSpace(space.id);
-                      onClose();
-                    } catch (e) {
-                      const msg = e instanceof Error ? e.message : 'Failed';
-                      setLeaveError(msg);
-                    }
-                  }}
-                >
-                  Leave Space
-                </Button>
-                {canManage && !space.is_archived && (
-                  <Button
-                    variant='flat'
-                    color='danger'
-                    onPress={async () => {
-                      if (
-                        !confirm(
-                          `Archive ${space.name}? All channels will be archived.`,
-                        )
-                      )
-                        return;
-                      try {
-                        await api.archiveSpace(space.id);
-                        updateSpace({
-                          id: space.id,
-                          is_archived: true,
-                        });
-                      } catch (e) {
-                        console.error('Space archive failed:', e);
-                      }
-                    }}
-                  >
-                    Archive Space
-                  </Button>
+                {canManage && (
+                  <Tab key='invite' title='Invite'>
+                    <div className='space-y-4 pt-2'>
+                      <UserPicker
+                        mode='single'
+                        selected={inviteUserId}
+                        onChange={setInviteUserId}
+                        excludeIds={memberIds}
+                        label='Select user'
+                        placeholder='Search users...'
+                      />
+                      <Select
+                        label='Role'
+                        variant='bordered'
+                        selectedKeys={[inviteRole]}
+                        onChange={(e) => setInviteRole(e.target.value)}
+                      >
+                        <SelectItem key='admin'>Admin</SelectItem>
+                        <SelectItem key='user'>User</SelectItem>
+                      </Select>
+                      <Button
+                        color='primary'
+                        onPress={handleInvite}
+                        isLoading={inviting}
+                        isDisabled={inviteUserId.length === 0}
+                      >
+                        Send Invite
+                      </Button>
+                      {inviteSent && (
+                        <p className='text-xs text-success'>
+                          Invite sent successfully!
+                        </p>
+                      )}
+                      {inviteError && (
+                        <p className='text-xs text-danger'>{inviteError}</p>
+                      )}
+                    </div>
+                  </Tab>
                 )}
-                {canManage && space.is_archived && (
+
+                {canManage && (
+                  <Tab key='tools' title='Tools'>
+                    <div className='space-y-3 pt-2'>
+                      <p className='text-xs text-default-400'>
+                        Enable tools to add functionality to this space.
+                      </p>
+                      {AVAILABLE_TOOLS.map((tool) => (
+                        <div
+                          key={tool.name}
+                          className='flex items-center gap-3 p-3 rounded-lg bg-content2'
+                        >
+                          <FontAwesomeIcon
+                            icon={tool.icon}
+                            className='text-default-500 w-5'
+                          />
+                          <div className='flex-1 min-w-0'>
+                            <div className='flex items-center gap-2'>
+                              <span className='text-sm font-medium text-foreground'>
+                                {tool.label}
+                              </span>
+                              {!tool.available && (
+                                <span className='text-[10px] bg-default-100 text-default-400 px-1.5 py-0.5 rounded'>
+                                  Coming soon
+                                </span>
+                              )}
+                            </div>
+                            <p className='text-xs text-default-400 mt-0.5'>
+                              {tool.description}
+                            </p>
+                          </div>
+                          <Switch
+                            size='sm'
+                            isSelected={enabledTools.has(tool.name)}
+                            isDisabled={
+                              !tool.available || toolsLoading === tool.name
+                            }
+                            onValueChange={(checked) =>
+                              handleToggleTool(tool.name, checked)
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </Tab>
+                )}
+
+                <Tab key='storage' title='Storage'>
+                  <div className='space-y-3 pt-2'>{renderStorageSection()}</div>
+                </Tab>
+              </Tabs>
+            )}
+
+            {!space.is_personal && (
+              <div className='border-t border-divider pt-4 mt-2 space-y-3'>
+                {leaveError && (
+                  <p className='text-xs text-danger'>{leaveError}</p>
+                )}
+                <div className='flex gap-2'>
                   <Button
                     variant='flat'
-                    color='success'
+                    color='warning'
                     onPress={async () => {
                       try {
-                        await api.unarchiveSpace(space.id);
-                        updateSpace({
-                          id: space.id,
-                          is_archived: false,
-                        });
+                        setLeaveError(null);
+                        await api.leaveSpace(space.id);
+                        removeSpace(space.id);
+                        onClose();
                       } catch (e) {
                         const msg = e instanceof Error ? e.message : 'Failed';
                         setLeaveError(msg);
                       }
                     }}
                   >
-                    Unarchive Space
+                    Leave Space
                   </Button>
-                )}
+                  {canManage && !space.is_archived && (
+                    <Button
+                      variant='flat'
+                      color='danger'
+                      onPress={async () => {
+                        if (
+                          !confirm(
+                            `Archive ${space.name}? All channels will be archived.`,
+                          )
+                        )
+                          return;
+                        try {
+                          await api.archiveSpace(space.id);
+                          updateSpace({
+                            id: space.id,
+                            is_archived: true,
+                          });
+                        } catch (e) {
+                          console.error('Space archive failed:', e);
+                        }
+                      }}
+                    >
+                      Archive Space
+                    </Button>
+                  )}
+                  {canManage && space.is_archived && (
+                    <Button
+                      variant='flat'
+                      color='success'
+                      onPress={async () => {
+                        try {
+                          await api.unarchiveSpace(space.id);
+                          updateSpace({
+                            id: space.id,
+                            is_archived: false,
+                          });
+                        } catch (e) {
+                          const msg = e instanceof Error ? e.message : 'Failed';
+                          setLeaveError(msg);
+                        }
+                      }}
+                    >
+                      Unarchive Space
+                    </Button>
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </ModalBody>
         </ModalContent>
       </Modal>

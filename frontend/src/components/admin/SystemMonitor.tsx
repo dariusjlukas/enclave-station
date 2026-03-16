@@ -130,8 +130,8 @@ export function SystemMonitor() {
 
   useEffect(() => {
     fetchStats();
-    // Poll every 5 seconds
-    intervalRef.current = setInterval(fetchStats, 5000);
+    // Poll every second
+    intervalRef.current = setInterval(fetchStats, 1000);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };

@@ -506,6 +506,15 @@ void CalendarHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     return;
                 }
 
+                // Personal spaces: only view and edit allowed, not owner
+                auto space_perm_check = db.find_space_by_id(space_id);
+                if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->writeHeader("Access-Control-Allow-Origin", "*")
+                        ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
+                    return;
+                }
+
                 db.set_calendar_permission(space_id, target_user_id, permission, user_id);
                 res->writeHeader("Content-Type", "application/json")
                     ->writeHeader("Access-Control-Allow-Origin", "*")
@@ -548,6 +557,12 @@ bool CalendarHandler<SSL>::check_space_access(uWS::HttpResponse<SSL>* res,
     if (db.is_space_member(space_id, user_id)) return true;
     auto user = db.find_user_by_id(user_id);
     if (user && (user->role == "admin" || user->role == "owner")) return true;
+
+    // Allow access to personal spaces if user has per-resource permissions
+    auto space = db.find_space_by_id(space_id);
+    if (space && space->is_personal) {
+        if (db.has_resource_permission_in_space(space_id, user_id, "calendar")) return true;
+    }
 
     res->writeStatus("403")->writeHeader("Content-Type", "application/json")
         ->writeHeader("Access-Control-Allow-Origin", "*")

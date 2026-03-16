@@ -732,6 +732,15 @@ export interface AdminSettings {
   mfa_required_password: boolean;
   mfa_required_pki: boolean;
   mfa_required_passkey: boolean;
+  default_space_storage_limit: number;
+  personal_spaces_enabled: boolean;
+  personal_spaces_files_enabled: boolean;
+  personal_spaces_calendar_enabled: boolean;
+  personal_spaces_tasks_enabled: boolean;
+  personal_spaces_wiki_enabled: boolean;
+  personal_spaces_minigames_enabled: boolean;
+  personal_spaces_storage_limit: number;
+  personal_spaces_total_storage_limit: number;
 }
 
 export function getAdminSettings() {
@@ -1638,8 +1647,18 @@ export function deleteSpaceFile(spaceId: string, fileId: string) {
   });
 }
 
-export function getSpaceStorageUsed(spaceId: string) {
-  return request<{ used: number }>(`/spaces/${spaceId}/storage`);
+export interface StorageBreakdownEntry {
+  name: string;
+  type: 'tool' | 'channel';
+  used: number;
+}
+
+export function getSpaceStorage(spaceId: string) {
+  return request<{
+    used: number;
+    limit: number;
+    breakdown: StorageBreakdownEntry[];
+  }>(`/spaces/${spaceId}/storage`);
 }
 
 // Space File Permissions
@@ -1743,6 +1762,8 @@ export interface SpaceStorageInfo {
   storage_used: number;
   storage_limit: number;
   file_count: number;
+  is_personal?: boolean;
+  personal_owner_name?: string;
 }
 
 export function getAdminStorage() {
@@ -2428,4 +2449,9 @@ export function getWikiMediaUrl(url: string, inline?: boolean): string {
   const token = getToken();
   const base = `${url}?token=${token}`;
   return inline ? `${base}&inline=1` : base;
+}
+
+// Shared with me
+export function getSharedWithMe() {
+  return request<import('../types').SharedWithMe>('/shared-with-me');
 }

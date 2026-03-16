@@ -66,6 +66,18 @@ public:
     void set_space_avatar(const std::string& space_id, const std::string& avatar_file_id);
     void clear_space_avatar(const std::string& space_id);
 
+    // Personal spaces
+    Space create_personal_space(const std::string& user_id, const std::string& display_name);
+    std::optional<Space> find_personal_space(const std::string& user_id);
+    Space get_or_create_personal_space(const std::string& user_id, const std::string& display_name);
+    void sync_personal_space_tools(const std::string& space_id);
+    bool has_resource_permission_in_space(const std::string& space_id, const std::string& user_id,
+                                           const std::string& tool_type);
+    struct SharedResource {
+        std::string id, name, space_id, owner_username, permission, resource_type;
+    };
+    std::vector<SharedResource> list_shared_with_user(const std::string& user_id);
+
     // Space membership
     bool is_space_member(const std::string& space_id, const std::string& user_id);
     void add_space_member(const std::string& space_id, const std::string& user_id,
@@ -390,6 +402,8 @@ public:
     void rename_space_file(const std::string& file_id, const std::string& new_name);
     void move_space_file(const std::string& file_id, const std::string& new_parent_id);
     void soft_delete_space_file(const std::string& file_id);
+    /** Hard-delete a file/folder and all descendants, returning disk_file_ids to remove from disk. */
+    std::vector<std::string> hard_delete_space_file(const std::string& file_id);
     void set_space_file_tool_source(const std::string& file_id, const std::string& tool_source);
     int64_t get_space_storage_used(const std::string& space_id);
     std::vector<SpaceFile> get_space_file_path(const std::string& file_id);
@@ -424,7 +438,15 @@ public:
         std::string space_id, space_name;
         int64_t storage_used, storage_limit;
         int file_count;
+        bool is_personal = false;
+        std::string personal_owner_name;
     };
+    struct StorageBreakdownEntry {
+        std::string name, type;  // type: "tool" or "channel"
+        int64_t used;
+    };
+    std::vector<StorageBreakdownEntry> get_space_storage_breakdown(const std::string& space_id);
+    int64_t get_total_personal_spaces_storage_used();
     std::vector<SpaceStorageInfo> get_all_space_storage();
     void delete_oldest_file_versions(const std::string& space_id, int64_t bytes_to_free);
 

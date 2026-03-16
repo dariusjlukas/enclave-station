@@ -15,6 +15,27 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
             auto spaces = db.list_user_spaces(user_id);
 
+            // Personal space: auto-create if enabled, filter out if disabled
+            bool personal_spaces_enabled = db.get_setting("personal_spaces_enabled").value_or("false") == "true";
+            if (personal_spaces_enabled) {
+                bool has_personal = false;
+                for (const auto& sp : spaces) {
+                    if (sp.is_personal && sp.personal_owner_id == user_id) { has_personal = true; break; }
+                }
+                if (!has_personal && user) {
+                    auto ps = db.get_or_create_personal_space(user_id, user->display_name);
+                    db.sync_personal_space_tools(ps.id);
+                    spaces.insert(spaces.begin(), ps);
+                }
+                // Sync tools for existing personal space
+                for (auto& sp : spaces) {
+                    if (sp.is_personal && sp.personal_owner_id == user_id) {
+                        db.sync_personal_space_tools(sp.id);
+                        break;
+                    }
+                }
+            }
+
             // Server admins see all spaces
             if (is_server_admin) {
                 auto all = db.list_all_spaces();
@@ -29,6 +50,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
             json arr = json::array();
             for (const auto& sp : spaces) {
+                // Hide personal spaces when feature is disabled (unless it's an admin viewing)
+                if (sp.is_personal && !personal_spaces_enabled && sp.personal_owner_id != user_id) continue;
+                if (sp.is_personal && !personal_spaces_enabled && !is_server_admin) continue;
                 auto members = db.get_space_members_with_roles(sp.id);
                 json members_arr = json::array();
                 for (const auto& m : members) {
@@ -43,7 +67,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 json tools_arr = json::array();
                 for (const auto& t : tools) tools_arr.push_back(t);
 
-                arr.push_back({{"id", sp.id}, {"name", sp.name},
+                json space_json = {{"id", sp.id}, {"name", sp.name},
                                {"description", sp.description},
                                {"is_public", sp.is_public},
                                {"default_role", sp.default_role},
@@ -51,9 +75,25 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                                {"is_archived", sp.is_archived},
                                {"avatar_file_id", sp.avatar_file_id},
                                {"profile_color", sp.profile_color},
+                               {"is_personal", sp.is_personal},
+                               {"personal_owner_id", sp.personal_owner_id},
                                {"my_role", my_role},
                                {"members", members_arr},
-                               {"enabled_tools", tools_arr}});
+                               {"enabled_tools", tools_arr}};
+
+                // For personal spaces, include which tools the admin allows
+                if (sp.is_personal) {
+                    json allowed = json::array();
+                    const std::string tool_names[] = {"files", "calendar", "tasks", "wiki", "minigames"};
+                    for (const auto& t : tool_names) {
+                        if (db.get_setting("personal_spaces_" + t + "_enabled").value_or("true") != "false") {
+                            allowed.push_back(t);
+                        }
+                    }
+                    space_json["allowed_tools"] = allowed;
+                }
+
+                arr.push_back(space_json);
             }
             res->writeHeader("Content-Type", "application/json")
                 ->writeHeader("Access-Control-Allow-Origin", "*")
@@ -68,6 +108,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             auto spaces = db.list_public_spaces(user_id, search);
             json arr = json::array();
             for (const auto& sp : spaces) {
+                if (sp.is_personal) continue;  // Exclude personal spaces from public listing
                 arr.push_back({{"id", sp.id}, {"name", sp.name},
                                {"description", sp.description},
                                {"is_public", sp.is_public},
@@ -123,7 +164,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                                  {"created_at", sp.created_at},
                                  {"is_archived", sp.is_archived},
                                  {"avatar_file_id", sp.avatar_file_id},
-                               {"profile_color", sp.profile_color},
+                                 {"profile_color", sp.profile_color},
+                                 {"is_personal", sp.is_personal},
+                                 {"personal_owner_id", sp.personal_owner_id},
                                  {"my_role", "owner"},
                                  {"members", members_arr}};
 
@@ -175,6 +218,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                          {"is_archived", sp->is_archived},
                          {"avatar_file_id", sp->avatar_file_id},
                          {"profile_color", sp->profile_color},
+                         {"is_personal", sp->is_personal},
+                         {"personal_owner_id", sp->personal_owner_id},
                          {"my_role", my_role},
                          {"members", members_arr}};
 
@@ -227,7 +272,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                                  {"is_public", updated.is_public},
                                  {"default_role", updated.default_role},
                                  {"avatar_file_id", updated.avatar_file_id},
-                                 {"profile_color", updated.profile_color}};
+                                 {"profile_color", updated.profile_color},
+                                 {"is_personal", updated.is_personal},
+                                 {"personal_owner_id", updated.personal_owner_id}};
 
                     // Broadcast to space members
                     json broadcast = {{"type", "space_updated"}, {"space", resp}};
@@ -316,6 +363,15 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 body.append(data);
                 if (!last) return;
                 if (user_id.empty()) return;
+
+                // Block invitations to personal spaces
+                auto space_check_invite = db.find_space_by_id(space_id);
+                if (space_check_invite && space_check_invite->is_personal) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->writeHeader("Access-Control-Allow-Origin", "*")
+                        ->end(R"({"error":"Cannot invite members to a personal space"})");
+                    return;
+                }
 
                 std::string role = db.get_space_member_role(space_id, user_id);
                 auto user = db.find_user_by_id(user_id);
@@ -547,6 +603,15 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 if (!last) return;
                 if (user_id.empty()) return;
 
+                // Block channel creation in personal spaces
+                auto space_check = db.find_space_by_id(space_id);
+                if (space_check && space_check->is_personal) {
+                    res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                        ->writeHeader("Access-Control-Allow-Origin", "*")
+                        ->end(R"({"error":"Personal spaces cannot have channels"})");
+                    return;
+                }
+
                 // Must be a space admin/owner or server admin/owner
                 auto u = db.find_user_by_id(user_id);
                 bool is_server_admin = u && (u->role == "admin" || u->role == "owner");
@@ -652,6 +717,15 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             if (user_id.empty()) return;
             std::string space_id(req->getParameter("id"));
 
+            // Block leaving personal spaces
+            auto space_leave_check = db.find_space_by_id(space_id);
+            if (space_leave_check && space_leave_check->is_personal) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Cannot leave your personal space"})");
+                return;
+            }
+
             if (!db.is_space_member(space_id, user_id)) {
                 res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                     ->writeHeader("Access-Control-Allow-Origin", "*")
@@ -703,6 +777,15 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             std::string user_id = get_user_id(res, req);
             if (user_id.empty()) return;
             std::string space_id(req->getParameter("id"));
+
+            // Block archiving personal spaces
+            auto space_archive_check = db.find_space_by_id(space_id);
+            if (space_archive_check && space_archive_check->is_personal) {
+                res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Cannot archive a personal space"})");
+                return;
+            }
 
             std::string role = db.get_space_member_role(space_id, user_id);
             auto user = db.find_user_by_id(user_id);
@@ -1065,7 +1148,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                                    {"created_at", sp->created_at},
                                    {"is_archived", sp->is_archived},
                                    {"avatar_file_id", sp->avatar_file_id},
-                         {"profile_color", sp->profile_color},
+                                   {"profile_color", sp->profile_color},
+                                   {"is_personal", sp->is_personal},
+                                   {"personal_owner_id", sp->personal_owner_id},
                                    {"my_role", invite->role},
                                    {"members", members_arr}};
                 json notify = {{"type", "space_added"}, {"space", space_data}};
@@ -1174,7 +1259,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                                  {"is_public", updated->is_public},
                                  {"default_role", updated->default_role},
                                  {"avatar_file_id", updated->avatar_file_id},
-                                 {"profile_color", updated->profile_color}};
+                                 {"profile_color", updated->profile_color},
+                                 {"is_personal", updated->is_personal},
+                                 {"personal_owner_id", updated->personal_owner_id}};
 
                     // Broadcast to space members
                     json broadcast = {{"type", "space_updated"}, {"space", resp}};
@@ -1222,7 +1309,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                              {"is_public", updated->is_public},
                              {"default_role", updated->default_role},
                              {"avatar_file_id", updated->avatar_file_id},
-                                 {"profile_color", updated->profile_color}};
+                             {"profile_color", updated->profile_color},
+                             {"is_personal", updated->is_personal},
+                             {"personal_owner_id", updated->personal_owner_id}};
 
                 // Broadcast to space members
                 json broadcast = {{"type", "space_updated"}, {"space", resp}};
@@ -1271,14 +1360,26 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 if (!last) return;
                 if (user_id.empty()) return;
                 try {
-                    // Check space admin/owner or server admin/owner
-                    std::string space_role = db.get_space_member_role(space_id, user_id);
-                    auto user = db.find_user_by_id(user_id);
-                    bool is_server_admin = user && (user->role == "admin" || user->role == "owner");
-                    if (space_role != "admin" && space_role != "owner" && !is_server_admin) {
-                        res->writeStatus("403")->writeHeader("Content-Type", "application/json")
-                            ->end(R"({"error":"Admin access required"})");
-                        return;
+                    auto space_tools_check = db.find_space_by_id(space_id);
+                    bool is_personal_space = space_tools_check && space_tools_check->is_personal;
+
+                    if (!is_personal_space) {
+                        // Regular spaces: check space admin/owner or server admin/owner
+                        std::string space_role = db.get_space_member_role(space_id, user_id);
+                        auto user = db.find_user_by_id(user_id);
+                        bool is_server_admin = user && (user->role == "admin" || user->role == "owner");
+                        if (space_role != "admin" && space_role != "owner" && !is_server_admin) {
+                            res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                                ->end(R"({"error":"Admin access required"})");
+                            return;
+                        }
+                    } else {
+                        // Personal spaces: only the owner can toggle
+                        if (space_tools_check->personal_owner_id != user_id) {
+                            res->writeStatus("403")->writeHeader("Content-Type", "application/json")
+                                ->end(R"({"error":"Only the personal space owner can toggle tools"})");
+                            return;
+                        }
                     }
 
                     auto j = json::parse(body);
@@ -1286,10 +1387,21 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     bool enabled = j.at("enabled").get<bool>();
 
                     // Validate tool name
-                    if (tool != "files" && tool != "calendar" && tool != "tasks" && tool != "wiki") {
+                    if (tool != "files" && tool != "calendar" && tool != "tasks" && tool != "wiki" && tool != "minigames") {
                         res->writeStatus("400")->writeHeader("Content-Type", "application/json")
                             ->end(R"({"error":"Unknown tool"})");
                         return;
+                    }
+
+                    // Personal spaces: can only enable tools the admin has allowed
+                    if (is_personal_space && enabled) {
+                        bool admin_allows = db.get_setting("personal_spaces_" + tool + "_enabled")
+                            .value_or("true") != "false";
+                        if (!admin_allows) {
+                            res->writeStatus("400")->writeHeader("Content-Type", "application/json")
+                                ->end(R"({"error":"This tool is not allowed by server administrators"})");
+                            return;
+                        }
                     }
 
                     if (enabled) {
@@ -1310,6 +1422,33 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                 }
             });
             res->onAborted([]() {});
+        });
+
+        // Shared with me — resources from personal spaces shared with current user
+        app.get("/api/shared-with-me", [this](auto* res, auto* req) {
+            std::string user_id = get_user_id(res, req);
+            if (user_id.empty()) return;
+
+            auto resources = db.list_shared_with_user(user_id);
+            json files = json::array();
+            json wiki_pages = json::array();
+            json calendar_events = json::array();
+            json task_boards = json::array();
+
+            for (const auto& r : resources) {
+                json item = {{"id", r.id}, {"name", r.name}, {"space_id", r.space_id},
+                             {"owner_username", r.owner_username}, {"permission", r.permission}};
+                if (r.resource_type == "file") files.push_back(item);
+                else if (r.resource_type == "wiki_page") wiki_pages.push_back(item);
+                else if (r.resource_type == "calendar") calendar_events.push_back(item);
+                else if (r.resource_type == "task_board") task_boards.push_back(item);
+            }
+
+            json resp = {{"files", files}, {"wiki_pages", wiki_pages},
+                         {"calendar_events", calendar_events}, {"task_boards", task_boards}};
+            res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(resp.dump());
         });
 }
 

@@ -440,7 +440,7 @@ function computeCellTraces(
 
 // ── Component ───────────────────────────────────────────────────────────────
 
-export function PCBRouter() {
+export function PCBRouter({ large }: { large?: boolean } = {}) {
   const [difficulty, setDifficulty] = useState<Difficulty>('easy');
   const [puzzle, setPuzzle] = useState<PuzzleConfig>(() =>
     generatePuzzle('easy'),
@@ -731,7 +731,7 @@ export function PCBRouter() {
       <button
         key={cellKey}
         className={`
-          w-8 h-8 relative flex items-center justify-center
+          ${large ? 'w-14 h-14' : 'w-8 h-8'} relative flex items-center justify-center
           transition-colors duration-75
           ${pad ? 'cursor-pointer' : routing ? 'cursor-crosshair' : 'cursor-default'}
           bg-[#1a2332]
@@ -751,32 +751,35 @@ export function PCBRouter() {
           const colorClass = isActiveLayer ? colors.trace : colors.traceback;
           const opacity = isActiveLayer ? '' : 'opacity-30';
 
+          const tw = large ? 'w-1.5' : 'w-1';
+          const th = large ? 'h-1.5' : 'h-1';
+
           return (
             <div key={ti} className={`absolute inset-0 ${opacity}`}>
               {trace.directions.has('top') && (
                 <div
-                  className={`absolute left-1/2 top-0 h-1/2 w-1 -translate-x-1/2 ${colorClass}`}
+                  className={`absolute left-1/2 top-0 h-1/2 ${tw} -translate-x-1/2 ${colorClass}`}
                 />
               )}
               {trace.directions.has('bottom') && (
                 <div
-                  className={`absolute left-1/2 bottom-0 h-1/2 w-1 -translate-x-1/2 ${colorClass}`}
+                  className={`absolute left-1/2 bottom-0 h-1/2 ${tw} -translate-x-1/2 ${colorClass}`}
                 />
               )}
               {trace.directions.has('left') && (
                 <div
-                  className={`absolute top-1/2 left-0 w-1/2 h-1 -translate-y-1/2 ${colorClass}`}
+                  className={`absolute top-1/2 left-0 w-1/2 ${th} -translate-y-1/2 ${colorClass}`}
                 />
               )}
               {trace.directions.has('right') && (
                 <div
-                  className={`absolute top-1/2 right-0 w-1/2 h-1 -translate-y-1/2 ${colorClass}`}
+                  className={`absolute top-1/2 right-0 w-1/2 ${th} -translate-y-1/2 ${colorClass}`}
                 />
               )}
               {/* Center dot for trace intersections and endpoints */}
               {trace.directions.size > 0 && (
                 <div
-                  className={`absolute left-1/2 top-1/2 w-1 h-1 -translate-x-1/2 -translate-y-1/2 ${colorClass}`}
+                  className={`absolute left-1/2 top-1/2 ${tw} ${th} -translate-x-1/2 -translate-y-1/2 ${colorClass}`}
                 />
               )}
             </div>
@@ -785,7 +788,9 @@ export function PCBRouter() {
 
         {/* Via indicator */}
         {hasVia && (
-          <div className='absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-default-400 bg-default-800 z-10' />
+          <div
+            className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 ${large ? 'w-5 h-5' : 'w-3 h-3'} rounded-full border-2 border-default-400 bg-default-800 z-10`}
+          />
         )}
 
         {/* Pad */}
@@ -793,7 +798,7 @@ export function PCBRouter() {
           <div
             className={`
               absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2
-              w-5 h-5 rounded-sm z-20
+              ${large ? 'w-8 h-8' : 'w-5 h-5'} rounded-sm z-20
               ${NET_COLORS[pad.netId % NET_COLORS.length].pad}
               ${inActivePath && routing?.netId === pad.netId ? 'ring-2 ring-white/60' : ''}
               ${routes.some((r) => r.netId === pad.netId && r.complete) ? 'opacity-70' : ''}

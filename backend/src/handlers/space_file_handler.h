@@ -28,4 +28,6 @@ private:
                             const std::string& file_id, const std::string& user_id,
                             const std::string& required_level);
     static int perm_rank(const std::string& p);
+    bool check_personal_total_limit(uWS::HttpResponse<SSL>* res,
+                                      const std::string& space_id, int64_t upload_size);
 };

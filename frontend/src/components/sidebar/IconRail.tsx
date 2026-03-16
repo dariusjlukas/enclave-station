@@ -1,7 +1,12 @@
 import { useMemo } from 'react';
 import { Tooltip } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faComment, faPlus } from '@fortawesome/free-solid-svg-icons';
+import {
+  faComment,
+  faPlus,
+  faHouseUser,
+  faShareNodes,
+} from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
 import type { SidebarView } from '../../types';
 import { SpaceAvatar } from '../common/SpaceAvatar';
@@ -17,9 +22,10 @@ function Badge({ count }: { count: number }) {
 
 interface Props {
   onBrowseSpaces: () => void;
+  onSharedWithMe?: () => void;
 }
 
-export function IconRail({ onBrowseSpaces }: Props) {
+export function IconRail({ onBrowseSpaces, onSharedWithMe }: Props) {
   const spaces = useChatStore((s) => s.spaces);
   const activeView = useChatStore((s) => s.activeView);
   const setActiveView = useChatStore((s) => s.setActiveView);
@@ -34,6 +40,15 @@ export function IconRail({ onBrowseSpaces }: Props) {
       .filter((c) => c.is_direct)
       .reduce((sum, c) => sum + (unreadCounts[c.id] || 0), 0);
   }, [channels, unreadCounts]);
+
+  const personalSpace = useMemo(
+    () => spaces.find((s) => s.is_personal),
+    [spaces],
+  );
+  const regularSpaces = useMemo(
+    () => spaces.filter((s) => !s.is_personal),
+    [spaces],
+  );
 
   const spaceUnread = useMemo(() => {
     const result: Record<string, number> = {};
@@ -81,9 +96,37 @@ export function IconRail({ onBrowseSpaces }: Props) {
         </button>
       </Tooltip>
 
+      {personalSpace && (
+        <>
+          <div className='w-8 border-t border-default-200 my-1' />
+          <Tooltip content='My Space' placement='right'>
+            <button
+              onClick={() =>
+                handleViewClick({ type: 'space', spaceId: personalSpace.id })
+              }
+              className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-content2 text-default-500 cursor-pointer ${
+                isActive({ type: 'space', spaceId: personalSpace.id })
+                  ? 'ring-2 ring-primary text-primary'
+                  : 'hover:ring-2 hover:ring-default-300 hover:text-foreground'
+              }`}
+            >
+              <FontAwesomeIcon icon={faHouseUser} className='text-lg' />
+            </button>
+          </Tooltip>
+          <Tooltip content='Shared with me' placement='right'>
+            <button
+              onClick={() => onSharedWithMe?.()}
+              className='w-11 h-11 rounded-xl flex items-center justify-center bg-content2/50 text-default-400 hover:bg-content3 hover:text-foreground transition-all cursor-pointer'
+            >
+              <FontAwesomeIcon icon={faShareNodes} className='text-sm' />
+            </button>
+          </Tooltip>
+        </>
+      )}
+
       <div className='w-8 border-t border-default-200 my-1' />
 
-      {spaces.map((space) => (
+      {regularSpaces.map((space) => (
         <Tooltip key={space.id} content={space.name} placement='right'>
           <button
             onClick={() =>

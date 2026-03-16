@@ -155,3 +155,48 @@ TEST(AdminSettingsUtils, CollectSettingsUpdatesRejectsInvalidModesAndLimits) {
         admin_settings::collect_settings_updates(json{{"password_history_count", -1}}, false),
         std::runtime_error);
 }
+
+// --- Personal Spaces ---
+
+TEST(AdminSettings, PersonalSpacesDefaults) {
+    admin_settings::Snapshot snapshot;
+    snapshot.config_max_file_size = 4096;
+    snapshot.config_session_expiry_hours = 24;
+    // All personal_spaces_* optionals are empty (nullopt)
+
+    json result = admin_settings::build_settings_response(snapshot);
+
+    EXPECT_FALSE(result.at("personal_spaces_enabled").get<bool>());
+    EXPECT_TRUE(result.at("personal_spaces_files_enabled").get<bool>());
+    EXPECT_TRUE(result.at("personal_spaces_calendar_enabled").get<bool>());
+    EXPECT_TRUE(result.at("personal_spaces_tasks_enabled").get<bool>());
+    EXPECT_TRUE(result.at("personal_spaces_wiki_enabled").get<bool>());
+    EXPECT_EQ(result.at("personal_spaces_storage_limit"), 0);
+}
+
+TEST(AdminSettings, PersonalSpacesRoundTrip) {
+    json body = {
+        {"personal_spaces_enabled", true},
+        {"personal_spaces_files_enabled", false},
+        {"personal_spaces_calendar_enabled", true},
+        {"personal_spaces_tasks_enabled", false},
+        {"personal_spaces_wiki_enabled", true},
+        {"personal_spaces_storage_limit", 1048576}
+    };
+
+    auto updates = admin_settings::collect_settings_updates(body, false);
+
+    EXPECT_EQ(updates.at("personal_spaces_enabled"), "true");
+    EXPECT_EQ(updates.at("personal_spaces_files_enabled"), "false");
+    EXPECT_EQ(updates.at("personal_spaces_calendar_enabled"), "true");
+    EXPECT_EQ(updates.at("personal_spaces_tasks_enabled"), "false");
+    EXPECT_EQ(updates.at("personal_spaces_wiki_enabled"), "true");
+    EXPECT_EQ(updates.at("personal_spaces_storage_limit"), "1048576");
+}
+
+TEST(AdminSettings, PersonalSpacesStorageLimitValidation) {
+    EXPECT_THROW(
+        admin_settings::collect_settings_updates(
+            json{{"personal_spaces_storage_limit", -1}}, false),
+        std::runtime_error);
+}

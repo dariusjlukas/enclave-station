@@ -13,6 +13,8 @@ struct Space {
     bool is_archived = false;
     std::string avatar_file_id;
     std::string profile_color;
+    bool is_personal = false;
+    std::string personal_owner_id;
 };
 
 struct SpaceMember {

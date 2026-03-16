@@ -59,13 +59,21 @@ export interface Space {
   is_archived?: boolean;
   avatar_file_id?: string;
   profile_color?: string;
+  is_personal?: boolean;
+  personal_owner_id?: string;
   my_role: SpaceRole;
   created_at: string;
   members: SpaceMemberInfo[];
   enabled_tools?: string[];
+  allowed_tools?: string[];
 }
 
-export type SpaceToolName = 'files' | 'calendar' | 'tasks' | 'wiki';
+export type SpaceToolName =
+  | 'files'
+  | 'calendar'
+  | 'tasks'
+  | 'wiki'
+  | 'minigames';
 
 export interface WikiPage {
   id: string;
@@ -389,6 +397,21 @@ export interface TaskBoardPermission {
   granted_by: string;
   granted_by_username: string;
   created_at: string;
+}
+
+export interface SharedResource {
+  id: string;
+  name: string;
+  space_id: string;
+  owner_username: string;
+  permission: string;
+}
+
+export interface SharedWithMe {
+  files: SharedResource[];
+  wiki_pages: SharedResource[];
+  calendar_events: SharedResource[];
+  task_boards: SharedResource[];
 }
 
 export interface InviteToken {
