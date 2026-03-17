@@ -1,0 +1,32 @@
+{
+  "baseline": {
+    "users": 5,
+    "spawn_rate": 1,
+    "run_time": "60s",
+    "description": "Minimal load for smoke testing"
+  },
+  "moderate": {
+    "users": 50,
+    "spawn_rate": 5,
+    "run_time": "300s",
+    "description": "Moderate load simulating a small team"
+  },
+  "stress": {
+    "users": 200,
+    "spawn_rate": 10,
+    "run_time": "600s",
+    "description": "Stress test to find breaking points"
+  },
+  "spike": {
+    "users": 100,
+    "spawn_rate": 50,
+    "run_time": "180s",
+    "description": "Rapid user influx to test burst handling"
+  },
+  "ci": {
+    "users": 20,
+    "spawn_rate": 5,
+    "run_time": "120s",
+    "description": "Quick CI validation run"
+  }
+}

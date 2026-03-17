@@ -1,6 +1,6 @@
 #pragma once
-#include <string>
 #include <cstdint>
+#include <string>
 
 namespace totp {
 
@@ -14,12 +14,11 @@ std::string compute_code(const std::string& base32_secret, uint64_t time_step);
 bool verify_code(const std::string& base32_secret, const std::string& code, int window = 1);
 
 // Build an otpauth:// URI for QR code generation
-std::string build_uri(const std::string& base32_secret,
-                      const std::string& username,
-                      const std::string& issuer);
+std::string build_uri(
+  const std::string& base32_secret, const std::string& username, const std::string& issuer);
 
 // Base32 encode/decode (RFC 4648)
 std::string base32_encode(const std::string& data);
 std::string base32_decode(const std::string& encoded);
 
-} // namespace totp
+}  // namespace totp

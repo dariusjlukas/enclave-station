@@ -1,0 +1,6 @@
+.venv/
+reports/*.csv
+reports/*.html
+reports/*.json
+__pycache__/
+*.pyc

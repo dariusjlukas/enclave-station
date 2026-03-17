@@ -1,0 +1,9 @@
+{
+  "http_failure_rate_max": 0.01,
+  "http_p95_max_ms": 2000,
+  "http_p99_max_ms": 5000,
+  "ws_message_delivery_rate_min": 0.99,
+  "ws_roundtrip_p95_max_ms": 1000,
+  "ws_roundtrip_p99_max_ms": 3000,
+  "min_requests_per_second": 10
+}

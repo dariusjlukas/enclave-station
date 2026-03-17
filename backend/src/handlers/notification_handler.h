@@ -8,7 +8,7 @@ using json = nlohmann::json;
 
 template <bool SSL>
 struct NotificationHandler {
-    Database& db;
+  Database& db;
 
-    void register_routes(uWS::TemplatedApp<SSL>& app);
+  void register_routes(uWS::TemplatedApp<SSL>& app);
 };

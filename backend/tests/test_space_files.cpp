@@ -429,3 +429,165 @@ TEST_F(SpaceFileTest, DeleteOldestVersions) {
     // Current version (v3) should still exist
     EXPECT_EQ(versions[0].version_number, 3);
 }
+
+// --- Hard Delete ---
+
+TEST_F(SpaceFileTest, HardDeleteSingleFile) {
+    auto [user, space] = create_user_and_space();
+    auto file = db_->create_space_file(space.id, "", "delete_me.txt",
+                                        "disk_hard1", 500, "text/plain", user.id);
+
+    auto disk_ids = db_->hard_delete_space_file(file.id);
+    EXPECT_GE(disk_ids.size(), 1u);
+    // The disk_file_id we gave should be among those returned
+    EXPECT_NE(std::find(disk_ids.begin(), disk_ids.end(), "disk_hard1"), disk_ids.end());
+
+    // File should no longer exist
+    auto found = db_->find_space_file(file.id);
+    EXPECT_FALSE(found.has_value());
+}
+
+TEST_F(SpaceFileTest, HardDeleteFolderRecursive) {
+    auto [user, space] = create_user_and_space();
+    auto folder = db_->create_space_folder(space.id, "", "ToDelete", user.id);
+    auto child = db_->create_space_file(space.id, folder.id, "child.txt",
+                                         "disk_child", 100, "text/plain", user.id);
+
+    auto disk_ids = db_->hard_delete_space_file(folder.id);
+    // Should include child's disk_file_id
+    EXPECT_NE(std::find(disk_ids.begin(), disk_ids.end(), "disk_child"), disk_ids.end());
+
+    // Both folder and child should be gone
+    EXPECT_FALSE(db_->find_space_file(folder.id).has_value());
+    EXPECT_FALSE(db_->find_space_file(child.id).has_value());
+}
+
+TEST_F(SpaceFileTest, HardDeleteFileWithVersions) {
+    auto [user, space] = create_user_and_space();
+    auto file = db_->create_space_file(space.id, "", "versioned.bin",
+                                        "disk_v1", 100, "application/octet-stream", user.id);
+    db_->create_file_version(file.id, "disk_v2", 200, "application/octet-stream", user.id);
+
+    auto disk_ids = db_->hard_delete_space_file(file.id);
+    // Should include both version disk IDs
+    EXPECT_NE(std::find(disk_ids.begin(), disk_ids.end(), "disk_v1"), disk_ids.end());
+    EXPECT_NE(std::find(disk_ids.begin(), disk_ids.end(), "disk_v2"), disk_ids.end());
+
+    EXPECT_FALSE(db_->find_space_file(file.id).has_value());
+}
+
+// --- Tool Source ---
+
+TEST_F(SpaceFileTest, SetSpaceFileToolSource) {
+    auto [user, space] = create_user_and_space();
+    auto file = db_->create_space_file(space.id, "", "wiki_attachment.png",
+                                        "disk_wiki1", 2048, "image/png", user.id);
+
+    db_->set_space_file_tool_source(file.id, "wiki");
+
+    // The file should still exist and be findable
+    auto found = db_->find_space_file(file.id);
+    ASSERT_TRUE(found.has_value());
+
+    // Files with non-'files' tool_source are excluded from normal listings
+    auto files = db_->list_space_files(space.id, "");
+    bool found_in_list = false;
+    for (const auto& f : files) {
+        if (f.id == file.id) found_in_list = true;
+    }
+    EXPECT_FALSE(found_in_list);
+}
+
+// --- Storage Breakdown ---
+
+TEST_F(SpaceFileTest, GetSpaceStorageBreakdown) {
+    auto [user, space] = create_user_and_space();
+
+    // Create files with different tool sources
+    auto f1 = db_->create_space_file(space.id, "", "doc.txt",
+                                      "disk_br1", 1000, "text/plain", user.id);
+    auto f2 = db_->create_space_file(space.id, "", "wiki_img.png",
+                                      "disk_br2", 2000, "image/png", user.id);
+    db_->set_space_file_tool_source(f2.id, "wiki");
+    auto f3 = db_->create_space_file(space.id, "", "task_attach.pdf",
+                                      "disk_br3", 3000, "application/pdf", user.id);
+    db_->set_space_file_tool_source(f3.id, "tasks");
+
+    auto breakdown = db_->get_space_storage_breakdown(space.id);
+    ASSERT_GE(breakdown.size(), 2u);
+
+    // Check that we have tool-type entries
+    int64_t total = 0;
+    for (const auto& entry : breakdown) {
+        if (entry.type == "tool") {
+            total += entry.used;
+        }
+    }
+    EXPECT_EQ(total, 6000);
+}
+
+TEST_F(SpaceFileTest, GetSpaceStorageBreakdownEmpty) {
+    auto [user, space] = create_user_and_space();
+    auto breakdown = db_->get_space_storage_breakdown(space.id);
+    EXPECT_EQ(breakdown.size(), 0u);
+}
+
+// --- Total Personal Spaces Storage ---
+
+TEST_F(SpaceFileTest, GetTotalPersonalSpacesStorageUsed) {
+    auto user = db_->create_user("alice", "Alice", "KEY_ALICE");
+    auto personal = db_->create_personal_space(user.id, "Alice");
+
+    db_->create_space_file(personal.id, "", "my_file.txt",
+                            "disk_p1", 500, "text/plain", user.id);
+    db_->create_space_file(personal.id, "", "my_photo.jpg",
+                            "disk_p2", 1500, "image/jpeg", user.id);
+
+    int64_t total = db_->get_total_personal_spaces_storage_used();
+    EXPECT_EQ(total, 2000);
+}
+
+TEST_F(SpaceFileTest, GetTotalPersonalSpacesStorageExcludesRegularSpaces) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_ALICE");
+    auto personal = db_->create_personal_space(alice.id, "Alice");
+    db_->create_space_file(personal.id, "", "personal.txt",
+                            "disk_pers", 1000, "text/plain", alice.id);
+
+    // Create a regular (non-personal) space with files
+    auto space = db_->create_space("TeamSpace", "desc", true, alice.id, "write");
+    db_->create_space_file(space.id, "", "team.txt",
+                            "disk_team", 5000, "text/plain", alice.id);
+
+    int64_t total = db_->get_total_personal_spaces_storage_used();
+    // Should only include personal space storage
+    EXPECT_EQ(total, 1000);
+}
+
+// --- Total File Size ---
+
+TEST_F(SpaceFileTest, GetTotalFileSize) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_ALICE");
+    auto space1 = db_->create_space("Space1", "", true, alice.id, "write");
+    db_->create_space_file(space1.id, "", "a.txt",
+                            "disk_tot1", 1000, "text/plain", alice.id);
+
+    auto bob = db_->create_user("bob", "Bob", "KEY_BOB", "admin");
+    auto space2 = db_->create_space("Space2", "", true, bob.id, "write");
+    db_->create_space_file(space2.id, "", "b.txt",
+                            "disk_tot2", 2000, "text/plain", bob.id);
+
+    int64_t total = db_->get_total_file_size();
+    // Total includes space file versions from both spaces
+    EXPECT_GE(total, 3000);
+}
+
+TEST_F(SpaceFileTest, GetTotalFileSizeIncludesVersions) {
+    auto [user, space] = create_user_and_space();
+    auto file = db_->create_space_file(space.id, "", "multi.bin",
+                                        "disk_mv1", 1000, "application/octet-stream", user.id);
+    db_->create_file_version(file.id, "disk_mv2", 2000, "application/octet-stream", user.id);
+
+    int64_t total = db_->get_total_file_size();
+    // Should include both versions (1000 + 2000)
+    EXPECT_GE(total, 3000);
+}

@@ -57,6 +57,12 @@ A self-hosted chat application with PKI-based authentication, multi-device suppo
 - **Docker** (for running the test PostgreSQL container and building images)
 - **Python 3** with `venv` (for API tests)
 
+Optional (for backend static analysis, formatting, and sanitizers):
+
+- **clang-tidy** — static analysis (`clang-tools-extra` / `clang-tidy`)
+- **clang-format** — code formatting (`clang-tools-extra` / `clang-format`)
+- **libasan / libubsan** — AddressSanitizer and UndefinedBehaviorSanitizer runtime libraries (`libasan` + `libubsan` on Fedora, pre-installed on Ubuntu)
+
 ### Getting Started
 
 1. Clone with submodules:
@@ -113,15 +119,56 @@ POSTGRES_PASSWORD=changeme POSTGRES_DB=chatapp \
 The test runner supports targeted test execution:
 
 ```
-./run-tests.sh --frontend         # Lint, typecheck, format, build
-./run-tests.sh --backend          # Build + unit + integration tests
-./run-tests.sh --backend-unit     # Backend unit tests only
-./run-tests.sh --api-tests        # Black-box API tests
-./run-tests.sh --e2e              # Playwright E2E tests
-./run-tests.sh --docker           # Docker image builds
-./run-tests.sh --e2e --parallel 4 # E2E tests with 4 parallel workers
-./run-tests.sh --help             # Full list of options
+./run-tests.sh --frontend          # Lint, typecheck, format, build
+./run-tests.sh --backend           # Build + unit + integration tests
+./run-tests.sh --backend-unit      # Backend unit tests only
+./run-tests.sh --static-analysis   # C++ static analysis (clang-tidy)
+./run-tests.sh --api-tests         # Black-box API tests
+./run-tests.sh --e2e               # Playwright E2E tests
+./run-tests.sh --load-tests        # Performance/load tests (Locust)
+./run-tests.sh --docker            # Docker image builds
+./run-tests.sh --e2e --parallel 4  # E2E tests with 4 parallel workers
+./run-tests.sh --help              # Full list of options
 ```
+
+### Load / Performance Tests
+
+The load tests use [Locust](https://locust.io/) to measure server performance under concurrent load and verify correctness under strain. They live in `tests/load/`.
+
+**Via the test runner** (starts a backend server automatically):
+
+```
+./run-tests.sh --load-tests
+```
+
+**Standalone** (against an already-running server):
+
+```
+cd tests/load
+pip install -r requirements.txt
+
+# Interactive web UI at http://localhost:8089:
+locust --host=http://localhost:9001
+
+# Headless with a named profile (baseline / moderate / stress / spike / ci):
+./run_load_tests.sh --profile moderate --host http://localhost:9001
+
+# Single scenario:
+./run_load_tests.sh --profile baseline --scenario MessagingUser --host http://localhost:9001
+```
+
+**Available scenarios:**
+
+| Class | What it tests |
+|---|---|
+| `AuthLoadUser` | Registration + login throughput (PKI and password) |
+| `MessagingUser` | WebSocket chat: send, typing, reactions, read receipts |
+| `RestApiMixUser` | CRUD across channels, spaces, tasks, wiki, calendar |
+| `FileUploadUser` | File upload/download stress |
+| `SearchUser` | Search queries under concurrent load |
+| `RealisticUser` | Weighted mix of all the above |
+
+When no scenario is specified, Locust runs all of them. Load profiles are defined in `tests/load/config/profiles.json` and pass/fail thresholds in `tests/load/config/thresholds.json`.
 
 ## Configuration
 
@@ -211,5 +258,3 @@ Browser ──► Nginx (:80)
 
 Backend (:9001) ──► PostgreSQL (:5432)
 ```
-
-Authentication uses ECDSA P-256 keypairs stored in the browser's IndexedDB. No passwords are involved -- each device holds a private key and the server stores the corresponding public key.

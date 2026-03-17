@@ -507,8 +507,9 @@ function AnimationDriver({
     doneRef.current = false;
   }, [targetAngle]);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     if (doneRef.current) return;
+    state.invalidate(); // Request next frame to keep animation running
     angleRef.current += delta * ANIM_SPEED;
     if (angleRef.current >= Math.abs(targetAngle)) {
       angleRef.current = Math.abs(targetAngle);
@@ -657,7 +658,7 @@ export function RubiksCube({ large }: { large?: boolean } = {}) {
         }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <Canvas camera={{ position: [5, 4, 5], fov: 45 }}>
+        <Canvas frameloop='demand' camera={{ position: [5, 4, 5], fov: 45 }}>
           <CubeScene
             cubeState={cubeState}
             onMove={handleMove}

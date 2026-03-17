@@ -6,12 +6,14 @@ on:
     paths:
       - "backend/**"
       - "frontend/**"
+      - "tests/load/**"
       - ".github/workflows/test.yml"
   pull_request:
     branches: [main]
     paths:
       - "backend/**"
       - "frontend/**"
+      - "tests/load/**"
       - ".github/workflows/test.yml"
 
 jobs:
@@ -98,7 +100,7 @@ jobs:
 
       - name: Configure CMake
         working-directory: backend
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON -DSANITIZERS=ON
 
       - name: Build
         working-directory: backend
@@ -111,3 +113,151 @@ jobs:
       - name: Run integration tests
         working-directory: backend/build
         run: ctest --output-on-failure -L integration --timeout 60
+
+  static-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libssl-dev \
+            libpqxx-dev \
+            pkg-config \
+            zlib1g-dev \
+            git \
+            clang-tidy
+
+      - name: Clone library dependencies
+        working-directory: backend
+        run: |
+          mkdir -p libs
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/uNetworking/uWebSockets.git libs/uWebSockets
+          git clone --depth 1 --branch v3.11.3 \
+            https://github.com/nlohmann/json.git libs/json
+          git clone --depth 1 \
+            https://github.com/P-H-C/phc-winner-argon2.git libs/argon2
+
+      - name: Configure CMake with static analysis
+        working-directory: backend
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DSTATIC_ANALYSIS=ON
+
+      - name: Build with clang-tidy
+        working-directory: backend
+        run: cmake --build build -j$(nproc) 2>&1 | tee analysis-output.txt
+
+      - name: Check for warnings
+        working-directory: backend
+        run: |
+          if grep -q 'warning:' analysis-output.txt; then
+            echo "::warning::clang-tidy found warnings (non-blocking)"
+            grep 'warning:' analysis-output.txt | head -50
+          fi
+
+  load-tests:
+    runs-on: ubuntu-latest
+    needs: backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: chatapp_test
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: chatapp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U chatapp_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: chatapp_test
+      POSTGRES_PASSWORD: testpassword
+      POSTGRES_DB: chatapp_test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libssl-dev \
+            libpqxx-dev \
+            pkg-config \
+            zlib1g-dev \
+            git
+
+      - name: Clone library dependencies
+        working-directory: backend
+        run: |
+          mkdir -p libs
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/uNetworking/uWebSockets.git libs/uWebSockets
+          git clone --depth 1 --branch v3.11.3 \
+            https://github.com/nlohmann/json.git libs/json
+          git clone --depth 1 \
+            https://github.com/P-H-C/phc-winner-argon2.git libs/argon2
+
+      - name: Build backend
+        working-directory: backend
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install load test dependencies
+        run: pip install -r tests/load/requirements.txt
+
+      - name: Start backend server
+        run: |
+          BACKEND_PORT=9099 \
+          UPLOAD_DIR=$(mktemp -d) \
+          ./backend/build/chat-server &
+          for i in $(seq 1 15); do
+            if curl -sf http://127.0.0.1:9099/api/health >/dev/null 2>&1; then
+              echo "Server ready"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run load tests
+        working-directory: tests/load
+        run: |
+          python -m locust \
+            --headless \
+            --host=http://127.0.0.1:9099 \
+            -u 20 -r 5 --run-time=120s \
+            --csv=reports/ci --html=reports/ci.html \
+            --exit-code-on-error 1
+
+      - name: Validate results
+        working-directory: tests/load
+        run: python validate.py --reports-dir reports --host http://127.0.0.1:9099
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-reports
+          path: tests/load/reports/

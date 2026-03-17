@@ -24,6 +24,7 @@ fi
 
 # Results tracking
 declare -A RESULTS
+MISSING_DEPS=()
 FAILED=0
 
 # Temporary directory for parallel job output
@@ -92,8 +93,9 @@ wait_check_bg() {
 
 print_summary() {
     local order=("Frontend Lint" "Frontend Type Check" "Frontend Format Check"
-                 "Frontend Build" "Backend Build" "Backend Unit Tests"
-                 "Backend Integration Tests" "API Tests" "E2E Tests" "Docker Build")
+                 "Frontend Build" "Backend Build" "Backend Static Analysis"
+                 "Backend Unit Tests" "Backend Integration Tests"
+                 "API Tests" "E2E Tests" "Load Tests" "Docker Build")
 
     printf "\n${BOLD}========================================${NC}\n"
     printf "${BOLD}  TEST RESULTS SUMMARY${NC}\n"
@@ -114,6 +116,14 @@ print_summary() {
         printf "  ${RED}${BOLD}Result: FAILED${NC}\n"
     fi
     printf "${BOLD}========================================${NC}\n"
+
+    if [ "${#MISSING_DEPS[@]}" -gt 0 ]; then
+        printf "\n${YELLOW}${BOLD}Some checks were skipped due to missing dependencies:${NC}\n"
+        for dep in "${MISSING_DEPS[@]}"; do
+            printf "  ${YELLOW}- %s${NC}\n" "$dep"
+        done
+        printf "\n"
+    fi
 }
 
 usage() {
@@ -135,6 +145,8 @@ Options:
   --api-tests        Run black-box API tests (needs backend build + PostgreSQL)
   --e2e              Run Playwright E2E tests (needs backend + frontend + PostgreSQL)
   --parallel N       Run API/E2E tests with N parallel workers (each gets own backend/DB)
+  --static-analysis  Run C++ static analysis (clang-tidy)
+  --load-tests       Run performance/load tests (Locust, needs backend build + PostgreSQL)
   --docker           Run Docker container builds
   --no-build         Skip the backend CMake build step
   --help             Show this help message
@@ -161,6 +173,8 @@ RUN_BACKEND_INTEG=false
 RUN_API_TESTS=false
 RUN_E2E=false
 RUN_DOCKER=false
+RUN_STATIC_ANALYSIS=false
+RUN_LOAD_TESTS=false
 SKIP_BUILD=false
 E2E_WORKERS=16
 API_WORKERS=64
@@ -177,7 +191,7 @@ for arg in "$@"; do
     case "$arg" in
         --all)
             RUN_LINT=true; RUN_TYPECHECK=true; RUN_FORMAT=true; RUN_FE_BUILD=true
-            RUN_BACKEND_UNIT=true; RUN_BACKEND_INTEG=true; RUN_API_TESTS=true; RUN_E2E=true; RUN_DOCKER=true
+            RUN_BACKEND_UNIT=true; RUN_BACKEND_INTEG=true; RUN_API_TESTS=true; RUN_E2E=true; RUN_DOCKER=true; RUN_STATIC_ANALYSIS=true
             ANY_FLAG=true ;;
         --frontend)
             RUN_LINT=true; RUN_TYPECHECK=true; RUN_FORMAT=true; RUN_FE_BUILD=true
@@ -203,6 +217,10 @@ for arg in "$@"; do
             RUN_FE_BUILD=true; ANY_FLAG=true ;;
         --parallel)
             NEXT_IS_WORKERS=true ;;
+        --static-analysis)
+            RUN_STATIC_ANALYSIS=true; ANY_FLAG=true ;;
+        --load-tests)
+            RUN_LOAD_TESTS=true; ANY_FLAG=true ;;
         --docker)
             RUN_DOCKER=true; ANY_FLAG=true ;;
         --no-build)
@@ -218,11 +236,11 @@ done
 # Default: run everything
 if [ "$ANY_FLAG" = false ]; then
     RUN_LINT=true; RUN_TYPECHECK=true; RUN_FORMAT=true; RUN_FE_BUILD=true
-    RUN_BACKEND_UNIT=true; RUN_BACKEND_INTEG=true; RUN_API_TESTS=true; RUN_E2E=true; RUN_DOCKER=true
+    RUN_BACKEND_UNIT=true; RUN_BACKEND_INTEG=true; RUN_API_TESTS=true; RUN_E2E=true; RUN_DOCKER=true; RUN_STATIC_ANALYSIS=true
 fi
 
-NEED_BACKEND=$( [ "$RUN_BACKEND_UNIT" = true ] || [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] && echo true || echo false )
-NEED_PG=$( [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] && echo true || echo false )
+NEED_BACKEND=$( [ "$RUN_BACKEND_UNIT" = true ] || [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] || [ "$RUN_LOAD_TESTS" = true ] && echo true || echo false )
+NEED_PG=$( [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] || [ "$RUN_LOAD_TESTS" = true ] && echo true || echo false )
 
 printf "${BOLD}Chat App Test Runner${NC}\n"
 
@@ -232,11 +250,20 @@ printf "${BOLD}Chat App Test Runner${NC}\n"
 
 FE_PARALLEL_CHECKS=()
 
-# Run the formatter before checking, so format:check only fails on unfixable issues
+# Run formatters before checking, so format:check only fails on unfixable issues
 # Skip in CI (e.g. GitHub Actions) — CI should only check, not fix
 if [ "$RUN_FORMAT" = true ] && [ "$CI" != "true" ]; then
     printf "\n${BLUE}${BOLD}=== Running Frontend Formatter ===${NC}\n"
     (cd "$FRONTEND_DIR" && npm run format) || true
+fi
+
+if [ "$NEED_BACKEND" = true ] && [ "$CI" != "true" ]; then
+    if command -v clang-format &>/dev/null; then
+        printf "\n${BLUE}${BOLD}=== Running Backend Formatter ===${NC}\n"
+        find "$BACKEND_DIR/src" -type f \( -name '*.cpp' -o -name '*.h' \) -exec clang-format -i {} +
+    else
+        MISSING_DEPS+=("clang-format (backend auto-formatting)")
+    fi
 fi
 
 if [ "$RUN_LINT" = true ]; then
@@ -267,11 +294,31 @@ if [ "$NEED_BACKEND" = true ] && [ "$SKIP_BUILD" = false ]; then
         BUILD_OK=false
     else
         COVERAGE_FLAG=""
+        SANITIZER_FLAG=""
         if [ "$RUN_BACKEND_UNIT" = true ]; then
             COVERAGE_FLAG="-DCODE_COVERAGE=ON"
+            # Enable sanitizers only if the runtime library is available
+            if gcc -fsanitize=address,undefined -x c -c /dev/null -o /dev/null &>/dev/null && \
+               [ -e "$(gcc -print-file-name=libasan.so)" ]; then
+                SANITIZER_FLAG="-DSANITIZERS=ON"
+            else
+                MISSING_DEPS+=("libasan + libubsan (runtime sanitizers for unit tests)")
+            fi
         fi
-        run_check_bg "Backend Build" bash -c "cd '$BACKEND_DIR' && cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON $COVERAGE_FLAG && cmake --build build -j\$(nproc)"
+        run_check_bg "Backend Build" bash -c "cd '$BACKEND_DIR' && cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON $COVERAGE_FLAG $SANITIZER_FLAG && cmake --build build -j\$(nproc)"
         BACKEND_BUILD_BG=true
+    fi
+fi
+
+# Start static analysis build in parallel (separate build directory)
+STATIC_ANALYSIS_BG=false
+if [ "$RUN_STATIC_ANALYSIS" = true ] && [ "$SKIP_BUILD" = false ] && [ "$BUILD_OK" = true ]; then
+    if command -v clang-tidy &>/dev/null; then
+        run_check_bg "Backend Static Analysis" bash -c "cd '$BACKEND_DIR' && cmake -B build-analysis -DCMAKE_BUILD_TYPE=Debug -DSTATIC_ANALYSIS=ON && cmake --build build-analysis -j\$(nproc) 2>&1"
+        STATIC_ANALYSIS_BG=true
+    else
+        RESULTS["Backend Static Analysis"]="SKIP"
+        MISSING_DEPS+=("clang-tidy (backend static analysis)")
     fi
 fi
 
@@ -311,6 +358,11 @@ if [ "$BACKEND_BUILD_BG" = true ]; then
     fi
 fi
 
+# Wait for static analysis
+if [ "$STATIC_ANALYSIS_BG" = true ]; then
+    wait_check_bg "Backend Static Analysis"
+fi
+
 # =====================================================================
 # Phase 2: Frontend build (depends on no specific phase 1 result, but
 # runs after to avoid competing for CPU with backend build)
@@ -325,66 +377,17 @@ fi
 # =====================================================================
 
 if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_UNIT" = true ]; then
-    run_check "Backend Unit Tests" bash -c "cd '$BUILD_DIR' && ctest --output-on-failure -L unit --timeout 30 -j\$(nproc)"
-
-    # Report code coverage if unit tests passed
-    if [ "${RESULTS["Backend Unit Tests"]}" = "PASS" ] && command -v gcov &>/dev/null; then
-        printf "\n${BLUE}${BOLD}=== Code Coverage Report ===${NC}\n"
-        GCDA_DIR="$BUILD_DIR/CMakeFiles/chat-lib.dir/src"
-        if [ -d "$GCDA_DIR" ]; then
-            # Collect per-file coverage, deduplicating by keeping max coverage per file
-            declare -A FILE_LINES FILE_COVERED
-            declare -a FILE_ORDER
-
-            while IFS= read -r gcda_file; do
-                gcda_dir=$(dirname "$gcda_file")
-                gcda_base=$(basename "$gcda_file")
-                gcov_output=$(cd "$gcda_dir" && gcov -n "$gcda_base" 2>/dev/null)
-                current_file=""
-                while IFS= read -r line; do
-                    if [[ "$line" =~ ^File\ \'.*/src/(auth|db|handlers|ws|models)/ ]]; then
-                        current_file=$(echo "$line" | sed "s|.*src/|src/|; s|'$||")
-                    elif [[ "$line" =~ ^Lines\ executed: ]] && [ -n "$current_file" ]; then
-                        pct=$(echo "$line" | sed -n 's/Lines executed:\([0-9.]*\)% of \([0-9]*\)/\1 \2/p')
-                        if [ -n "$pct" ]; then
-                            file_pct=$(echo "$pct" | cut -d' ' -f1)
-                            file_lines=$(echo "$pct" | cut -d' ' -f2)
-                            file_covered=$(echo "$file_pct $file_lines" | awk '{printf "%d", ($1/100)*$2}')
-                            prev_covered="${FILE_COVERED[$current_file]:-0}"
-                            if [ "$file_covered" -gt "$prev_covered" ] || [ -z "${FILE_LINES[$current_file]+x}" ]; then
-                                if [ -z "${FILE_LINES[$current_file]+x}" ]; then
-                                    FILE_ORDER+=("$current_file")
-                                fi
-                                FILE_LINES[$current_file]=$file_lines
-                                FILE_COVERED[$current_file]=$file_covered
-                            fi
-                        fi
-                        current_file=""
-                    else
-                        current_file=""
-                    fi
-                done <<< "$gcov_output"
-            done < <(find "$GCDA_DIR" -name '*.gcda' 2>/dev/null)
-
-            # Display deduplicated results and compute totals
-            TOTAL_LINES=0
-            COVERED_LINES=0
-            for f in "${FILE_ORDER[@]}"; do
-                fl=${FILE_LINES[$f]}
-                fc=${FILE_COVERED[$f]}
-                TOTAL_LINES=$((TOTAL_LINES + fl))
-                COVERED_LINES=$((COVERED_LINES + fc))
-                file_pct=$(awk "BEGIN {printf \"%.2f\", ($fc/$fl)*100}")
-                printf "  %-45s %s%% (%s lines)\n" "$f" "$file_pct" "$fl"
-            done
-
-            if [ "$TOTAL_LINES" -gt 0 ]; then
-                COVERAGE_PCT=$(awk "BEGIN {printf \"%.1f\", ($COVERED_LINES/$TOTAL_LINES)*100}")
-                printf "\n  ${BOLD}%-45s %s${NC}\n" "Overall coverage:" "$COVERAGE_PCT% ($COVERED_LINES/$TOTAL_LINES lines)"
-            fi
+    # Clear stale gcov data only for files that were recompiled (checksum mismatch).
+    # Compare gcno (compile-time) and gcda (runtime) timestamps — if gcno is newer,
+    # the source was recompiled and the gcda is stale.
+    while IFS= read -r gcno_file; do
+        gcda_file="${gcno_file%.gcno}.gcda"
+        if [ -f "$gcda_file" ] && [ "$gcno_file" -nt "$gcda_file" ]; then
+            rm -f "$gcda_file"
         fi
-        printf "${BLUE}${BOLD}=============================${NC}\n"
-    fi
+    done < <(find "$BUILD_DIR" -name '*.gcno' 2>/dev/null)
+
+    run_check "Backend Unit Tests" bash -c "cd '$BUILD_DIR' && ctest --output-on-failure -L unit --timeout 30 -j\$(nproc)"
 fi
 
 # Wait for PostgreSQL to be ready (it was started during phase 1)
@@ -418,6 +421,74 @@ if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_INTEG" = true ] && [ "$PG_READY" = 
         export POSTGRES_DB=$TEST_PG_DB
         cd '$BUILD_DIR' && ctest --output-on-failure -L integration --timeout 60
     "
+fi
+
+# Report combined code coverage (unit + integration tests)
+COVERAGE_RAN=false
+if [ "$BUILD_OK" = true ] && command -v gcov &>/dev/null; then
+    # Show report if either unit or integration tests ran successfully
+    UNIT_PASSED=$( [ "${RESULTS["Backend Unit Tests"]:-SKIP}" = "PASS" ] && echo true || echo false )
+    INTEG_PASSED=$( [ "${RESULTS["Backend Integration Tests"]:-SKIP}" = "PASS" ] && echo true || echo false )
+    if [ "$UNIT_PASSED" = true ] || [ "$INTEG_PASSED" = true ]; then
+        COVERAGE_LABEL="Code Coverage Report"
+        if [ "$UNIT_PASSED" = true ] && [ "$INTEG_PASSED" = true ]; then
+            COVERAGE_LABEL="Code Coverage Report (unit + integration tests)"
+        elif [ "$INTEG_PASSED" = true ]; then
+            COVERAGE_LABEL="Code Coverage Report (integration tests)"
+        fi
+
+        printf "\n${BLUE}${BOLD}=== %s ===${NC}\n" "$COVERAGE_LABEL"
+        GCDA_DIR="$BUILD_DIR/CMakeFiles/chat-lib.dir/src"
+        if [ -d "$GCDA_DIR" ]; then
+            # Process all gcda files in one gcov invocation for reliable results
+            GCOV_OUTPUT=$(cd "$GCDA_DIR" && find . -name '*.gcda' -exec gcov -n {} + 2>/dev/null)
+
+            unset FILE_LINES FILE_COVERED 2>/dev/null
+            declare -A FILE_LINES FILE_COVERED
+            FILE_ORDER=()
+            current_file=""
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^File\ \'.*/backend/src/.*\.cpp ]]; then
+                    current_file=$(echo "$line" | sed "s|.*src/|src/|; s|'$||")
+                elif [[ "$line" =~ ^Lines\ executed: ]] && [ -n "$current_file" ]; then
+                    pct=$(echo "$line" | sed -n 's/Lines executed:\([0-9.]*\)% of \([0-9]*\)/\1 \2/p')
+                    if [ -n "$pct" ]; then
+                        file_pct=$(echo "$pct" | cut -d' ' -f1)
+                        file_lines=$(echo "$pct" | cut -d' ' -f2)
+                        file_covered=$(echo "$file_pct $file_lines" | awk '{printf "%d", ($1/100)*$2}')
+                        prev_covered="${FILE_COVERED[$current_file]:-0}"
+                        if [ "$file_covered" -gt "$prev_covered" ] || [ -z "${FILE_LINES[$current_file]+x}" ]; then
+                            if [ -z "${FILE_LINES[$current_file]+x}" ]; then
+                                FILE_ORDER+=("$current_file")
+                            fi
+                            FILE_LINES[$current_file]=$file_lines
+                            FILE_COVERED[$current_file]=$file_covered
+                        fi
+                    fi
+                    current_file=""
+                else
+                    current_file=""
+                fi
+            done <<< "$GCOV_OUTPUT"
+
+            TOTAL_LINES=0
+            COVERED_LINES=0
+            for f in "${FILE_ORDER[@]}"; do
+                fl=${FILE_LINES[$f]}
+                fc=${FILE_COVERED[$f]}
+                TOTAL_LINES=$((TOTAL_LINES + fl))
+                COVERED_LINES=$((COVERED_LINES + fc))
+                file_pct=$(awk "BEGIN {printf \"%.2f\", ($fc/$fl)*100}")
+                printf "  %-45s %s%% (%s lines)\n" "$f" "$file_pct" "$fl"
+            done
+
+            if [ "$TOTAL_LINES" -gt 0 ]; then
+                COVERAGE_PCT=$(awk "BEGIN {printf \"%.1f\", ($COVERED_LINES/$TOTAL_LINES)*100}")
+                printf "\n  ${BOLD}%-45s %s${NC}\n" "Overall coverage:" "$COVERAGE_PCT% ($COVERED_LINES/$TOTAL_LINES lines)"
+            fi
+        fi
+        printf "${BLUE}${BOLD}=============================${NC}\n"
+    fi
 fi
 
 if [ "$RUN_API_TESTS" = true ]; then
@@ -594,6 +665,83 @@ if [ "$RUN_E2E" = true ]; then
 
             rm -rf "$E2E_UPLOAD_DIR"
         fi
+    fi
+fi
+
+# =====================================================================
+# Load tests (Locust)
+# =====================================================================
+
+LOAD_TESTS_DIR="$SCRIPT_DIR/tests/load"
+
+if [ "$RUN_LOAD_TESTS" = true ]; then
+    if [ "$BUILD_OK" = false ] || [ "$PG_READY" = false ]; then
+        RESULTS["Load Tests"]="SKIP"
+    else
+        # Ensure Python venv with test dependencies
+        LOAD_VENV="$LOAD_TESTS_DIR/.venv"
+        if [ ! -d "$LOAD_VENV" ]; then
+            printf "\n${BLUE}Creating Python venv for load tests...${NC}\n"
+            python3 -m venv "$LOAD_VENV"
+        fi
+        "$LOAD_VENV/bin/pip" install -q -r "$LOAD_TESTS_DIR/requirements.txt" 2>/dev/null
+
+        # Start a backend server for load tests
+        LOAD_BACKEND_PORT=9097
+        LOAD_UPLOAD_DIR=$(mktemp -d)
+
+        printf "\n${BLUE}Starting backend server on port %s for load tests...${NC}\n" "$LOAD_BACKEND_PORT"
+        BACKEND_PORT="$LOAD_BACKEND_PORT" \
+        POSTGRES_HOST=localhost \
+        POSTGRES_PORT="$TEST_PG_PORT" \
+        POSTGRES_USER="$TEST_PG_USER" \
+        POSTGRES_PASSWORD="$TEST_PG_PASS" \
+        POSTGRES_DB="$TEST_PG_DB" \
+        UPLOAD_DIR="$LOAD_UPLOAD_DIR" \
+        "$BUILD_DIR/chat-server" &
+        LOAD_SERVER_PID=$!
+
+        LOAD_SERVER_READY=false
+        for i in $(seq 1 15); do
+            if curl -sf "http://127.0.0.1:$LOAD_BACKEND_PORT/api/health" >/dev/null 2>&1; then
+                LOAD_SERVER_READY=true
+                break
+            fi
+            sleep 1
+        done
+
+        if [ "$LOAD_SERVER_READY" = false ]; then
+            printf "${RED}Error: Backend server failed to start for load tests.${NC}\n"
+            kill "$LOAD_SERVER_PID" 2>/dev/null || true
+            RESULTS["Load Tests"]="FAIL"
+            FAILED=1
+        else
+            run_check "Load Tests" bash -c "
+                export POSTGRES_HOST=localhost
+                export POSTGRES_PORT=$TEST_PG_PORT
+                export POSTGRES_USER=$TEST_PG_USER
+                export POSTGRES_PASSWORD=$TEST_PG_PASS
+                export POSTGRES_DB=$TEST_PG_DB
+                cd '$LOAD_TESTS_DIR' && '$LOAD_VENV/bin/python' -m locust \
+                    --headless \
+                    --host=http://127.0.0.1:$LOAD_BACKEND_PORT \
+                    -u 20 -r 5 --run-time=120s \
+                    --csv=reports/ci --html=reports/ci.html \
+                    --exit-code-on-error 1 \
+                    --stop-timeout 5 && \
+                '$LOAD_VENV/bin/python' validate.py \
+                    --reports-dir reports \
+                    --host http://127.0.0.1:$LOAD_BACKEND_PORT
+            "
+            kill "$LOAD_SERVER_PID" 2>/dev/null || true
+            # Give the server up to 5s to exit, then force-kill
+            if ! timeout 5 tail --pid="$LOAD_SERVER_PID" -f /dev/null 2>/dev/null; then
+                kill -9 "$LOAD_SERVER_PID" 2>/dev/null || true
+            fi
+            wait "$LOAD_SERVER_PID" 2>/dev/null || true
+        fi
+
+        rm -rf "$LOAD_UPLOAD_DIR"
     fi
 fi
 

@@ -1,0 +1,52 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+
+# Indentation
+IndentWidth: 2
+AccessModifierOffset: -2
+ContinuationIndentWidth: 2
+ConstructorInitializerIndentWidth: 2
+IndentCaseLabels: false
+
+# Braces
+BreakBeforeBraces: Attach
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+
+# Line width
+ColumnLimit: 100
+
+# Includes
+SortIncludes: CaseInsensitive
+IncludeBlocks: Preserve
+
+# Pointers and references
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+
+# Spaces
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpaceBeforeRangeBasedForLoopColon: true
+SpacesInAngles: Never
+
+# Arguments and parameters
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+AlignAfterOpenBracket: AlwaysBreak
+
+# Namespaces
+NamespaceIndentation: None
+
+# Other
+AlignTrailingComments: true
+MaxEmptyLinesToKeep: 1
+ReflowComments: true
+InsertBraces: false

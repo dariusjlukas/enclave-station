@@ -569,3 +569,157 @@ TEST_F(TaskBoardTest, DeleteTaskCascadesDependencies) {
     auto deps = db_->get_task_dependencies(board.id);
     EXPECT_EQ(deps.size(), 0u);
 }
+
+// --- find_task_column ---
+
+TEST_F(TaskBoardTest, FindTaskColumn) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "In Progress", 1, 3, "green");
+
+    auto found = db_->find_task_column(col.id);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->id, col.id);
+    EXPECT_EQ(found->board_id, board.id);
+    EXPECT_EQ(found->name, "In Progress");
+    EXPECT_EQ(found->position, 1);
+    EXPECT_EQ(found->wip_limit, 3);
+}
+
+TEST_F(TaskBoardTest, FindTaskColumnNotFound) {
+    auto found = db_->find_task_column("00000000-0000-0000-0000-000000000000");
+    EXPECT_FALSE(found.has_value());
+}
+
+// --- get_task_checklists ---
+
+TEST_F(TaskBoardTest, GetTaskChecklists) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+
+    auto cl1 = db_->create_task_checklist(task.id, "Pre-deploy", 0);
+    auto cl2 = db_->create_task_checklist(task.id, "Post-deploy", 1);
+
+    auto checklists = db_->get_task_checklists(task.id);
+    ASSERT_EQ(checklists.size(), 2u);
+    EXPECT_EQ(checklists[0].title, "Pre-deploy");
+    EXPECT_EQ(checklists[0].task_id, task.id);
+    EXPECT_EQ(checklists[1].title, "Post-deploy");
+    EXPECT_EQ(checklists[1].task_id, task.id);
+}
+
+TEST_F(TaskBoardTest, GetTaskChecklistsEmpty) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+
+    auto checklists = db_->get_task_checklists(task.id);
+    EXPECT_EQ(checklists.size(), 0u);
+}
+
+// --- update_task_checklist ---
+
+TEST_F(TaskBoardTest, UpdateTaskChecklist) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+    auto cl = db_->create_task_checklist(task.id, "Old Title", 0);
+
+    auto updated = db_->update_task_checklist(cl.id, "New Title");
+    EXPECT_EQ(updated.id, cl.id);
+    EXPECT_EQ(updated.title, "New Title");
+    EXPECT_EQ(updated.task_id, task.id);
+    EXPECT_EQ(updated.position, 0);
+
+    // Verify persisted via get_task_checklists
+    auto checklists = db_->get_task_checklists(task.id);
+    ASSERT_EQ(checklists.size(), 1u);
+    EXPECT_EQ(checklists[0].title, "New Title");
+}
+
+// --- delete_checklist_item ---
+
+TEST_F(TaskBoardTest, DeleteChecklistItem) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+    auto cl = db_->create_task_checklist(task.id, "Checklist", 0);
+
+    auto item1 = db_->create_checklist_item(cl.id, "Keep me", 0);
+    auto item2 = db_->create_checklist_item(cl.id, "Delete me", 1);
+
+    db_->delete_checklist_item(item2.id);
+
+    auto items = db_->get_checklist_items(cl.id);
+    ASSERT_EQ(items.size(), 1u);
+    EXPECT_EQ(items[0].content, "Keep me");
+    EXPECT_EQ(items[0].id, item1.id);
+}
+
+TEST_F(TaskBoardTest, DeleteAllChecklistItems) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+    auto cl = db_->create_task_checklist(task.id, "Checklist", 0);
+
+    auto item = db_->create_checklist_item(cl.id, "Only item", 0);
+    db_->delete_checklist_item(item.id);
+
+    auto items = db_->get_checklist_items(cl.id);
+    EXPECT_EQ(items.size(), 0u);
+}
+
+// --- update_task_label ---
+
+TEST_F(TaskBoardTest, UpdateTaskLabel) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto label = db_->create_task_label(board.id, "Bug", "#ef4444");
+
+    auto updated = db_->update_task_label(label.id, "Critical Bug", "#dc2626");
+    EXPECT_EQ(updated.id, label.id);
+    EXPECT_EQ(updated.name, "Critical Bug");
+    EXPECT_EQ(updated.color, "#dc2626");
+    EXPECT_EQ(updated.board_id, board.id);
+
+    // Verify persisted via list_task_labels
+    auto labels = db_->list_task_labels(board.id);
+    ASSERT_EQ(labels.size(), 1u);
+    EXPECT_EQ(labels[0].name, "Critical Bug");
+    EXPECT_EQ(labels[0].color, "#dc2626");
+}
+
+// --- delete_task_label ---
+
+TEST_F(TaskBoardTest, DeleteTaskLabel) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    db_->create_task_label(board.id, "Bug", "#ef4444");
+    auto label2 = db_->create_task_label(board.id, "Feature", "#3b82f6");
+
+    db_->delete_task_label(label2.id);
+
+    auto labels = db_->list_task_labels(board.id);
+    ASSERT_EQ(labels.size(), 1u);
+    EXPECT_EQ(labels[0].name, "Bug");
+}
+
+TEST_F(TaskBoardTest, DeleteTaskLabelRemovesAssignments) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+    auto label = db_->create_task_label(board.id, "Bug", "#ef4444");
+
+    db_->assign_task_label(task.id, label.id);
+    db_->delete_task_label(label.id);
+
+    auto task_labels = db_->get_task_labels(task.id);
+    EXPECT_EQ(task_labels.size(), 0u);
+}

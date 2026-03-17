@@ -1,18 +1,18 @@
 #pragma once
+#include <optional>
 #include <string>
 #include <vector>
-#include <optional>
 
 namespace password_auth {
 
 struct PasswordPolicy {
-    int min_length = 8;
-    bool require_uppercase = true;
-    bool require_lowercase = true;
-    bool require_number = true;
-    bool require_special = false;
-    int max_age_days = 0;       // 0 = no expiry
-    int history_count = 0;      // 0 = no history check
+  int min_length = 8;
+  bool require_uppercase = true;
+  bool require_lowercase = true;
+  bool require_number = true;
+  bool require_special = false;
+  int max_age_days = 0;   // 0 = no expiry
+  int history_count = 0;  // 0 = no history check
 };
 
 // Hash a password using Argon2id. Returns the encoded hash string
@@ -29,4 +29,4 @@ std::string validate_password(const std::string& password, const PasswordPolicy&
 // Check if a password matches any of the given historical hashes.
 bool matches_history(const std::string& password, const std::vector<std::string>& old_hashes);
 
-} // namespace password_auth
+}  // namespace password_auth

@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "FILE=$(echo $CLAUDE_TOOL_INPUT | jq -r '.file_path // empty') && if [ -n \"$FILE\" ] && echo \"$FILE\" | grep -qE '\\.(ts|tsx|js|jsx|json|css|html)$' && echo \"$FILE\" | grep -q '/frontend/'; then cd /home/darius/dev/ai-generated/enclave-station/frontend && npx prettier --write \"$FILE\" 2>/dev/null; fi",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /home/darius/dev/ai-generated/enclave-station && git diff --name-only HEAD 2>/dev/null | grep -q '^frontend/' && echo '⚠ Frontend files changed — verify: npm run lint && npm run typecheck (from frontend/)' || true",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

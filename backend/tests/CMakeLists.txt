@@ -89,9 +89,23 @@ add_executable(test_personal_spaces test_personal_spaces.cpp)
 target_link_libraries(test_personal_spaces PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME PersonalSpacesTests COMMAND test_personal_spaces)
 
+add_executable(test_wiki test_wiki.cpp)
+target_link_libraries(test_wiki PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME WikiTests COMMAND test_wiki)
+
+add_executable(test_notifications test_notifications.cpp)
+target_link_libraries(test_notifications PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME NotificationTests COMMAND test_notifications)
+
+add_executable(test_auth_credentials test_auth_credentials.cpp)
+target_link_libraries(test_auth_credentials PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME AuthCredentialTests COMMAND test_auth_credentials)
+
 # Labels for selective test running
 set_tests_properties(PkiTests ConfigTests TotpTests PasswordTests WebAuthnTests HandlerUtilsTests
     AuthUtilsTests AuthPayloadUtilsTests AdminSettingsUtilsTests FileAccessUtilsTests
     AdminApprovalUtilsTests SearchHandlerTests FileHandlerTests RecurrenceTests ZipBuilderTests
     PROPERTIES LABELS "unit")
-set_tests_properties(DatabaseTests SpaceFileTests CalendarTests TaskBoardTests PersonalSpacesTests PROPERTIES LABELS "integration")
+set_tests_properties(DatabaseTests SpaceFileTests CalendarTests TaskBoardTests PersonalSpacesTests
+    WikiTests NotificationTests AuthCredentialTests
+    PROPERTIES LABELS "integration")

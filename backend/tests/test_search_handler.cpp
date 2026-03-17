@@ -182,3 +182,130 @@ TEST(SearchHandler_ParseFilters, WhitespaceTrimmed) {
     EXPECT_EQ(result[0].type, "messages");
     EXPECT_EQ(result[0].value, "hello");
 }
+
+// --- Additional split_terms tests ---
+
+TEST(SearchHandler_SplitTerms, LeadingPipeSkipsEmpty) {
+    auto result = SH::split_terms("|hello");
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], "hello");
+}
+
+TEST(SearchHandler_SplitTerms, TrailingPipeSkipsEmpty) {
+    auto result = SH::split_terms("hello|");
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], "hello");
+}
+
+TEST(SearchHandler_SplitTerms, OnlyPipesReturnsOriginal) {
+    auto result = SH::split_terms("|||");
+    // All segments are empty, so terms is empty, falls back to push_back(input)
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], "|||");
+}
+
+TEST(SearchHandler_SplitTerms, OnlyWhitespace) {
+    auto result = SH::split_terms("   ");
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0], "   ");
+}
+
+TEST(SearchHandler_SplitTerms, TermsWithInternalSpaces) {
+    auto result = SH::split_terms("hello world | foo bar");
+    ASSERT_EQ(result.size(), 2);
+    EXPECT_EQ(result[0], "hello world");
+    EXPECT_EQ(result[1], "foo bar");
+}
+
+TEST(SearchHandler_SplitTerms, SingleCharTerms) {
+    auto result = SH::split_terms("a|b|c");
+    ASSERT_EQ(result.size(), 3);
+    EXPECT_EQ(result[0], "a");
+    EXPECT_EQ(result[1], "b");
+    EXPECT_EQ(result[2], "c");
+}
+
+// --- Additional build_tsquery tests ---
+
+TEST(SearchHandler_BuildTsquery, CustomConfig) {
+    auto result = SH::build_tsquery({"test"}, "and", "simple");
+    EXPECT_EQ(result, "websearch_to_tsquery('simple', 'test')");
+}
+
+TEST(SearchHandler_BuildTsquery, EmptyTermsList) {
+    auto result = SH::build_tsquery({}, "and");
+    EXPECT_EQ(result, "");
+}
+
+TEST(SearchHandler_BuildTsquery, OrModeSingleTerm) {
+    auto result = SH::build_tsquery({"hello"}, "or");
+    // Single term, no operator needed regardless of mode
+    EXPECT_EQ(result, "websearch_to_tsquery('english', 'hello')");
+}
+
+TEST(SearchHandler_BuildTsquery, TermWithBackslash) {
+    auto result = SH::build_tsquery({"path\\to"}, "and");
+    EXPECT_EQ(result, "websearch_to_tsquery('english', 'path\\to')");
+}
+
+TEST(SearchHandler_BuildTsquery, TermWithSqlInjection) {
+    auto result = SH::build_tsquery({"'; DROP TABLE users; --"}, "and");
+    // The single quote should be escaped to ''
+    EXPECT_EQ(result, "websearch_to_tsquery('english', '''; DROP TABLE users; --')");
+}
+
+// --- Additional quote_literal tests ---
+
+TEST(SearchHandler_QuoteLiteral, BackslashesPreserved) {
+    EXPECT_EQ(SH::quote_literal("a\\b"), "'a\\b'");
+}
+
+TEST(SearchHandler_QuoteLiteral, DoubleQuotesPreserved) {
+    EXPECT_EQ(SH::quote_literal("say \"hello\""), "'say \"hello\"'");
+}
+
+TEST(SearchHandler_QuoteLiteral, ConsecutiveSingleQuotes) {
+    EXPECT_EQ(SH::quote_literal("''"), "''''''");
+}
+
+// --- Additional parse_filters tests ---
+
+TEST(SearchHandler_ParseFilters, DuplicateTypesAllowed) {
+    auto result = SH::parse_filters("messages:hello,messages:world");
+    ASSERT_EQ(result.size(), 2);
+    EXPECT_EQ(result[0].value, "hello");
+    EXPECT_EQ(result[1].value, "world");
+}
+
+TEST(SearchHandler_ParseFilters, ValueWithColons) {
+    // Only the first colon splits type from value
+    auto result = SH::parse_filters("messages:hello:world");
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0].type, "messages");
+    EXPECT_EQ(result[0].value, "hello:world");
+}
+
+TEST(SearchHandler_ParseFilters, OnlyCommas) {
+    auto result = SH::parse_filters(",,,");
+    ASSERT_EQ(result.size(), 0);
+}
+
+TEST(SearchHandler_ParseFilters, AllInvalidTypes) {
+    auto result = SH::parse_filters("invalid:a,unknown:b,bad:c");
+    ASSERT_EQ(result.size(), 0);
+}
+
+TEST(SearchHandler_ParseFilters, MixedValidAndInvalid) {
+    auto result = SH::parse_filters("bad:x,users:alice,fake:y,files:doc");
+    ASSERT_EQ(result.size(), 2);
+    EXPECT_EQ(result[0].type, "users");
+    EXPECT_EQ(result[0].value, "alice");
+    EXPECT_EQ(result[1].type, "files");
+    EXPECT_EQ(result[1].value, "doc");
+}
+
+TEST(SearchHandler_ParseFilters, ValueWithSpaces) {
+    auto result = SH::parse_filters("messages:hello world");
+    ASSERT_EQ(result.size(), 1);
+    EXPECT_EQ(result[0].value, "hello world");
+}

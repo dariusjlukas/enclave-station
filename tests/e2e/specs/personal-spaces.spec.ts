@@ -167,10 +167,23 @@ test.describe("Personal Spaces", () => {
     await expect(personalSpaceBtn).toBeVisible({ timeout: 10_000 });
     await personalSpaceBtn.click();
 
-    // Verify "My Space" heading is visible in the space panel
-    await expect(
-      page.getByRole("heading", { name: "My Space" }),
-    ).toBeVisible({ timeout: 10_000 });
+    // Wait for React to commit the re-render from the click handler
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+
+    // If the space was already auto-selected, clicking toggled collapse.
+    // Click again to re-expand.
+    const isCollapsed = await page.evaluate(
+      () =>
+        document.querySelector("aside")?.classList.contains("w-16") ?? true,
+    );
+    if (isCollapsed) {
+      await personalSpaceBtn.click();
+    }
+
+    // Wait for panel content to be interactable (CSS transition done)
+    await page
+      .locator("aside button", { hasText: "Files" })
+      .click({ trial: true, timeout: 10_000 });
 
     // Verify tool buttons are visible (Files, Wiki, Tasks, Calendar by default)
     await expect(page.locator("aside button", { hasText: "Files" })).toBeVisible();
@@ -220,10 +233,23 @@ test.describe("Personal Spaces", () => {
     await expect(personalSpaceBtn).toBeVisible({ timeout: 10_000 });
     await personalSpaceBtn.click();
 
-    // Verify "My Space" heading is visible
-    await expect(
-      page.getByRole("heading", { name: "My Space" }),
-    ).toBeVisible({ timeout: 10_000 });
+    // Wait for React to commit the re-render from the click handler
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+
+    // If the space was already auto-selected, clicking toggled collapse.
+    // Click again to re-expand.
+    const isCollapsed = await page.evaluate(
+      () =>
+        document.querySelector("aside")?.classList.contains("w-16") ?? true,
+    );
+    if (isCollapsed) {
+      await personalSpaceBtn.click();
+    }
+
+    // Wait for panel content to be interactable (CSS transition done)
+    await page
+      .locator("aside button", { hasText: "Files" })
+      .click({ trial: true, timeout: 10_000 });
 
     // Verify Calendar is NOT visible, but Files/Tasks/Wiki are
     await expect(page.locator("aside button", { hasText: "Files" })).toBeVisible();

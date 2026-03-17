@@ -3,6 +3,7 @@ project(chat-server C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Find system packages
 find_package(OpenSSL REQUIRED)
@@ -94,6 +95,9 @@ target_link_libraries(chat-lib PUBLIC
 
 target_compile_definitions(chat-lib PUBLIC LIBUS_USE_OPENSSL)
 
+# Compiler warnings for project code
+target_compile_options(chat-lib PRIVATE -Wall -Wextra -Wno-unused-parameter)
+
 # Suppress pqxx deprecation warnings (exec_params, binarystring)
 # These APIs are deprecated in pqxx >=7.10 but still required for 7.9.x compatibility
 set_source_files_properties(src/db/database.cpp PROPERTIES
@@ -109,6 +113,32 @@ option(CODE_COVERAGE "Enable code coverage instrumentation (gcov)" OFF)
 if(CODE_COVERAGE)
     target_compile_options(chat-lib PUBLIC --coverage -fprofile-arcs -ftest-coverage)
     target_link_options(chat-lib PUBLIC --coverage)
+endif()
+
+# Sanitizers (AddressSanitizer + UndefinedBehaviorSanitizer)
+option(SANITIZERS "Enable ASan and UBSan for detecting memory errors and undefined behavior" OFF)
+if(SANITIZERS)
+    set(SANITIZER_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_compile_options(chat-lib PUBLIC ${SANITIZER_FLAGS})
+    target_link_options(chat-lib PUBLIC ${SANITIZER_FLAGS})
+    target_compile_options(uSockets PUBLIC ${SANITIZER_FLAGS})
+    target_link_options(uSockets PUBLIC ${SANITIZER_FLAGS})
+    target_compile_options(argon2 PUBLIC ${SANITIZER_FLAGS})
+    target_link_options(argon2 PUBLIC ${SANITIZER_FLAGS})
+    message(STATUS "Sanitizers enabled: AddressSanitizer + UndefinedBehaviorSanitizer")
+endif()
+
+# Static analysis
+option(STATIC_ANALYSIS "Enable clang-tidy static analysis" OFF)
+if(STATIC_ANALYSIS)
+    find_program(CLANG_TIDY_EXE NAMES clang-tidy clang-tidy-18 clang-tidy-17 clang-tidy-16)
+    if(CLANG_TIDY_EXE)
+        set_target_properties(chat-lib PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+        set_target_properties(chat-server PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_EXE}")
+        message(STATUS "clang-tidy enabled: ${CLANG_TIDY_EXE}")
+    else()
+        message(WARNING "STATIC_ANALYSIS=ON but clang-tidy not found")
+    endif()
 endif()
 
 # Testing

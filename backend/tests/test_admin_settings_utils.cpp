@@ -200,3 +200,170 @@ TEST(AdminSettings, PersonalSpacesStorageLimitValidation) {
             json{{"personal_spaces_storage_limit", -1}}, false),
         std::runtime_error);
 }
+
+// --- Additional collect_settings_updates tests ---
+
+TEST(AdminSettingsUtils, CollectSettingsMarkSetupAlone) {
+    auto updates = admin_settings::collect_settings_updates(json::object(), true);
+    EXPECT_EQ(updates.size(), 1u);
+    EXPECT_EQ(updates.at("setup_completed"), "true");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsNoMarkSetup) {
+    auto updates = admin_settings::collect_settings_updates(json::object(), false);
+    EXPECT_TRUE(updates.empty());
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsAllRegistrationModes) {
+    for (const auto& mode : {"invite", "invite_only", "approval", "open"}) {
+        auto updates = admin_settings::collect_settings_updates(
+            json{{"registration_mode", mode}}, false);
+        EXPECT_EQ(updates.at("registration_mode"), mode);
+    }
+}
+
+TEST(AdminSettingsUtils, CollectSettingsRejectsNegativeMaxFileSize) {
+    // Negative int64 values should still be accepted by the function
+    // (validation is just type-based, not range-based for file sizes)
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"max_file_size", -1}}, false);
+    EXPECT_EQ(updates.at("max_file_size"), "-1");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsRejectsZeroSessionExpiry) {
+    EXPECT_THROW(
+        admin_settings::collect_settings_updates(json{{"session_expiry_hours", 0}}, false),
+        std::runtime_error);
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsMinSessionExpiry) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"session_expiry_hours", 1}}, false);
+    EXPECT_EQ(updates.at("session_expiry_hours"), "1");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsMinPasswordLength) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"password_min_length", 1}}, false);
+    EXPECT_EQ(updates.at("password_min_length"), "1");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsZeroMaxAgeDays) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"password_max_age_days", 0}}, false);
+    EXPECT_EQ(updates.at("password_max_age_days"), "0");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsZeroHistoryCount) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"password_history_count", 0}}, false);
+    EXPECT_EQ(updates.at("password_history_count"), "0");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsRejectsNegativeSpaceStorageLimit) {
+    EXPECT_THROW(
+        admin_settings::collect_settings_updates(
+            json{{"default_space_storage_limit", -1}}, false),
+        std::runtime_error);
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsZeroSpaceStorageLimit) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"default_space_storage_limit", 0}}, false);
+    EXPECT_EQ(updates.at("default_space_storage_limit"), "0");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsRejectsNegativeTotalStorageLimit) {
+    EXPECT_THROW(
+        admin_settings::collect_settings_updates(
+            json{{"personal_spaces_total_storage_limit", -1}}, false),
+        std::runtime_error);
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsZeroTotalStorageLimit) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"personal_spaces_total_storage_limit", 0}}, false);
+    EXPECT_EQ(updates.at("personal_spaces_total_storage_limit"), "0");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAllPersonalSpacesTools) {
+    json body = {
+        {"personal_spaces_enabled", true},
+        {"personal_spaces_files_enabled", true},
+        {"personal_spaces_calendar_enabled", false},
+        {"personal_spaces_tasks_enabled", true},
+        {"personal_spaces_wiki_enabled", false},
+        {"personal_spaces_minigames_enabled", true},
+        {"personal_spaces_storage_limit", 0},
+        {"personal_spaces_total_storage_limit", 5000}
+    };
+    auto updates = admin_settings::collect_settings_updates(body, false);
+    EXPECT_EQ(updates.at("personal_spaces_enabled"), "true");
+    EXPECT_EQ(updates.at("personal_spaces_files_enabled"), "true");
+    EXPECT_EQ(updates.at("personal_spaces_calendar_enabled"), "false");
+    EXPECT_EQ(updates.at("personal_spaces_tasks_enabled"), "true");
+    EXPECT_EQ(updates.at("personal_spaces_wiki_enabled"), "false");
+    EXPECT_EQ(updates.at("personal_spaces_minigames_enabled"), "true");
+    EXPECT_EQ(updates.at("personal_spaces_storage_limit"), "0");
+    EXPECT_EQ(updates.at("personal_spaces_total_storage_limit"), "5000");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsSingleAuthMethod) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"auth_methods", json::array({"passkey"})}}, false);
+    EXPECT_EQ(updates.at("auth_methods"), R"(["passkey"])");
+}
+
+TEST(AdminSettingsUtils, CollectSettingsAcceptsAllThreeAuthMethods) {
+    auto updates = admin_settings::collect_settings_updates(
+        json{{"auth_methods", json::array({"passkey", "pki", "password"})}}, false);
+    EXPECT_EQ(updates.at("auth_methods"), R"(["passkey","pki","password"])");
+}
+
+// --- Additional build_settings_response tests ---
+
+TEST(AdminSettingsUtils, BuildSettingsResponseMinigamesDefault) {
+    admin_settings::Snapshot snapshot;
+    snapshot.config_max_file_size = 4096;
+    snapshot.config_session_expiry_hours = 24;
+    // personal_spaces_minigames_enabled not set
+
+    json result = admin_settings::build_settings_response(snapshot);
+    EXPECT_TRUE(result.at("personal_spaces_minigames_enabled").get<bool>());
+}
+
+TEST(AdminSettingsUtils, BuildSettingsResponseTotalStorageLimitDefault) {
+    admin_settings::Snapshot snapshot;
+    snapshot.config_max_file_size = 4096;
+    snapshot.config_session_expiry_hours = 24;
+
+    json result = admin_settings::build_settings_response(snapshot);
+    EXPECT_EQ(result.at("personal_spaces_total_storage_limit"), 0);
+    EXPECT_EQ(result.at("default_space_storage_limit"), 0);
+}
+
+TEST(AdminSettingsUtils, BuildSettingsResponsePasswordDefaults) {
+    admin_settings::Snapshot snapshot;
+    snapshot.config_max_file_size = 4096;
+    snapshot.config_session_expiry_hours = 24;
+
+    json result = admin_settings::build_settings_response(snapshot);
+    EXPECT_EQ(result.at("password_min_length"), 8);
+    EXPECT_TRUE(result.at("password_require_uppercase").get<bool>());
+    EXPECT_TRUE(result.at("password_require_lowercase").get<bool>());
+    EXPECT_TRUE(result.at("password_require_number").get<bool>());
+    EXPECT_FALSE(result.at("password_require_special").get<bool>());
+    EXPECT_EQ(result.at("password_max_age_days"), 0);
+    EXPECT_EQ(result.at("password_history_count"), 0);
+}
+
+TEST(AdminSettingsUtils, BuildSettingsResponseMfaDefaults) {
+    admin_settings::Snapshot snapshot;
+    snapshot.config_max_file_size = 4096;
+    snapshot.config_session_expiry_hours = 24;
+
+    json result = admin_settings::build_settings_response(snapshot);
+    EXPECT_FALSE(result.at("mfa_required_password").get<bool>());
+    EXPECT_FALSE(result.at("mfa_required_pki").get<bool>());
+    EXPECT_FALSE(result.at("mfa_required_passkey").get<bool>());
+}

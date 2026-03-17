@@ -574,3 +574,273 @@ TEST_F(DatabaseTest, SetServerLockedDownIdempotent) {
     db_->set_server_locked_down(false);
     EXPECT_FALSE(db_->is_server_locked_down());
 }
+
+// --- Channel & Space Listing Methods ---
+
+TEST_F(DatabaseTest, ListUserChannels) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    db_->create_channel("ch1", "First", false, alice.id, {alice.id});
+    db_->create_channel("ch2", "Second", false, alice.id, {alice.id, bob.id});
+    db_->create_channel("ch3", "Third", false, bob.id, {bob.id});
+
+    auto alice_channels = db_->list_user_channels(alice.id);
+    EXPECT_EQ(alice_channels.size(), 2u);
+
+    auto bob_channels = db_->list_user_channels(bob.id);
+    EXPECT_EQ(bob_channels.size(), 2u);
+}
+
+TEST_F(DatabaseTest, ListUserChannelsEmpty) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto channels = db_->list_user_channels(alice.id);
+    EXPECT_TRUE(channels.empty());
+}
+
+TEST_F(DatabaseTest, ListSpaceChannels) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto space = db_->create_space("Engineering", "Eng team", true, alice.id);
+
+    db_->create_channel("general", "", false, alice.id, {alice.id}, true, "write", space.id);
+    db_->create_channel("random", "", false, alice.id, {alice.id}, true, "write", space.id);
+
+    auto channels = db_->list_space_channels(space.id);
+    EXPECT_EQ(channels.size(), 2u);
+}
+
+TEST_F(DatabaseTest, ListSpaceChannelsEmpty) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto space = db_->create_space("Empty", "", true, alice.id);
+
+    auto channels = db_->list_space_channels(space.id);
+    EXPECT_TRUE(channels.empty());
+}
+
+TEST_F(DatabaseTest, ListSpaceChannelsDoesNotIncludeOtherSpaces) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto space1 = db_->create_space("Space1", "", true, alice.id);
+    auto space2 = db_->create_space("Space2", "", true, alice.id);
+
+    db_->create_channel("ch1", "", false, alice.id, {alice.id}, true, "write", space1.id);
+    db_->create_channel("ch2", "", false, alice.id, {alice.id}, true, "write", space2.id);
+
+    auto channels = db_->list_space_channels(space1.id);
+    EXPECT_EQ(channels.size(), 1u);
+    EXPECT_EQ(channels[0].name, "ch1");
+}
+
+TEST_F(DatabaseTest, ListBrowsableSpaceChannels) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+    auto space = db_->create_space("Engineering", "", true, alice.id);
+
+    // Alice is a member of "joined"
+    db_->create_channel("joined", "Already joined", false, alice.id, {alice.id}, true, "write", space.id);
+    // Alice is NOT a member of "available"
+    db_->create_channel("available", "Can browse", false, bob.id, {bob.id}, true, "write", space.id);
+
+    auto browsable = db_->list_browsable_space_channels(space.id, alice.id);
+    EXPECT_EQ(browsable.size(), 1u);
+    EXPECT_EQ(browsable[0].name, "available");
+}
+
+TEST_F(DatabaseTest, ListBrowsableSpaceChannelsWithSearch) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+    auto space = db_->create_space("Engineering", "", true, alice.id);
+
+    db_->create_channel("frontend", "React stuff", false, bob.id, {bob.id}, true, "write", space.id);
+    db_->create_channel("backend", "C++ stuff", false, bob.id, {bob.id}, true, "write", space.id);
+    db_->create_channel("devops", "Infrastructure", false, bob.id, {bob.id}, true, "write", space.id);
+
+    // Search by name
+    auto results = db_->list_browsable_space_channels(space.id, alice.id, "front");
+    EXPECT_EQ(results.size(), 1u);
+    EXPECT_EQ(results[0].name, "frontend");
+
+    // Search by description
+    auto results2 = db_->list_browsable_space_channels(space.id, alice.id, "Infrastructure");
+    EXPECT_EQ(results2.size(), 1u);
+    EXPECT_EQ(results2[0].name, "devops");
+
+    // Search with no matches
+    auto results3 = db_->list_browsable_space_channels(space.id, alice.id, "nonexistent");
+    EXPECT_TRUE(results3.empty());
+}
+
+TEST_F(DatabaseTest, ListBrowsableSpaceChannelsExcludesDMs) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+    auto space = db_->create_space("Team", "", true, alice.id);
+
+    // Create a regular channel (not joined by alice)
+    db_->create_channel("public-ch", "", false, bob.id, {bob.id}, true, "write", space.id);
+    // DMs are is_direct=true, so they should be excluded from browsable list
+    db_->create_channel("dm", "", true, bob.id, {bob.id, alice.id}, false, "write", space.id);
+
+    auto browsable = db_->list_browsable_space_channels(space.id, alice.id);
+    EXPECT_EQ(browsable.size(), 1u);
+    EXPECT_EQ(browsable[0].name, "public-ch");
+}
+
+TEST_F(DatabaseTest, ListAllChannels) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    db_->create_channel("alpha", "", false, alice.id, {alice.id});
+    db_->create_channel("beta", "", false, bob.id, {bob.id});
+    // DM channels should be excluded
+    db_->create_channel("dm", "", true, alice.id, {alice.id, bob.id}, false);
+
+    auto all = db_->list_all_channels();
+    EXPECT_EQ(all.size(), 2u);
+    // Ordered by name
+    EXPECT_EQ(all[0].name, "alpha");
+    EXPECT_EQ(all[1].name, "beta");
+}
+
+TEST_F(DatabaseTest, ListAllChannelsEmpty) {
+    auto all = db_->list_all_channels();
+    EXPECT_TRUE(all.empty());
+}
+
+TEST_F(DatabaseTest, ListUserSpaces) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    // create_space automatically adds creator as member
+    db_->create_space("Space1", "", true, alice.id);
+    db_->create_space("Space2", "", true, alice.id);
+    db_->create_space("Space3", "", true, bob.id);
+
+    auto alice_spaces = db_->list_user_spaces(alice.id);
+    EXPECT_EQ(alice_spaces.size(), 2u);
+
+    auto bob_spaces = db_->list_user_spaces(bob.id);
+    EXPECT_EQ(bob_spaces.size(), 1u);
+}
+
+TEST_F(DatabaseTest, ListUserSpacesEmpty) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto spaces = db_->list_user_spaces(alice.id);
+    EXPECT_TRUE(spaces.empty());
+}
+
+TEST_F(DatabaseTest, ListPublicSpaces) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    // Alice is a member of these (via creation)
+    db_->create_space("AliceSpace", "", true, alice.id);
+    // Bob creates public spaces alice can browse
+    db_->create_space("PublicBob", "Bob's public space", true, bob.id);
+    // Bob creates a private space
+    db_->create_space("PrivateBob", "", false, bob.id);
+
+    auto public_spaces = db_->list_public_spaces(alice.id);
+    EXPECT_EQ(public_spaces.size(), 1u);
+    EXPECT_EQ(public_spaces[0].name, "PublicBob");
+}
+
+TEST_F(DatabaseTest, ListPublicSpacesWithSearch) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    db_->create_space("Frontend Team", "React developers", true, bob.id);
+    db_->create_space("Backend Team", "C++ developers", true, bob.id);
+    db_->create_space("DevOps", "Infrastructure", true, bob.id);
+
+    // Search by name
+    auto results = db_->list_public_spaces(alice.id, "Front");
+    EXPECT_EQ(results.size(), 1u);
+    EXPECT_EQ(results[0].name, "Frontend Team");
+
+    // Search by description
+    auto results2 = db_->list_public_spaces(alice.id, "Infrastructure");
+    EXPECT_EQ(results2.size(), 1u);
+    EXPECT_EQ(results2[0].name, "DevOps");
+
+    // No matches
+    auto results3 = db_->list_public_spaces(alice.id, "nonexistent");
+    EXPECT_TRUE(results3.empty());
+}
+
+TEST_F(DatabaseTest, ListPublicSpacesExcludesJoined) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    auto space = db_->create_space("Shared", "", true, bob.id);
+    db_->add_space_member(space.id, alice.id);
+
+    auto public_spaces = db_->list_public_spaces(alice.id);
+    EXPECT_TRUE(public_spaces.empty());
+}
+
+TEST_F(DatabaseTest, ListAllSpaces) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    db_->create_space("Alpha", "", true, alice.id);
+    db_->create_space("Beta", "", false, bob.id);
+    db_->create_space("Gamma", "", true, bob.id);
+
+    auto all = db_->list_all_spaces();
+    EXPECT_EQ(all.size(), 3u);
+    // Ordered by name
+    EXPECT_EQ(all[0].name, "Alpha");
+    EXPECT_EQ(all[1].name, "Beta");
+    EXPECT_EQ(all[2].name, "Gamma");
+}
+
+TEST_F(DatabaseTest, ListAllSpacesEmpty) {
+    auto all = db_->list_all_spaces();
+    EXPECT_TRUE(all.empty());
+}
+
+TEST_F(DatabaseTest, UpdateUserRole) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    EXPECT_EQ(alice.role, "user");
+
+    db_->update_user_role(alice.id, "admin");
+    auto found = db_->find_user_by_id(alice.id);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->role, "admin");
+
+    // Change back to user
+    db_->update_user_role(alice.id, "user");
+    found = db_->find_user_by_id(alice.id);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(found->role, "user");
+}
+
+TEST_F(DatabaseTest, AddConversationMember) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+    auto charlie = db_->create_user("charlie", "Charlie", "KEY_C");
+
+    auto convo = db_->create_conversation(alice.id, {alice.id, bob.id}, "group chat");
+    EXPECT_TRUE(db_->is_channel_member(convo.id, alice.id));
+    EXPECT_TRUE(db_->is_channel_member(convo.id, bob.id));
+    EXPECT_FALSE(db_->is_channel_member(convo.id, charlie.id));
+
+    // Add charlie to the conversation
+    db_->add_conversation_member(convo.id, charlie.id);
+    EXPECT_TRUE(db_->is_channel_member(convo.id, charlie.id));
+
+    // Verify the added member has "write" role
+    EXPECT_EQ(db_->get_member_role(convo.id, charlie.id), "write");
+}
+
+TEST_F(DatabaseTest, AddConversationMemberIdempotent) {
+    auto alice = db_->create_user("alice", "Alice", "KEY_A");
+    auto bob = db_->create_user("bob", "Bob", "KEY_B");
+
+    auto convo = db_->create_conversation(alice.id, {alice.id, bob.id});
+
+    // Adding an existing member should not throw
+    EXPECT_NO_THROW(db_->add_conversation_member(convo.id, bob.id));
+
+    // Bob should still be a member
+    EXPECT_TRUE(db_->is_channel_member(convo.id, bob.id));
+}
