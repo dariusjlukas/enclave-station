@@ -40,6 +40,9 @@ public:
   // Blocking non-streaming call — returns the full response content
   std::string simple_completion(const std::vector<LlmMessage>& messages, int max_tokens = 50);
 
+  // Blocking call using streaming internally — more compatible with all backends
+  std::string streaming_completion(const std::vector<LlmMessage>& messages, int max_tokens = 50);
+
 private:
   LlmConfig config_;
   json build_request_body(const std::vector<LlmMessage>& messages, const json& tools) const;

@@ -23,10 +23,9 @@ function Badge({ count }: { count: number }) {
 
 interface Props {
   onBrowseSpaces: () => void;
-  onSharedWithMe?: () => void;
 }
 
-export function IconRail({ onBrowseSpaces, onSharedWithMe }: Props) {
+export function IconRail({ onBrowseSpaces }: Props) {
   const spaces = useChatStore((s) => s.spaces);
   const activeView = useChatStore((s) => s.activeView);
   const setActiveView = useChatStore((s) => s.setActiveView);
@@ -68,6 +67,8 @@ export function IconRail({ onBrowseSpaces, onSharedWithMe }: Props) {
     if (!activeView) return false;
     if (view.type === 'messages' && activeView.type === 'messages') return true;
     if (view.type === 'ai' && activeView.type === 'ai') return true;
+    if (view.type === 'sharedWithMe' && activeView.type === 'sharedWithMe')
+      return true;
     if (
       view.type === 'space' &&
       activeView.type === 'space' &&
@@ -123,8 +124,12 @@ export function IconRail({ onBrowseSpaces, onSharedWithMe }: Props) {
           </Tooltip>
           <Tooltip content='Shared with me' placement='right'>
             <button
-              onClick={() => onSharedWithMe?.()}
-              className='w-11 h-11 rounded-xl flex items-center justify-center bg-content2/50 text-default-400 hover:bg-content3 hover:text-foreground transition-all cursor-pointer'
+              onClick={() => handleViewClick({ type: 'sharedWithMe' })}
+              className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-content2 text-default-500 cursor-pointer ${
+                isActive({ type: 'sharedWithMe' })
+                  ? 'ring-2 ring-primary text-primary'
+                  : 'hover:ring-2 hover:ring-default-300 hover:text-foreground'
+              }`}
             >
               <FontAwesomeIcon icon={faShareNodes} className='text-sm' />
             </button>

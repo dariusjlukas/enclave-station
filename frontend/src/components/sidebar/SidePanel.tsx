@@ -2,6 +2,7 @@ import { useChatStore } from '../../stores/chatStore';
 import { ConversationList } from '../conversations/ConversationList';
 import { SpacePanel } from '../spaces/SpacePanel';
 import { AiConversationList } from '../ai/AiConversationList';
+import { SharedWithMe } from '../spaces/SharedWithMe';
 
 interface Props {
   onCreateConversation: () => void;
@@ -38,7 +39,11 @@ export function SidePanel({
   }
 
   if (activeView.type === 'ai') {
-    return <AiConversationList />;
+    return <AiConversationList onSelect={onSelect} />;
+  }
+
+  if (activeView.type === 'sharedWithMe') {
+    return <SharedWithMe />;
   }
 
   return (

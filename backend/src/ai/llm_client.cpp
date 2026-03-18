@@ -210,12 +210,15 @@ void LlmClient::chat_completion(
 
         const auto& delta = choice["delta"];
 
-        // Content delta
+        // Content delta (check both "content" and "reasoning_content" for reasoning models)
         if (delta.contains("content") && !delta["content"].is_null()) {
           std::string content = delta["content"].get<std::string>();
           if (!content.empty() && cb.on_content) {
             cb.on_content(content);
           }
+        } else if (delta.contains("reasoning_content") && !delta["reasoning_content"].is_null()) {
+          // Reasoning models (e.g. QwQ, DeepSeek-R1) emit thinking tokens here
+          // Skip these — they're internal reasoning, not the final answer
         }
 
         // Tool call fragments
@@ -334,9 +337,40 @@ std::string LlmClient::simple_completion(const std::vector<LlmMessage>& messages
 
   try {
     auto resp = json::parse(result->body);
-    return resp["choices"][0]["message"]["content"].get<std::string>();
+    auto content = resp["choices"][0]["message"]["content"];
+    if (content.is_null()) {
+      std::cerr << "[AI] simple_completion: content is null. Response: "
+                << result->body.substr(0, 500) << std::endl;
+      return "";
+    }
+    return content.get<std::string>();
   } catch (const std::exception& e) {
-    std::cerr << "[AI] simple_completion parse error: " << e.what() << std::endl;
+    std::cerr << "[AI] simple_completion parse error: " << e.what()
+              << ". Response: " << result->body.substr(0, 500) << std::endl;
     return "";
   }
+}
+
+std::string LlmClient::streaming_completion(
+  const std::vector<LlmMessage>& messages, int max_tokens) {
+  // Temporarily override config to avoid prepending the main system prompt
+  auto saved_max = config_.max_tokens;
+  auto saved_prompt = config_.system_prompt;
+  config_.max_tokens = max_tokens;
+  config_.system_prompt = "";  // Messages already contain their own system prompt
+
+  std::string accumulated;
+  LlmStreamCallback cb;
+  cb.on_content = [&](const std::string& delta) { accumulated += delta; };
+  cb.on_tool_call = [](const json&) {};
+  cb.on_done = []() {};
+  cb.on_error = [](const std::string& err) {
+    std::cerr << "[AI] streaming_completion error: " << err << std::endl;
+  };
+
+  chat_completion(messages, json::array(), cb);
+
+  config_.max_tokens = saved_max;
+  config_.system_prompt = saved_prompt;
+  return accumulated;
 }

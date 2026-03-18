@@ -1,11 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  Spinner,
-} from '@heroui/react';
+import { Spinner } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faFolderOpen,
@@ -13,6 +7,7 @@ import {
   faListCheck,
   faBook,
   faChevronRight,
+  faShareNodes,
 } from '@fortawesome/free-solid-svg-icons';
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core';
 import { useChatStore } from '../../stores/chatStore';
@@ -38,14 +33,15 @@ const sections: Section[] = [
     icon: faCalendar,
     toolType: 'calendar',
   },
-  { key: 'task_boards', label: 'Tasks', icon: faListCheck, toolType: 'tasks' },
+  {
+    key: 'task_boards',
+    label: 'Tasks',
+    icon: faListCheck,
+    toolType: 'tasks',
+  },
 ];
 
-interface Props {
-  onClose: () => void;
-}
-
-export function SharedWithMe({ onClose }: Props) {
+export function SharedWithMe() {
   const setActiveToolView = useChatStore((s) => s.setActiveToolView);
   const [data, setData] = useState<SharedWithMeType | null>(null);
   const [loading, setLoading] = useState(true);
@@ -133,9 +129,7 @@ export function SharedWithMe({ onClose }: Props) {
           <input
             type='text'
             placeholder={
-              searchMode === 'name'
-                ? 'Search by item name...'
-                : 'Search by owner username...'
+              searchMode === 'name' ? 'Search by name...' : 'Search by owner...'
             }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -200,7 +194,6 @@ export function SharedWithMe({ onClose }: Props) {
                         type: section.toolType,
                         spaceId: item.space_id,
                       });
-                      onClose();
                     }}
                     className='w-full text-left px-3 py-2.5 text-sm rounded-md transition-colors flex items-center justify-between cursor-pointer text-default-500 hover:bg-content2/50 hover:text-foreground'
                   >
@@ -225,16 +218,15 @@ export function SharedWithMe({ onClose }: Props) {
   };
 
   return (
-    <Modal
-      isOpen
-      onOpenChange={(open) => !open && onClose()}
-      size='lg'
-      backdrop='opaque'
-    >
-      <ModalContent>
-        <ModalHeader>Shared with Me</ModalHeader>
-        <ModalBody className='pb-6'>{renderContent()}</ModalBody>
-      </ModalContent>
-    </Modal>
+    <div className='flex flex-col h-full'>
+      <div className='flex items-center gap-2 px-4 py-3 border-b border-default-100'>
+        <FontAwesomeIcon
+          icon={faShareNodes}
+          className='text-sm text-default-500'
+        />
+        <h2 className='text-sm font-semibold'>Shared with Me</h2>
+      </div>
+      <div className='flex-1 overflow-y-auto px-3 py-2'>{renderContent()}</div>
+    </div>
   );
 }

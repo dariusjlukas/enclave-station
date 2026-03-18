@@ -24,6 +24,8 @@ import * as api from '../../services/api';
 import type { WikiPage } from '../../types';
 import type { WikiPagePath } from '../../services/api';
 import { useChatStore } from '../../stores/chatStore';
+import { useResizablePanel } from '../../hooks/useResizablePanel';
+import { ResizeHandle } from '../common/ResizeHandle';
 import { WikiSidebar } from './WikiSidebar';
 import { WikiBreadcrumb } from './WikiBreadcrumb';
 import { WikiVersionHistory } from './WikiVersionHistory';
@@ -47,6 +49,17 @@ export function WikiView({ spaceId }: Props) {
 
   const sidebarOpen = useChatStore((s) => s.wikiSidebarOpen);
   const setSidebarOpen = useChatStore((s) => s.setWikiSidebarOpen);
+  const {
+    width: wikiSidebarWidth,
+    isResizing: isWikiSidebarResizing,
+    handleMouseDown: handleWikiSidebarResize,
+  } = useResizablePanel({
+    defaultWidth: 280,
+    minWidth: 200,
+    maxWidth: 500,
+    side: 'left',
+    storageKey: 'wiki-sidebar-width',
+  });
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [showPermissions, setShowPermissions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -231,9 +244,10 @@ export function WikiView({ spaceId }: Props) {
       <div className='flex flex-1 overflow-hidden'>
         {/* Sidebar */}
         <div
-          className={`shrink-0 border-r border-default-100 flex flex-col overflow-hidden transition-[width] duration-300 ease-in-out ${sidebarOpen ? 'w-[280px]' : 'w-0 border-r-0'}`}
+          className={`shrink-0 border-r border-default-100 flex flex-col overflow-hidden ${isWikiSidebarResizing ? '' : 'transition-[width] duration-300 ease-in-out'} ${sidebarOpen ? '' : 'w-0 border-r-0'}`}
+          style={sidebarOpen ? { width: wikiSidebarWidth } : undefined}
         >
-          <div className='flex items-center justify-between px-3 py-2 border-b border-default-100 min-w-[280px]'>
+          <div className='flex items-center justify-between px-3 py-2 border-b border-default-100 min-w-0'>
             <span className='text-sm font-semibold text-foreground'>Pages</span>
             <Button
               isIconOnly
@@ -245,7 +259,7 @@ export function WikiView({ spaceId }: Props) {
               <FontAwesomeIcon icon={faXmark} className='text-xs' />
             </Button>
           </div>
-          <div className='min-w-[280px] flex-1 overflow-hidden'>
+          <div className='min-w-0 flex-1 overflow-hidden'>
             <WikiSidebar
               spaceId={spaceId}
               pages={pages}
@@ -261,6 +275,12 @@ export function WikiView({ spaceId }: Props) {
             />
           </div>
         </div>
+        {sidebarOpen && (
+          <ResizeHandle
+            onMouseDown={handleWikiSidebarResize}
+            isResizing={isWikiSidebarResizing}
+          />
+        )}
 
         {/* Main content */}
         <div className='flex-1 flex flex-col overflow-hidden min-w-0'>

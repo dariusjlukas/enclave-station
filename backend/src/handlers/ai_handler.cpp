@@ -228,7 +228,21 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         for (const auto& m : history) {
           LlmMessage lm;
           lm.role = m.role;
-          lm.content = m.content;
+          if (m.role == "tool") {
+            // Extract just the result for the LLM (DB stores structured JSON for UI)
+            try {
+              auto parsed = json::parse(m.content);
+              if (parsed.contains("result")) {
+                lm.content = parsed["result"].dump();
+              } else {
+                lm.content = m.content;
+              }
+            } catch (...) {
+              lm.content = m.content;
+            }
+          } else {
+            lm.content = m.content;
+          }
           if (!m.tool_calls.empty()) {
             lm.tool_calls = json::parse(m.tool_calls);
           }
@@ -353,15 +367,20 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                   ws_ptr->send_to_user(user_id, tool_use_str);
                 });
 
-                // Save tool result message
-                std::string tool_content =
-                  result.success ? result.data.dump() : ("Error: " + result.error);
-                db_ptr->create_ai_message(conv_id, "tool", tool_content, "", tc_id, fn_name);
+                // Save tool result message (structured JSON for UI display)
+                json tool_content_json = {
+                  {"arguments", fn_args},
+                  {"result", result.success ? result.data : json({{"error", result.error}})},
+                  {"status", result.success ? "success" : "error"}};
+                db_ptr->create_ai_message(
+                  conv_id, "tool", tool_content_json.dump(), "", tc_id, fn_name);
 
-                // Add tool result to history
+                // Add tool result to LLM history (just the result, not the UI wrapper)
+                std::string llm_tool_content =
+                  result.success ? result.data.dump() : ("Error: " + result.error);
                 LlmMessage tool_msg;
                 tool_msg.role = "tool";
-                tool_msg.content = tool_content;
+                tool_msg.content = llm_tool_content;
                 tool_msg.tool_call_id = tc_id;
                 tool_msg.name = fn_name;
                 messages.push_back(std::move(tool_msg));
@@ -405,7 +424,8 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                        {}, "", ""},
                       {"user", first_user_msg, {}, "", ""},
                     };
-                    auto title = client.simple_completion(title_msgs, 20);
+                    // Use generous max_tokens — reasoning models need room to think
+                    auto title = client.streaming_completion(title_msgs, 256);
                     std::cout << "[AI] Auto-title result for " << conv_id << ": \""
                               << title << "\"" << std::endl;
                     // Clean up the title

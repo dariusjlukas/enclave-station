@@ -8,7 +8,6 @@ interface Props {
   onBrowseChannels: () => void;
   onBrowseSpaces: () => void;
   onShowSpaceSettings: () => void;
-  onSharedWithMe?: () => void;
   open: boolean;
   onClose: () => void;
   width?: number;
@@ -21,7 +20,6 @@ export function NewSidebar({
   onBrowseChannels,
   onBrowseSpaces,
   onShowSpaceSettings,
-  onSharedWithMe,
   open,
   onClose,
   width = 288,
@@ -38,17 +36,14 @@ export function NewSidebar({
         />
       )}
       <aside
-        className={`fixed inset-y-0 left-0 z-40 bg-background/95 border-r border-default-100 flex transform ${
+        className={`fixed inset-y-0 left-0 z-40 bg-background/95 border-r border-default-100 flex shrink-0 transform ${
           isResizing ? '' : 'transition-all duration-200 ease-in-out'
         } md:static md:translate-x-0 ${
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{ width: sidePanelCollapsed ? 64 : width }}
       >
-        <IconRail
-          onBrowseSpaces={onBrowseSpaces}
-          onSharedWithMe={onSharedWithMe}
-        />
+        <IconRail onBrowseSpaces={onBrowseSpaces} />
         <div
           className={`flex flex-col overflow-hidden ${
             isResizing ? '' : 'transition-all duration-200'

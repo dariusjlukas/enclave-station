@@ -74,6 +74,14 @@ export function AiMessageBubble({ message, isStreaming }: Props) {
   // Don't render tool messages (handled by AiToolUseCard)
   if (message.role === 'tool') return null;
 
+  // Don't render assistant messages that only contain tool calls (no text content)
+  if (
+    message.role === 'assistant' &&
+    !message.content &&
+    message.tool_calls?.length
+  )
+    return null;
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-3`}>
       <Tooltip

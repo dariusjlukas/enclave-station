@@ -31,7 +31,7 @@ import { ChannelSettings } from './components/channels/ChannelSettings';
 import { CreateConversation } from './components/conversations/CreateConversation';
 import { CreateSpace } from './components/spaces/CreateSpace';
 import { SpaceBrowser } from './components/spaces/SpaceBrowser';
-import { SharedWithMe } from './components/spaces/SharedWithMe';
+
 import { SpaceSettings } from './components/spaces/SpaceSettings';
 import { SpaceInviteNotification } from './components/spaces/SpaceInviteNotification';
 import {
@@ -76,7 +76,7 @@ function App() {
   const [showCreateSpace, setShowCreateSpace] = useState(false);
   const [showSpaceBrowser, setShowSpaceBrowser] = useState(false);
   const [showSpaceSettings, setShowSpaceSettings] = useState(false);
-  const [showSharedWithMe, setShowSharedWithMe] = useState(false);
+
   const [showAdmin, setShowAdmin] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showChannelBrowser, setShowChannelBrowser] = useState(false);
@@ -373,7 +373,6 @@ function App() {
           onBrowseChannels={() => setShowChannelBrowser(true)}
           onBrowseSpaces={() => setShowSpaceBrowser(true)}
           onShowSpaceSettings={() => setShowSpaceSettings(true)}
-          onSharedWithMe={() => setShowSharedWithMe(true)}
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           width={sidebarWidth}
@@ -399,7 +398,10 @@ function App() {
           <ChatArea />
         )}
         {showAiPanel && (
-          <>
+          <div
+            className='flex shrink-0 animate-[slide-in-right_200ms_ease-out]'
+            style={{ width: aiPanelWidth + 4 }}
+          >
             <ResizeHandle
               onMouseDown={handleAiPanelResize}
               isResizing={isAiPanelResizing}
@@ -408,7 +410,7 @@ function App() {
               onClose={() => setShowAiPanel(false)}
               width={aiPanelWidth}
             />
-          </>
+          </div>
         )}
       </div>
 
@@ -435,10 +437,6 @@ function App() {
             setShowCreateSpace(true);
           }}
         />
-      )}
-
-      {showSharedWithMe && (
-        <SharedWithMe onClose={() => setShowSharedWithMe(false)} />
       )}
 
       {showSpaceSettings && activeSpace && (

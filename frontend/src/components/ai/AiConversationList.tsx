@@ -15,6 +15,7 @@ import {
   faTrashCan,
 } from '@fortawesome/free-solid-svg-icons';
 import { useAiStore } from '../../stores/aiStore';
+import { useChatStore } from '../../stores/chatStore';
 import * as api from '../../services/api';
 
 interface Props {
@@ -29,6 +30,7 @@ export function AiConversationList({ onSelect }: Props) {
   const removeConversation = useAiStore((s) => s.removeConversation);
   const setActiveConversation = useAiStore((s) => s.setActiveConversation);
   const updateConversationTitle = useAiStore((s) => s.updateConversationTitle);
+  const setShowAiPanel = useChatStore((s) => s.setShowAiPanel);
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -47,6 +49,7 @@ export function AiConversationList({ onSelect }: Props) {
       const convo = await api.createAiConversation();
       addConversation(convo);
       setActiveConversation(convo.id);
+      setShowAiPanel(true);
       onSelect?.();
     } catch (err) {
       console.error('Failed to create conversation:', err);
@@ -155,6 +158,7 @@ export function AiConversationList({ onSelect }: Props) {
               }`}
               onClick={() => {
                 setActiveConversation(convo.id);
+                setShowAiPanel(true);
                 onSelect?.();
               }}
             >

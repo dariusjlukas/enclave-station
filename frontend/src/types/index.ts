@@ -145,7 +145,8 @@ export interface WikiSearchResult {
 export type SidebarView =
   | { type: 'space'; spaceId: string }
   | { type: 'messages' }
-  | { type: 'ai' };
+  | { type: 'ai' }
+  | { type: 'sharedWithMe' };
 
 export interface Reaction {
   emoji: string;
