@@ -25,6 +25,7 @@ import { CalendarView } from './components/calendar/CalendarView';
 import { TaskBoardView } from './components/tasks/TaskBoardView';
 import { WikiView } from './components/wiki/WikiView';
 import { MinigamesView } from './components/minigames/MinigamesView';
+import { SandboxView } from './components/sandbox/SandboxView';
 import { CreateChannel } from './components/channels/CreateChannel';
 import { ChannelBrowser } from './components/channels/ChannelBrowser';
 import { ChannelSettings } from './components/channels/ChannelSettings';
@@ -394,6 +395,8 @@ function App() {
           <WikiView spaceId={activeToolView.spaceId} />
         ) : activeToolView?.type === 'minigames' ? (
           <MinigamesView spaceId={activeToolView.spaceId} />
+        ) : activeView?.type === 'sandbox' ? (
+          <SandboxView />
         ) : (
           <ChatArea />
         )}

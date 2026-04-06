@@ -6,71 +6,123 @@ using json = nlohmann::json;
 template <bool SSL>
 void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/users", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    auto users = db.list_users();
-    json arr = json::array();
-    for (const auto& u : users) {
-      arr.push_back(
-        {{"id", u.id},
-         {"username", u.username},
-         {"display_name", u.display_name},
-         {"role", u.role},
-         {"is_online", u.is_online},
-         {"last_seen", u.last_seen},
-         {"bio", u.bio},
-         {"status", u.status},
-         {"avatar_file_id", u.avatar_file_id},
-         {"profile_color", u.profile_color}});
-    }
-    res->writeHeader("Content-Type", "application/json")->end(arr.dump());
+      auto users = db.list_users();
+      json arr = json::array();
+      for (const auto& u : users) {
+        arr.push_back(
+          {{"id", u.id},
+           {"username", u.username},
+           {"display_name", u.display_name},
+           {"role", u.role},
+           {"is_online", u.is_online},
+           {"last_seen", u.last_seen},
+           {"bio", u.bio},
+           {"status", u.status},
+           {"avatar_file_id", u.avatar_file_id},
+           {"profile_color", u.profile_color}});
+      }
+      auto body = arr.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
   });
 
   app.get("/api/users/me", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    auto user = db.find_user_by_id(user_id);
-    if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
-      return;
-    }
+      auto user = db.find_user_by_id(*user_id);
+      if (!user) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"User not found"})");
+        });
+        return;
+      }
 
-    json resp = {
-      {"id", user->id},
-      {"username", user->username},
-      {"display_name", user->display_name},
-      {"role", user->role},
-      {"is_online", user->is_online},
-      {"last_seen", user->last_seen},
-      {"bio", user->bio},
-      {"status", user->status},
-      {"avatar_file_id", user->avatar_file_id},
-      {"profile_color", user->profile_color},
-      {"has_password", db.has_password(user->id)},
-      {"has_totp", db.has_totp(user->id)}};
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+      json resp = {
+        {"id", user->id},
+        {"username", user->username},
+        {"display_name", user->display_name},
+        {"role", user->role},
+        {"is_online", user->is_online},
+        {"last_seen", user->last_seen},
+        {"bio", user->bio},
+        {"status", user->status},
+        {"avatar_file_id", user->avatar_file_id},
+        {"profile_color", user->profile_color},
+        {"has_password", db.has_password(user->id)},
+        {"has_totp", db.has_totp(user->id)}};
+      auto body = resp.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
   });
 
   app.put("/api/users/me", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::string()](
+                  std::string_view data, bool last) mutable {
+      body.append(data);
+      if (!last) return;
 
-    res->onData(
-      [this, res, user_id, body = std::string()](std::string_view data, bool last) mutable {
-        body.append(data);
-        if (!last) return;
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
+        }
 
         try {
           auto j = json::parse(body);
-          auto current = db.find_user_by_id(user_id);
+          auto current = db.find_user_by_id(*user_id);
           if (!current) {
-            res->writeStatus("404")
-              ->writeHeader("Content-Type", "application/json")
-              ->end(R"({"error":"User not found"})");
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("404")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"User not found"})");
+            });
             return;
           }
 
@@ -79,7 +131,7 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           std::string status = j.value("status", current->status);
           std::string profile_color = j.value("profile_color", current->profile_color);
 
-          auto updated = db.update_user_profile(user_id, display_name, bio, status, profile_color);
+          auto updated = db.update_user_profile(*user_id, display_name, bio, status, profile_color);
 
           json user_json = {
             {"id", updated.id},
@@ -92,40 +144,71 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             {"status", updated.status},
             {"avatar_file_id", updated.avatar_file_id},
             {"profile_color", updated.profile_color}};
-          res->writeHeader("Content-Type", "application/json")->end(user_json.dump());
+          auto resp_body = user_json.dump();
 
           // Broadcast profile change to all connected users
           json broadcast = {{"type", "user_updated"}, {"user", user_json}};
-          ws.broadcast_to_presence(broadcast.dump());
+          auto broadcast_str = broadcast.dump();
+
+          loop_->defer([this,
+                        res,
+                        aborted,
+                        resp_body = std::move(resp_body),
+                        broadcast_str = std::move(broadcast_str)]() {
+            if (*aborted) {
+              ws.broadcast_to_presence(broadcast_str);
+              return;
+            }
+            res->writeHeader("Content-Type", "application/json")->end(resp_body);
+            ws.broadcast_to_presence(broadcast_str);
+          });
         } catch (const std::exception& e) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(json({{"error", e.what()}}).dump());
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+          });
         }
       });
-    res->onAborted([]() {});
+    });
   });
 
   app.del("/api/users/me", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    try {
-      db.delete_user(user_id);
-      res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-    } catch (const std::exception& e) {
-      res->writeStatus("500")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+      try {
+        db.delete_user(*user_id);
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("500")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   // --- Avatar upload ---
 
   app.post("/api/users/me/avatar", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
+    auto token = extract_bearer_token(req);
     std::string content_type(req->getQuery("content_type"));
     if (content_type.empty()) content_type = "image/png";
 
@@ -140,22 +223,43 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     auto body = std::make_shared<std::string>();
     int64_t max_size = 50 * 1024 * 1024;  // 50MB max for avatars
 
-    res->onData(
-      [this, res, body, max_size, user_id, content_type](std::string_view data, bool last) mutable {
-        body->append(data);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this,
+                 res,
+                 aborted,
+                 body,
+                 max_size,
+                 token = std::move(token),
+                 content_type = std::move(content_type)](std::string_view data, bool last) mutable {
+      body->append(data);
 
-        if (static_cast<int64_t>(body->size()) > max_size) {
+      if (static_cast<int64_t>(body->size()) > max_size) {
+        if (!*aborted) {
           res->writeStatus("413")
             ->writeHeader("Content-Type", "application/json")
             ->end(R"json({"error":"Avatar too large (max 20MB)"})json");
+        }
+        return;
+      }
+
+      if (!last) return;
+
+      pool_.submit([this, res, aborted, body, token = std::move(token)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
           return;
         }
 
-        if (!last) return;
-
         try {
           // Delete old avatar file if exists
-          auto current = db.find_user_by_id(user_id);
+          auto current = db.find_user_by_id(*user_id);
           if (current && !current->avatar_file_id.empty()) {
             std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
             std::filesystem::remove(old_path);
@@ -166,16 +270,19 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           std::string path = config.upload_dir + "/" + file_id;
           std::ofstream out(path, std::ios::binary);
           if (!out) {
-            res->writeStatus("500")
-              ->writeHeader("Content-Type", "application/json")
-              ->end(R"({"error":"Failed to save avatar"})");
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("500")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Failed to save avatar"})");
+            });
             return;
           }
           out.write(body->data(), body->size());
           out.close();
 
-          db.set_user_avatar(user_id, file_id);
-          auto updated = db.find_user_by_id(user_id);
+          db.set_user_avatar(*user_id, file_id);
+          auto updated = db.find_user_by_id(*user_id);
 
           json user_json = {
             {"id", updated->id},
@@ -188,53 +295,96 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             {"status", updated->status},
             {"avatar_file_id", updated->avatar_file_id},
             {"profile_color", updated->profile_color}};
-          res->writeHeader("Content-Type", "application/json")->end(user_json.dump());
+          auto resp_body = user_json.dump();
 
           json broadcast = {{"type", "user_updated"}, {"user", user_json}};
-          ws.broadcast_to_presence(broadcast.dump());
+          auto broadcast_str = broadcast.dump();
+
+          loop_->defer([this,
+                        res,
+                        aborted,
+                        resp_body = std::move(resp_body),
+                        broadcast_str = std::move(broadcast_str)]() {
+            if (*aborted) {
+              ws.broadcast_to_presence(broadcast_str);
+              return;
+            }
+            res->writeHeader("Content-Type", "application/json")->end(resp_body);
+            ws.broadcast_to_presence(broadcast_str);
+          });
         } catch (const std::exception& e) {
-          res->writeStatus("500")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(json({{"error", e.what()}}).dump());
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("500")->writeHeader("Content-Type", "application/json")->end(err);
+          });
         }
       });
-    res->onAborted([]() {});
+    });
   });
 
   app.del("/api/users/me/avatar", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
-    try {
-      auto current = db.find_user_by_id(user_id);
-      if (current && !current->avatar_file_id.empty()) {
-        std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
-        std::filesystem::remove(old_path);
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
       }
 
-      db.clear_user_avatar(user_id);
-      auto updated = db.find_user_by_id(user_id);
+      try {
+        auto current = db.find_user_by_id(*user_id);
+        if (current && !current->avatar_file_id.empty()) {
+          std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
+          std::filesystem::remove(old_path);
+        }
 
-      json user_json = {
-        {"id", updated->id},
-        {"username", updated->username},
-        {"display_name", updated->display_name},
-        {"role", updated->role},
-        {"is_online", updated->is_online},
-        {"last_seen", updated->last_seen},
-        {"bio", updated->bio},
-        {"status", updated->status},
-        {"avatar_file_id", updated->avatar_file_id},
-        {"profile_color", updated->profile_color}};
-      res->writeHeader("Content-Type", "application/json")->end(user_json.dump());
+        db.clear_user_avatar(*user_id);
+        auto updated = db.find_user_by_id(*user_id);
 
-      json broadcast = {{"type", "user_updated"}, {"user", user_json}};
-      ws.broadcast_to_presence(broadcast.dump());
-    } catch (const std::exception& e) {
-      res->writeStatus("500")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+        json user_json = {
+          {"id", updated->id},
+          {"username", updated->username},
+          {"display_name", updated->display_name},
+          {"role", updated->role},
+          {"is_online", updated->is_online},
+          {"last_seen", updated->last_seen},
+          {"bio", updated->bio},
+          {"status", updated->status},
+          {"avatar_file_id", updated->avatar_file_id},
+          {"profile_color", updated->profile_color}};
+        auto resp_body = user_json.dump();
+
+        json broadcast = {{"type", "user_updated"}, {"user", user_json}};
+        auto broadcast_str = broadcast.dump();
+
+        loop_->defer([this,
+                      res,
+                      aborted,
+                      resp_body = std::move(resp_body),
+                      broadcast_str = std::move(broadcast_str)]() {
+          if (*aborted) {
+            ws.broadcast_to_presence(broadcast_str);
+            return;
+          }
+          res->writeHeader("Content-Type", "application/json")->end(resp_body);
+          ws.broadcast_to_presence(broadcast_str);
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("500")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   // Serve avatar files (public, no auth needed for displaying in chat)
@@ -251,104 +401,165 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       }
     }
 
-    std::string path = config.upload_dir + "/" + file_id;
-    std::ifstream in(path, std::ios::binary | std::ios::ate);
-    if (!in) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Avatar not found"})");
-      return;
-    }
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, file_id = std::move(file_id)]() {
+      std::string path = config.upload_dir + "/" + file_id;
+      std::ifstream in(path, std::ios::binary | std::ios::ate);
+      if (!in) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Avatar not found"})");
+        });
+        return;
+      }
 
-    auto size = in.tellg();
-    in.seekg(0);
-    std::string content(size, '\0');
-    in.read(content.data(), size);
+      auto size = in.tellg();
+      in.seekg(0);
+      std::string content(size, '\0');
+      in.read(content.data(), size);
 
-    res->writeHeader("Content-Type", "image/png")
-      ->writeHeader("Cache-Control", "public, max-age=31536000, immutable")
-      ->end(content);
+      loop_->defer([res, aborted, content = std::move(content)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "image/png")
+          ->writeHeader("Cache-Control", "public, max-age=31536000, immutable")
+          ->end(content);
+      });
+    });
   });
 
   // --- Passkey management ---
 
   app.get("/api/users/me/passkeys", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
-    auto creds = db.list_webauthn_credentials(user_id);
-    json arr = json::array();
-    for (const auto& c : creds) {
-      arr.push_back(
-        {{"id", c.credential_id}, {"device_name", c.device_name}, {"created_at", c.created_at}});
-    }
-    res->writeHeader("Content-Type", "application/json")->end(arr.dump());
-  });
-
-  app.post("/api/users/me/passkeys/options", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
-    try {
-      auto user = db.find_user_by_id(user_id);
-      if (!user) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"User not found"})");
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
         return;
       }
 
-      std::string challenge = webauthn::generate_challenge();
+      auto creds = db.list_webauthn_credentials(*user_id);
+      json arr = json::array();
+      for (const auto& c : creds) {
+        arr.push_back(
+          {{"id", c.credential_id}, {"device_name", c.device_name}, {"created_at", c.created_at}});
+      }
+      auto body = arr.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
+  });
 
-      // Build excludeCredentials from existing passkeys
-      auto existing = db.list_webauthn_credentials(user_id);
-      json exclude = json::array();
-      for (const auto& c : existing) {
-        json cred_desc = {{"type", "public-key"}, {"id", c.credential_id}};
-        if (!c.transports.empty() && c.transports != "[]") {
-          cred_desc["transports"] = json::parse(c.transports);
-        }
-        exclude.push_back(cred_desc);
+  app.post("/api/users/me/passkeys/options", [this](auto* res, auto* req) {
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
       }
 
-      auto uid_bytes = std::vector<unsigned char>(user_id.begin(), user_id.end());
-      std::string user_handle = webauthn::base64url_encode(uid_bytes);
+      try {
+        auto user = db.find_user_by_id(*user_id);
+        if (!user) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"User not found"})");
+          });
+          return;
+        }
 
-      json extra = {{"type", "add_passkey"}, {"user_id", user_id}};
-      db.store_webauthn_challenge(challenge, extra.dump());
+        std::string challenge = webauthn::generate_challenge();
 
-      json options = {
-        {"rp", {{"name", config.webauthn_rp_name}, {"id", config.webauthn_rp_id}}},
-        {"user",
-         {{"id", user_handle}, {"name", user->username}, {"displayName", user->display_name}}},
-        {"challenge", challenge},
-        {"pubKeyCredParams",
-         json::array({
-           {{"type", "public-key"}, {"alg", -7}},   // ES256
-           {{"type", "public-key"}, {"alg", -257}}  // RS256
-         })},
-        {"excludeCredentials", exclude},
-        {"authenticatorSelection",
-         {{"residentKey", "required"}, {"userVerification", "preferred"}}},
-        {"attestation", "none"},
-        {"timeout", defaults::WEBAUTHN_TIMEOUT_MS}};
+        // Build excludeCredentials from existing passkeys
+        auto existing = db.list_webauthn_credentials(*user_id);
+        json exclude = json::array();
+        for (const auto& c : existing) {
+          json cred_desc = {{"type", "public-key"}, {"id", c.credential_id}};
+          if (!c.transports.empty() && c.transports != "[]") {
+            cred_desc["transports"] = json::parse(c.transports);
+          }
+          exclude.push_back(cred_desc);
+        }
 
-      res->writeHeader("Content-Type", "application/json")->end(options.dump());
-    } catch (const std::exception& e) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+        auto uid_bytes = std::vector<unsigned char>(user_id->begin(), user_id->end());
+        std::string user_handle = webauthn::base64url_encode(uid_bytes);
+
+        json extra = {{"type", "add_passkey"}, {"user_id", *user_id}};
+        db.store_webauthn_challenge(challenge, extra.dump());
+
+        json options = {
+          {"rp", {{"name", config.webauthn_rp_name}, {"id", config.webauthn_rp_id}}},
+          {"user",
+           {{"id", user_handle}, {"name", user->username}, {"displayName", user->display_name}}},
+          {"challenge", challenge},
+          {"pubKeyCredParams",
+           json::array({
+             {{"type", "public-key"}, {"alg", -7}},   // ES256
+             {{"type", "public-key"}, {"alg", -257}}  // RS256
+           })},
+          {"excludeCredentials", exclude},
+          {"authenticatorSelection",
+           {{"residentKey", "required"}, {"userVerification", "preferred"}}},
+          {"attestation", "none"},
+          {"timeout", defaults::WEBAUTHN_TIMEOUT_MS}};
+
+        auto resp_body = options.dump();
+        loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(resp_body);
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   app.post("/api/users/me/passkeys/verify", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::string()](
+                  std::string_view data, bool last) mutable {
+      body.append(data);
+      if (!last) return;
 
-    res->onData(
-      [this, res, user_id, body = std::string()](std::string_view data, bool last) mutable {
-        body.append(data);
-        if (!last) return;
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
+        }
 
         try {
           auto j = json::parse(body);
@@ -372,17 +583,23 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
           auto stored = db.get_webauthn_challenge(challenge);
           if (!stored) {
-            res->writeStatus("401")
-              ->writeHeader("Content-Type", "application/json")
-              ->end(R"({"error":"Invalid or expired challenge"})");
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Invalid or expired challenge"})");
+            });
             return;
           }
 
           auto extra = json::parse(stored->extra_data);
-          if (extra.at("type") != "add_passkey" || extra.at("user_id") != user_id) {
-            res->writeStatus("400")
-              ->writeHeader("Content-Type", "application/json")
-              ->end(R"({"error":"Challenge mismatch"})");
+          if (extra.at("type") != "add_passkey" || extra.at("user_id") != *user_id) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Challenge mismatch"})");
+            });
             return;
           }
 
@@ -394,433 +611,756 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             config.webauthn_rp_id);
 
           if (!result) {
-            res->writeStatus("401")
-              ->writeHeader("Content-Type", "application/json")
-              ->end(R"({"error":"WebAuthn verification failed"})");
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"WebAuthn verification failed"})");
+            });
             return;
           }
 
           db.delete_webauthn_challenge(challenge);
           db.store_webauthn_credential(
-            user_id,
+            *user_id,
             result->credential_id,
             result->public_key,
             result->sign_count,
             device_name,
             transports_str);
 
-          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          });
         } catch (const std::exception& e) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(json({{"error", e.what()}}).dump());
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+          });
         }
       });
-    res->onAborted([]() {});
+    });
   });
 
   app.del("/api/users/me/passkeys/:id", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
+    auto token = extract_bearer_token(req);
     std::string credential_id(req->getParameter(0));
-    try {
-      int total = db.count_user_credentials(user_id);
-      if (total <= 1) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Cannot remove your only credential"})");
-        return;
-      }
-      db.remove_webauthn_credential(credential_id, user_id);
-      res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-    } catch (const std::exception& e) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit(
+      [this, res, aborted, token = std::move(token), credential_id = std::move(credential_id)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
+        }
+
+        try {
+          int total = db.count_user_credentials(*user_id);
+          if (total <= 1) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Cannot remove your only credential"})");
+            });
+            return;
+          }
+          db.remove_webauthn_credential(credential_id, *user_id);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+          });
+        }
+      });
   });
 
   // --- PKI key management ---
 
   app.post("/api/users/me/keys/challenge", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    try {
-      std::string challenge = webauthn::generate_challenge();
-      json extra = {{"type", "pki_add"}, {"user_id", user_id}};
-      db.store_webauthn_challenge(challenge, extra.dump());
-      json resp = {{"challenge", challenge}};
-      res->writeHeader("Content-Type", "application/json")->end(resp.dump());
-    } catch (const std::exception& e) {
-      res->writeStatus("500")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+      try {
+        std::string challenge = webauthn::generate_challenge();
+        json extra = {{"type", "pki_add"}, {"user_id", *user_id}};
+        db.store_webauthn_challenge(challenge, extra.dump());
+        auto resp_body = json({{"challenge", challenge}}).dump();
+        loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(resp_body);
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("500")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   app.post("/api/users/me/keys", [this](auto* res, auto* req) {
-    std::string user_id_copy = get_user_id(res, req);
-    std::string body;
-    res->onData([this, res, user_id = std::move(user_id_copy), body = std::move(body)](
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::string()](
                   std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
 
-      try {
-        auto j = json::parse(body);
-        std::string public_key = j.at("public_key");
-        std::string challenge = j.at("challenge");
-        std::string signature = j.at("signature");
-        std::string device_name = j.value("device_name", "Browser Key");
-
-        auto stored = db.get_webauthn_challenge(challenge);
-        if (!stored) {
-          res->writeStatus("401")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"Invalid or expired challenge"})");
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
           return;
         }
 
-        auto extra = json::parse(stored->extra_data);
-        if (extra.at("type") != "pki_add" || extra.at("user_id") != user_id) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"Challenge mismatch"})");
-          return;
+        try {
+          auto j = json::parse(body);
+          std::string public_key = j.at("public_key");
+          std::string challenge = j.at("challenge");
+          std::string signature = j.at("signature");
+          std::string device_name = j.value("device_name", "Browser Key");
+
+          auto stored = db.get_webauthn_challenge(challenge);
+          if (!stored) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Invalid or expired challenge"})");
+            });
+            return;
+          }
+
+          auto extra = json::parse(stored->extra_data);
+          if (extra.at("type") != "pki_add" || extra.at("user_id") != *user_id) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Challenge mismatch"})");
+            });
+            return;
+          }
+
+          if (!webauthn::verify_pki_signature(public_key, challenge, signature)) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Signature verification failed"})");
+            });
+            return;
+          }
+
+          db.delete_webauthn_challenge(challenge);
+          db.store_pki_credential(*user_id, public_key, device_name);
+
+          // If this is user's first PKI key, generate recovery keys
+          auto pki_keys = db.list_pki_credentials(*user_id);
+          int remaining = db.count_remaining_recovery_keys(*user_id);
+          json resp = {{"ok", true}};
+
+          if (pki_keys.size() == 1 && remaining == 0) {
+            auto [plaintext, hashes] = webauthn::generate_recovery_keys();
+            db.store_recovery_keys(*user_id, hashes);
+            resp["recovery_keys"] = plaintext;
+          }
+
+          auto resp_body = resp.dump();
+          loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")->end(resp_body);
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+          });
         }
-
-        if (!webauthn::verify_pki_signature(public_key, challenge, signature)) {
-          res->writeStatus("401")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"Signature verification failed"})");
-          return;
-        }
-
-        db.delete_webauthn_challenge(challenge);
-        db.store_pki_credential(user_id, public_key, device_name);
-
-        // If this is user's first PKI key, generate recovery keys
-        auto pki_keys = db.list_pki_credentials(user_id);
-        int remaining = db.count_remaining_recovery_keys(user_id);
-        json resp = {{"ok", true}};
-
-        if (pki_keys.size() == 1 && remaining == 0) {
-          auto [plaintext, hashes] = webauthn::generate_recovery_keys();
-          db.store_recovery_keys(user_id, hashes);
-          resp["recovery_keys"] = plaintext;
-        }
-
-        res->writeHeader("Content-Type", "application/json")->end(resp.dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+      });
     });
-    res->onAborted([]() {});
   });
 
   app.get("/api/users/me/keys", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    auto creds = db.list_pki_credentials(user_id);
-    json arr = json::array();
-    for (const auto& c : creds) {
-      arr.push_back({{"id", c.id}, {"device_name", c.device_name}, {"created_at", c.created_at}});
-    }
-    res->writeHeader("Content-Type", "application/json")->end(arr.dump());
+      auto creds = db.list_pki_credentials(*user_id);
+      json arr = json::array();
+      for (const auto& c : creds) {
+        arr.push_back({{"id", c.id}, {"device_name", c.device_name}, {"created_at", c.created_at}});
+      }
+      auto body = arr.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
   });
 
   app.del("/api/users/me/keys/:id", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
+    auto token = extract_bearer_token(req);
     std::string key_id(req->getParameter(0));
-    try {
-      int total = db.count_user_credentials(user_id);
-      if (total <= 1) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Cannot remove your only credential"})");
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token), key_id = std::move(key_id)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
         return;
       }
-      db.remove_pki_credential(key_id, user_id);
-      res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-    } catch (const std::exception& e) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+
+      try {
+        int total = db.count_user_credentials(*user_id);
+        if (total <= 1) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Cannot remove your only credential"})");
+          });
+          return;
+        }
+        db.remove_pki_credential(key_id, *user_id);
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   // --- Device linking ---
 
   app.post("/api/users/me/device-tokens", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    try {
-      std::string token = db.create_device_token(user_id);
-      json resp = {{"token", token}};
-      res->writeHeader("Content-Type", "application/json")->end(resp.dump());
-    } catch (const std::exception& e) {
-      res->writeStatus("500")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+      try {
+        std::string device_token = db.create_device_token(*user_id);
+        auto resp_body = json({{"token", device_token}}).dump();
+        loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(resp_body);
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("500")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   app.get("/api/users/me/devices", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    auto keys = db.list_user_keys(user_id);
-    json arr = json::array();
-    for (const auto& k : keys) {
-      arr.push_back({{"id", k.id}, {"device_name", k.device_name}, {"created_at", k.created_at}});
-    }
-    res->writeHeader("Content-Type", "application/json")->end(arr.dump());
+      auto keys = db.list_user_keys(*user_id);
+      json arr = json::array();
+      for (const auto& k : keys) {
+        arr.push_back({{"id", k.id}, {"device_name", k.device_name}, {"created_at", k.created_at}});
+      }
+      auto body = arr.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
   });
 
   app.del("/api/users/me/devices/:id", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
+    auto token = extract_bearer_token(req);
     std::string key_id(req->getParameter(0));
-    try {
-      int total = db.count_user_credentials(user_id);
-      if (total <= 1) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Cannot remove your only credential"})");
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token), key_id = std::move(key_id)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
         return;
       }
-      db.remove_user_key(key_id, user_id);
-      res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-    } catch (const std::exception& e) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+
+      try {
+        int total = db.count_user_credentials(*user_id);
+        if (total <= 1) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Cannot remove your only credential"})");
+          });
+          return;
+        }
+        db.remove_user_key(key_id, *user_id);
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   // --- Recovery key management ---
 
   app.get("/api/users/me/recovery-keys/count", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    int remaining = db.count_remaining_recovery_keys(user_id);
-    json resp = {{"remaining", remaining}};
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+      int remaining = db.count_remaining_recovery_keys(*user_id);
+      auto body = json({{"remaining", remaining}}).dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
   });
 
   app.post("/api/users/me/recovery-keys/regenerate", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
 
-    try {
-      db.delete_recovery_keys(user_id);
-      auto [plaintext, hashes] = webauthn::generate_recovery_keys();
-      db.store_recovery_keys(user_id, hashes);
-      json resp = {{"recovery_keys", plaintext}};
-      res->writeHeader("Content-Type", "application/json")->end(resp.dump());
-    } catch (const std::exception& e) {
-      res->writeStatus("500")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+      try {
+        db.delete_recovery_keys(*user_id);
+        auto [plaintext, hashes] = webauthn::generate_recovery_keys();
+        db.store_recovery_keys(*user_id, hashes);
+        auto resp_body = json({{"recovery_keys", plaintext}}).dump();
+        loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(resp_body);
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("500")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   // --- TOTP management ---
 
   app.get("/api/users/me/totp/status", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    bool enabled = db.has_totp(user_id);
-    json resp = {{"enabled", enabled}};
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      bool enabled = db.has_totp(*user_id);
+      auto body = json({{"enabled", enabled}}).dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
   });
 
   app.post("/api/users/me/totp/setup", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
-    try {
-      auto user = db.find_user_by_id(user_id);
-      if (!user) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"User not found"})");
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
         return;
       }
 
-      auto secret = totp::generate_secret();
-      db.store_totp_secret(user_id, secret);
+      try {
+        auto user = db.find_user_by_id(*user_id);
+        if (!user) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"User not found"})");
+          });
+          return;
+        }
 
-      auto server_name = db.get_setting("server_name").value_or("EnclaveStation");
-      auto uri = totp::build_uri(secret, user->username, server_name);
+        auto secret = totp::generate_secret();
+        db.store_totp_secret(*user_id, secret);
 
-      json resp = {{"secret", secret}, {"uri", uri}};
-      res->writeHeader("Content-Type", "application/json")->end(resp.dump());
-    } catch (const std::exception& e) {
-      res->writeStatus("500")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", e.what()}}).dump());
-    }
+        auto server_name = db.get_setting("server_name").value_or("EnclaveStation");
+        auto uri = totp::build_uri(secret, user->username, server_name);
+
+        auto resp_body = json({{"secret", secret}, {"uri", uri}}).dump();
+        loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+          if (*aborted) return;
+          res->writeHeader("Content-Type", "application/json")->end(resp_body);
+        });
+      } catch (const std::exception& e) {
+        auto err = json({{"error", e.what()}}).dump();
+        loop_->defer([res, aborted, err = std::move(err)]() {
+          if (*aborted) return;
+          res->writeStatus("500")->writeHeader("Content-Type", "application/json")->end(err);
+        });
+      }
+    });
   });
 
   app.post("/api/users/me/totp/verify", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::string()](
+                  std::string_view data, bool last) mutable {
+      body.append(data);
+      if (!last) return;
 
-    res->onData(
-      [this, res, user_id, body = std::string()](std::string_view data, bool last) mutable {
-        body.append(data);
-        if (!last) return;
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
+        }
 
         try {
           auto j = json::parse(body);
           std::string code = j.at("code");
 
-          auto secret = db.get_unverified_totp_secret(user_id);
+          auto secret = db.get_unverified_totp_secret(*user_id);
           if (!secret) {
-            res->writeStatus("400")
-              ->writeHeader("Content-Type", "application/json")
-              ->end(R"({"error":"No TOTP setup in progress"})");
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"No TOTP setup in progress"})");
+            });
             return;
           }
 
           if (!totp::verify_code(*secret, code)) {
-            res->writeStatus("401")
-              ->writeHeader("Content-Type", "application/json")
-              ->end(R"({"error":"Invalid verification code"})");
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Invalid verification code"})");
+            });
             return;
           }
 
-          db.verify_totp(user_id);
-          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          db.verify_totp(*user_id);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          });
         } catch (const std::exception& e) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(json({{"error", e.what()}}).dump());
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+          });
         }
       });
-    res->onAborted([]() {});
+    });
   });
 
   app.del("/api/users/me/totp", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-
-    res->onData([this, res, user_id, body = std::string()](
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::string()](
                   std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
 
-      try {
-        auto j = json::parse(body);
-        std::string code = j.at("code");
-
-        auto secret = db.get_totp_secret(user_id);
-        if (!secret) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"TOTP is not enabled"})");
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
           return;
         }
 
-        if (!totp::verify_code(*secret, code)) {
-          res->writeStatus("401")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"Invalid verification code"})");
-          return;
-        }
+        try {
+          auto j = json::parse(body);
+          std::string code = j.at("code");
 
-        // Check if user has auth methods that require MFA
-        auto check_mfa = [&](const std::string& method) -> bool {
-          auto val = db.get_setting("mfa_required_" + method);
-          return val && *val == "true";
-        };
-
-        std::vector<std::string> blocking_methods;
-        if (check_mfa("password") && db.has_password(user_id))
-          blocking_methods.push_back("password");
-        if (check_mfa("pki") && !db.list_pki_credentials(user_id).empty())
-          blocking_methods.push_back("browser key");
-        if (check_mfa("passkey") && !db.list_webauthn_credentials(user_id).empty())
-          blocking_methods.push_back("passkey");
-
-        if (!blocking_methods.empty()) {
-          std::string methods_str;
-          for (size_t i = 0; i < blocking_methods.size(); i++) {
-            if (i > 0) methods_str += (i == blocking_methods.size() - 1) ? " and " : ", ";
-            methods_str += blocking_methods[i];
+          auto secret = db.get_totp_secret(*user_id);
+          if (!secret) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"TOTP is not enabled"})");
+            });
+            return;
           }
-          res->writeStatus("403")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(
+
+          if (!totp::verify_code(*secret, code)) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Invalid verification code"})");
+            });
+            return;
+          }
+
+          // Check if user has auth methods that require MFA
+          auto check_mfa = [&](const std::string& method) -> bool {
+            auto val = db.get_setting("mfa_required_" + method);
+            return val && *val == "true";
+          };
+
+          std::vector<std::string> blocking_methods;
+          if (check_mfa("password") && db.has_password(*user_id))
+            blocking_methods.push_back("password");
+          if (check_mfa("pki") && !db.list_pki_credentials(*user_id).empty())
+            blocking_methods.push_back("browser key");
+          if (check_mfa("passkey") && !db.list_webauthn_credentials(*user_id).empty())
+            blocking_methods.push_back("passkey");
+
+          if (!blocking_methods.empty()) {
+            std::string methods_str;
+            for (size_t i = 0; i < blocking_methods.size(); i++) {
+              if (i > 0) methods_str += (i == blocking_methods.size() - 1) ? " and " : ", ";
+              methods_str += blocking_methods[i];
+            }
+            auto err =
               json(
                 {{"error",
                   "Cannot disable two-factor authentication because this server requires it for " +
                     methods_str +
                     " login. Remove those authentication methods first or contact an "
                     "administrator."}})
-                .dump());
-          return;
-        }
+                .dump();
+            loop_->defer([res, aborted, err = std::move(err)]() {
+              if (*aborted) return;
+              res->writeStatus("403")->writeHeader("Content-Type", "application/json")->end(err);
+            });
+            return;
+          }
 
-        db.delete_totp(user_id);
-        res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+          db.delete_totp(*user_id);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+          });
+        }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // User settings (key-value preferences)
   app.get("/api/users/me/settings", [this](auto* res, auto* req) {
-    auto user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    auto settings = db.get_all_user_settings(user_id);
-    json j = json::object();
-    for (const auto& [key, value] : settings) {
-      j[key] = value;
-    }
-    res->writeHeader("Content-Type", "application/json")->end(j.dump());
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      auto user_id = db.validate_session(token);
+      if (!user_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto settings = db.get_all_user_settings(*user_id);
+      json j = json::object();
+      for (const auto& [key, value] : settings) {
+        j[key] = value;
+      }
+      auto body = j.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(body);
+      });
+    });
   });
 
   app.put("/api/users/me/settings", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
-    std::string body;
-    res->onData([this, res, user_id = std::move(user_id_copy), body = std::move(body)](
-      std::string_view data, bool last) mutable {
+    auto token = extract_bearer_token(req);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::string()](
+                  std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
-      try {
-        auto j = json::parse(body);
-        for (auto& [key, value] : j.items()) {
-          if (!value.is_string()) continue;
-          // Only allow agent_* settings
-          if (key.substr(0, 6) != "agent_") continue;
-          db.set_user_setting(user_id, key, value.get<std::string>());
+
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        auto user_id = db.validate_session(token);
+        if (!user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
         }
-        res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+
+        try {
+          auto j = json::parse(body);
+          for (auto& [key, value] : j.items()) {
+            if (!value.is_string()) continue;
+            // Only allow agent_* settings
+            if (key.substr(0, 6) != "agent_") continue;
+            db.set_user_setting(*user_id, key, value.get<std::string>());
+          }
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+          });
+        }
+      });
     });
-    res->onAborted([]() {});
   });
 }
 

@@ -10,6 +10,7 @@
 #include "auth/webauthn.h"
 #include "config.h"
 #include "db/database.h"
+#include "db/db_thread_pool.h"
 #include "handlers/handler_utils.h"
 #include "ws/ws_handler.h"
 
@@ -20,6 +21,8 @@ struct UserHandler {
   Database& db;
   WsHandler<SSL>& ws;
   const Config& config;
+  uWS::Loop* loop_;
+  DbThreadPool& pool_;
 
   void register_routes(uWS::TemplatedApp<SSL>& app);
 

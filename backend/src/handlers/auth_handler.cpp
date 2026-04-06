@@ -8,275 +8,379 @@ template <bool SSL>
 void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // WebAuthn (passkey) routes
   app.post("/api/auth/register/options", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_register_options(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_register_options(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/register/verify", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_register_verify(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_register_verify(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/login/options", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_login_options(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_login_options(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/login/verify", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_login_verify(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_login_verify(res, aborted, body);
+        });
+      });
   });
 
   // PKI (browser key) routes
   app.post("/api/auth/pki/challenge", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_pki_challenge(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_pki_challenge(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/pki/register", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_pki_register(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_pki_register(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/pki/login", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_pki_login(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit(
+          [this, res, aborted, body = std::move(body)]() { handle_pki_login(res, aborted, body); });
+      });
   });
 
   // Recovery key login
   app.post("/api/auth/recovery", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_recovery_login(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_recovery_login(res, aborted, body);
+        });
+      });
   });
 
   // Recovery token (admin-generated) login
   app.post("/api/auth/recover-account", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_recovery_token_login(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_recovery_token_login(res, aborted, body);
+        });
+      });
   });
 
   // Join request routes
   app.post("/api/auth/request-access/options", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_request_access_options(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_request_access_options(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/request-access", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_request_access(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_request_access(res, aborted, body);
+        });
+      });
   });
 
   app.get("/api/auth/request-status/:id", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string request_id(req->getParameter(0));
-    handle_request_status(res, request_id);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, request_id = std::move(request_id)]() {
+      handle_request_status(res, aborted, request_id);
+    });
   });
 
   // Password auth routes
   app.post("/api/auth/password/register", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_password_register(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_password_register(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/password/login", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_password_login(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_password_login(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/password/change", [this](auto* res, auto* req) {
-    auto token = std::string(req->getHeader("authorization"));
-    if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
+    auto aborted = std::make_shared<bool>(false);
+    auto token = extract_bearer_token(req);
     std::string body;
-    res->onData(
-      [this, res, token, body = std::move(body)](std::string_view data, bool last) mutable {
-        body.append(data);
-        if (!last) return;
-        handle_password_change(res, body, token);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::move(body)](
+                  std::string_view data, bool last) mutable {
+      body.append(data);
+      if (!last) return;
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        handle_password_change(res, aborted, body, token);
       });
-    res->onAborted([]() {});
+    });
   });
 
   app.post("/api/auth/password/set", [this](auto* res, auto* req) {
-    auto token = std::string(req->getHeader("authorization"));
-    if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
+    auto aborted = std::make_shared<bool>(false);
+    auto token = extract_bearer_token(req);
     std::string body;
-    res->onData(
-      [this, res, token, body = std::move(body)](std::string_view data, bool last) mutable {
-        body.append(data);
-        if (!last) return;
-        handle_password_set(res, body, token);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this, res, aborted, token = std::move(token), body = std::move(body)](
+                  std::string_view data, bool last) mutable {
+      body.append(data);
+      if (!last) return;
+      pool_.submit([this, res, aborted, body = std::move(body), token = std::move(token)]() {
+        handle_password_set(res, aborted, body, token);
       });
-    res->onAborted([]() {});
+    });
   });
 
   app.del("/api/auth/password", [this](auto* res, auto* req) {
-    auto token = std::string(req->getHeader("authorization"));
-    if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-    handle_password_delete(res, token);
+    auto aborted = std::make_shared<bool>(false);
+    auto token = extract_bearer_token(req);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      handle_password_delete(res, aborted, token);
+    });
   });
 
   app.post("/api/auth/mfa/verify", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_mfa_verify(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_mfa_verify(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/mfa/setup", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_mfa_setup(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit(
+          [this, res, aborted, body = std::move(body)]() { handle_mfa_setup(res, aborted, body); });
+      });
   });
 
   app.post("/api/auth/mfa/setup/verify", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_mfa_setup_verify(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_mfa_setup_verify(res, aborted, body);
+        });
+      });
   });
 
   // Device linking - get challenge for PKI device linking
   app.post("/api/auth/add-device/pki/challenge", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      try {
-        auto j = json::parse(body);
-        std::string device_token = j.at("device_token");
-        auto user_id = db.validate_device_token(device_token);
-        if (!user_id) {
-          res->writeStatus("401")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"Invalid or expired device token"})");
-          return;
-        }
-        std::string challenge = webauthn::generate_challenge();
-        json extra = auth_payload_utils::build_pki_challenge_extra("device_pki");
-        db.store_webauthn_challenge(challenge, extra.dump());
-        json resp = auth_payload_utils::build_challenge_response(challenge);
-        res->writeHeader("Content-Type", "application/json")->end(resp.dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(json({{"error", e.what()}}).dump());
-      }
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          try {
+            auto j = json::parse(body);
+            std::string device_token = j.at("device_token");
+            auto user_id = db.validate_device_token(device_token);
+            if (!user_id) {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("401")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->end(R"({"error":"Invalid or expired device token"})");
+              });
+              return;
+            }
+            std::string challenge = webauthn::generate_challenge();
+            json extra = auth_payload_utils::build_pki_challenge_extra("device_pki");
+            db.store_webauthn_challenge(challenge, extra.dump());
+            json resp = auth_payload_utils::build_challenge_response(challenge);
+            auto resp_body = resp.dump();
+            loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+              if (*aborted) return;
+              res->writeHeader("Content-Type", "application/json")->end(resp_body);
+            });
+          } catch (const std::exception& e) {
+            auto err = json({{"error", e.what()}}).dump();
+            loop_->defer([res, aborted, err = std::move(err)]() {
+              if (*aborted) return;
+              res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err);
+            });
+          }
+        });
+      });
   });
 
   // Device linking - add browser key via device token
   app.post("/api/auth/add-device/pki", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_add_device_pki(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_add_device_pki(res, aborted, body);
+        });
+      });
   });
 
   // Device linking - passkey registration options
   app.post("/api/auth/add-device/passkey/options", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_add_device_passkey_options(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_add_device_passkey_options(res, aborted, body);
+        });
+      });
   });
 
   // Device linking - passkey registration verify
   app.post("/api/auth/add-device/passkey/verify", [this](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
     std::string body;
-    res->onData([this, res, body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      handle_add_device_passkey_verify(res, body);
-    });
-    res->onAborted([]() {});
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body = std::move(body)](std::string_view data, bool last) mutable {
+        body.append(data);
+        if (!last) return;
+        pool_.submit([this, res, aborted, body = std::move(body)]() {
+          handle_add_device_passkey_verify(res, aborted, body);
+        });
+      });
   });
 
   app.post("/api/auth/logout", [this](auto* res, auto* req) {
-    std::string token(req->getHeader("authorization"));
-    if (token.rfind("Bearer ", 0) == 0) token = token.substr(7);
-    db.delete_session(token);
-    res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+    auto aborted = std::make_shared<bool>(false);
+    auto token = extract_bearer_token(req);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token)]() {
+      db.delete_session(token);
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+      });
+    });
   });
 }
 
@@ -297,14 +401,21 @@ bool AuthHandler<SSL>::is_mfa_required_for_method(const std::string& method) {
 
 template <bool SSL>
 bool AuthHandler<SSL>::check_and_handle_mfa(
-  uWS::HttpResponse<SSL>* res, const User& user, const std::string& auth_method) {
+  uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
+  const User& user,
+  const std::string& auth_method) {
   bool mfa_required = is_mfa_required_for_method(auth_method);
   bool user_has_totp = db.has_totp(user.id);
   if (!mfa_required && !user_has_totp) return false;
   auto mfa_token = db.create_mfa_pending_token(user.id, auth_method);
   auto decision = auth_utils::build_mfa_decision(mfa_required, user_has_totp, mfa_token);
 
-  res->writeHeader("Content-Type", "application/json")->end(decision.response.dump());
+  auto resp_body = decision.response.dump();
+  loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+    if (*aborted) return;
+    res->writeHeader("Content-Type", "application/json")->end(resp_body);
+  });
   return true;
 }
 
@@ -342,12 +453,15 @@ json AuthHandler<SSL>::make_user_json(const User& user) {
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_register_options(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -358,9 +472,11 @@ void AuthHandler<SSL>::handle_register_options(
 
     auto err = check_registration_eligibility(username, invite_token);
     if (!err.empty()) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", err}}).dump());
+      auto err_body = json({{"error", err}}).dump();
+      loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+        if (*aborted) return;
+        res->writeStatus("403")->writeHeader("Content-Type", "application/json")->end(err_body);
+      });
       return;
     }
 
@@ -374,22 +490,31 @@ void AuthHandler<SSL>::handle_register_options(
     json options = auth_payload_utils::build_passkey_registration_options(
       config, challenge, user_handle, username, display_name);
 
-    res->writeHeader("Content-Type", "application/json")->end(options.dump());
+    auto resp_body = options.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_register_verify(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -408,17 +533,23 @@ void AuthHandler<SSL>::handle_register_verify(
 
     auto stored = db.get_webauthn_challenge(challenge);
     if (!stored) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired challenge"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired challenge"})");
+      });
       return;
     }
 
     auto extra = auth_payload_utils::parse_challenge_extra(stored->extra_data);
     if (!auth_payload_utils::challenge_has_type(extra, "registration")) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Challenge is not for registration"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Challenge is not for registration"})");
+      });
       return;
     }
 
@@ -450,25 +581,38 @@ void AuthHandler<SSL>::handle_register_verify(
 
     std::string token = db.create_session(user.id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(token, make_user_json(user));
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const pqxx::unique_violation&) {
-    res->writeStatus("409")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(R"({"error":"Username already taken"})");
+    loop_->defer([res, aborted]() {
+      if (*aborted) return;
+      res->writeStatus("409")
+        ->writeHeader("Content-Type", "application/json")
+        ->end(R"({"error":"Username already taken"})");
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_login_options(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_login_options(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -478,21 +622,31 @@ void AuthHandler<SSL>::handle_login_options(uWS::HttpResponse<SSL>* res, const s
 
     json options = auth_payload_utils::build_passkey_login_options(config, challenge);
 
-    res->writeHeader("Content-Type", "application/json")->end(options.dump());
+    auto resp_body = options.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_login_verify(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_login_verify(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -505,9 +659,12 @@ void AuthHandler<SSL>::handle_login_verify(uWS::HttpResponse<SSL>* res, const st
 
     auto cred = db.find_webauthn_credential(credential_id);
     if (!cred) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Unknown credential"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Unknown credential"})");
+      });
       return;
     }
 
@@ -516,17 +673,23 @@ void AuthHandler<SSL>::handle_login_verify(uWS::HttpResponse<SSL>* res, const st
 
     auto stored = db.get_webauthn_challenge(challenge);
     if (!stored) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired challenge"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired challenge"})");
+      });
       return;
     }
 
     auto extra = auth_payload_utils::parse_challenge_extra(stored->extra_data);
     if (!auth_payload_utils::challenge_has_type(extra, "authentication")) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Challenge is not for authentication"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Challenge is not for authentication"})");
+      });
       return;
     }
 
@@ -541,9 +704,12 @@ void AuthHandler<SSL>::handle_login_verify(uWS::HttpResponse<SSL>* res, const st
       config.webauthn_rp_id);
 
     if (!new_sign_count) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"WebAuthn verification failed"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"WebAuthn verification failed"})");
+      });
       return;
     }
 
@@ -552,47 +718,66 @@ void AuthHandler<SSL>::handle_login_verify(uWS::HttpResponse<SSL>* res, const st
 
     auto user = db.find_user_by_credential_id(credential_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
     if (user->is_banned) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Your account has been banned"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Your account has been banned"})");
+      });
       return;
     }
 
     if (db.is_server_locked_down() && user->role != "admin" && user->role != "owner") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      });
       return;
     }
 
-    if (check_and_handle_mfa(res, *user, "passkey")) return;
+    if (check_and_handle_mfa(res, aborted, *user, "passkey")) return;
 
     std::string token = db.create_session(user->id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(token, make_user_json(*user));
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 // --- PKI (browser key) handlers ---
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_pki_challenge(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_pki_challenge(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Browser key authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Browser key authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -607,21 +792,31 @@ void AuthHandler<SSL>::handle_pki_challenge(uWS::HttpResponse<SSL>* res, const s
     db.store_webauthn_challenge(challenge, extra.dump());
 
     json resp = auth_payload_utils::build_challenge_response(challenge);
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_pki_register(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_pki_register(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Browser key authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Browser key authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -636,24 +831,33 @@ void AuthHandler<SSL>::handle_pki_register(uWS::HttpResponse<SSL>* res, const st
     // Verify challenge
     auto stored = db.get_webauthn_challenge(challenge);
     if (!stored) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired challenge"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired challenge"})");
+      });
       return;
     }
     auto extra = auth_payload_utils::parse_challenge_extra(stored->extra_data);
     if (!auth_payload_utils::challenge_has_type(extra, "pki_registration")) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Challenge is not for PKI registration"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Challenge is not for PKI registration"})");
+      });
       return;
     }
 
     // Verify signature
     if (!webauthn::verify_pki_signature(public_key, challenge, signature)) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Signature verification failed"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Signature verification failed"})");
+      });
       return;
     }
 
@@ -662,9 +866,11 @@ void AuthHandler<SSL>::handle_pki_register(uWS::HttpResponse<SSL>* res, const st
     // Check registration eligibility
     auto err = check_registration_eligibility(username, invite_token);
     if (!err.empty()) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", err}}).dump());
+      auto err_body = json({{"error", err}}).dump();
+      loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+        if (*aborted) return;
+        res->writeStatus("403")->writeHeader("Content-Type", "application/json")->end(err_body);
+      });
       return;
     }
 
@@ -683,25 +889,38 @@ void AuthHandler<SSL>::handle_pki_register(uWS::HttpResponse<SSL>* res, const st
     std::string token = db.create_session(user.id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(
       token, make_user_json(user), json{{"recovery_keys", plaintext_keys}});
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const pqxx::unique_violation&) {
-    res->writeStatus("409")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(R"({"error":"Username already taken"})");
+    loop_->defer([res, aborted]() {
+      if (*aborted) return;
+      res->writeStatus("409")
+        ->writeHeader("Content-Type", "application/json")
+        ->end(R"({"error":"Username already taken"})");
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_pki_login(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_pki_login(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Browser key authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Browser key authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -713,24 +932,33 @@ void AuthHandler<SSL>::handle_pki_login(uWS::HttpResponse<SSL>* res, const std::
     // Verify challenge
     auto stored = db.get_webauthn_challenge(challenge);
     if (!stored) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired challenge"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired challenge"})");
+      });
       return;
     }
     auto extra = auth_payload_utils::parse_challenge_extra(stored->extra_data);
     if (!auth_payload_utils::challenge_has_type(extra, "pki_login")) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Challenge is not for PKI login"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Challenge is not for PKI login"})");
+      });
       return;
     }
 
     // Verify signature
     if (!webauthn::verify_pki_signature(public_key, challenge, signature)) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Signature verification failed"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Signature verification failed"})");
+      });
       return;
     }
 
@@ -739,47 +967,66 @@ void AuthHandler<SSL>::handle_pki_login(uWS::HttpResponse<SSL>* res, const std::
     // Find user
     auto user = db.find_user_by_pki_key(public_key);
     if (!user) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"No account found for this browser key"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"No account found for this browser key"})");
+      });
       return;
     }
 
     if (user->is_banned) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Your account has been banned"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Your account has been banned"})");
+      });
       return;
     }
 
     if (db.is_server_locked_down() && user->role != "admin" && user->role != "owner") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      });
       return;
     }
 
-    if (check_and_handle_mfa(res, *user, "pki")) return;
+    if (check_and_handle_mfa(res, aborted, *user, "pki")) return;
 
     std::string token = db.create_session(user->id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(token, make_user_json(*user));
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 // --- Device linking handlers ---
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_add_device_pki(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_add_device_pki(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Browser key authentication is not enabled"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Browser key authentication is not enabled"})");
+      });
       return;
     }
 
@@ -792,32 +1039,44 @@ void AuthHandler<SSL>::handle_add_device_pki(uWS::HttpResponse<SSL>* res, const 
 
     auto user_id = db.validate_device_token(device_token);
     if (!user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired device token"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired device token"})");
+      });
       return;
     }
 
     // Verify the challenge
     auto stored = db.get_webauthn_challenge(challenge);
     if (!stored) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired challenge"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired challenge"})");
+      });
       return;
     }
     auto extra = auth_payload_utils::parse_challenge_extra(stored->extra_data);
     if (!auth_payload_utils::challenge_has_type(extra, "device_pki")) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Challenge mismatch"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Challenge mismatch"})");
+      });
       return;
     }
 
     if (!webauthn::verify_pki_signature(public_key, challenge, signature)) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Signature verification failed"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Signature verification failed"})");
+      });
       return;
     }
 
@@ -827,30 +1086,42 @@ void AuthHandler<SSL>::handle_add_device_pki(uWS::HttpResponse<SSL>* res, const 
 
     auto user = db.find_user_by_id(*user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
     std::string session = db.create_session(user->id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(session, make_user_json(*user));
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_add_device_passkey_options(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Passkey authentication is not enabled"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Passkey authentication is not enabled"})");
+      });
       return;
     }
 
@@ -859,17 +1130,23 @@ void AuthHandler<SSL>::handle_add_device_passkey_options(
 
     auto user_id = db.validate_device_token(device_token);
     if (!user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired device token"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired device token"})");
+      });
       return;
     }
 
     auto user = db.find_user_by_id(*user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
@@ -887,17 +1164,23 @@ void AuthHandler<SSL>::handle_add_device_passkey_options(
     json options = auth_payload_utils::build_passkey_registration_options(
       config, challenge, user_handle, user->username, user->display_name, exclude);
 
-    res->writeHeader("Content-Type", "application/json")->end(options.dump());
+    auto resp_body = options.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_add_device_passkey_verify(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string credential_id = j.at("id");
@@ -916,17 +1199,23 @@ void AuthHandler<SSL>::handle_add_device_passkey_verify(
 
     auto stored = db.get_webauthn_challenge(challenge);
     if (!stored) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired challenge"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired challenge"})");
+      });
       return;
     }
 
     auto extra = auth_payload_utils::parse_challenge_extra(stored->extra_data);
     if (!auth_payload_utils::challenge_has_type(extra, "device_passkey")) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Challenge mismatch"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Challenge mismatch"})");
+      });
       return;
     }
 
@@ -936,9 +1225,12 @@ void AuthHandler<SSL>::handle_add_device_passkey_verify(
     // Validate device token is still valid
     auto token_user = db.validate_device_token(device_token);
     if (!token_user || *token_user != user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Device token expired"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Device token expired"})");
+      });
       return;
     }
 
@@ -950,9 +1242,12 @@ void AuthHandler<SSL>::handle_add_device_passkey_verify(
       config.webauthn_rp_id);
 
     if (!result) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"WebAuthn verification failed"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"WebAuthn verification failed"})");
+      });
       return;
     }
 
@@ -968,26 +1263,36 @@ void AuthHandler<SSL>::handle_add_device_passkey_verify(
 
     auto user = db.find_user_by_id(user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
     std::string session = db.create_session(user->id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(session, make_user_json(*user));
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 // --- Recovery key handler ---
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_recovery_login(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_recovery_login(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string recovery_key = j.at("recovery_key");
@@ -995,42 +1300,60 @@ void AuthHandler<SSL>::handle_recovery_login(uWS::HttpResponse<SSL>* res, const 
     std::string key_hash = webauthn::hash_recovery_key(recovery_key);
     auto user_id = db.verify_and_consume_recovery_key(key_hash);
     if (!user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or already used recovery key"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or already used recovery key"})");
+      });
       return;
     }
 
     auto user = db.find_user_by_id(*user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
     if (user->is_banned) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Your account has been banned"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Your account has been banned"})");
+      });
       return;
     }
 
     if (db.is_server_locked_down() && user->role != "admin" && user->role != "owner") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      });
       return;
     }
 
     std::string token = db.create_session(user->id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(
       token, make_user_json(*user), json{{"must_setup_key", true}});
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
@@ -1038,38 +1361,50 @@ void AuthHandler<SSL>::handle_recovery_login(uWS::HttpResponse<SSL>* res, const 
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_recovery_token_login(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string token = j.at("token");
 
     auto user_id = db.get_recovery_token_user_id(token);
     if (!user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired recovery token"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired recovery token"})");
+      });
       return;
     }
 
     auto user = db.find_user_by_id(*user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
     if (user->is_banned) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Your account has been banned"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Your account has been banned"})");
+      });
       return;
     }
 
     if (db.is_server_locked_down() && user->role != "admin" && user->role != "owner") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      });
       return;
     }
 
@@ -1078,11 +1413,17 @@ void AuthHandler<SSL>::handle_recovery_token_login(
     std::string session = db.create_session(user->id, get_session_expiry());
     json resp = auth_payload_utils::build_token_user_response(
       session, make_user_json(*user), json{{"must_setup_key", true}});
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
@@ -1090,21 +1431,27 @@ void AuthHandler<SSL>::handle_recovery_token_login(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_request_access_options(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto mode = db.get_setting("registration_mode");
     std::string reg_mode = mode.value_or("invite");
     if (reg_mode == "open" || reg_mode == "invite_only") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Requesting access is not available on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Requesting access is not available on this server"})");
+      });
       return;
     }
 
     if (!is_method_enabled("passkey")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Passkey authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -1122,23 +1469,33 @@ void AuthHandler<SSL>::handle_request_access_options(
     json options = auth_payload_utils::build_passkey_registration_options(
       config, challenge, user_handle, username, display_name);
 
-    res->writeHeader("Content-Type", "application/json")->end(options.dump());
+    auto resp_body = options.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_request_access(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto mode = db.get_setting("registration_mode");
     std::string reg_mode = mode.value_or("invite");
     if (reg_mode == "open" || reg_mode == "invite_only") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Requesting access is not available on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Requesting access is not available on this server"})");
+      });
       return;
     }
 
@@ -1151,9 +1508,12 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
 
     if (auth_method == "pki") {
       if (!is_method_enabled("pki")) {
-        res->writeStatus("403")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Browser key authentication is not enabled"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("403")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Browser key authentication is not enabled"})");
+        });
         return;
       }
 
@@ -1164,18 +1524,24 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
       // Verify the challenge
       auto stored = db.get_webauthn_challenge(challenge);
       if (!stored) {
-        res->writeStatus("401")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Invalid or expired challenge"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Invalid or expired challenge"})");
+        });
         return;
       }
       db.delete_webauthn_challenge(challenge);
 
       // Verify signature proves key ownership
       if (!webauthn::verify_pki_signature(public_key, challenge, signature)) {
-        res->writeStatus("401")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Signature verification failed"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Signature verification failed"})");
+        });
         return;
       }
 
@@ -1183,9 +1549,12 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
 
     } else if (auth_method == "passkey") {
       if (!is_method_enabled("passkey")) {
-        res->writeStatus("403")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Passkey authentication is not enabled"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("403")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Passkey authentication is not enabled"})");
+        });
         return;
       }
 
@@ -1205,17 +1574,23 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
 
       auto stored = db.get_webauthn_challenge(challenge);
       if (!stored) {
-        res->writeStatus("401")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Invalid or expired challenge"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Invalid or expired challenge"})");
+        });
         return;
       }
 
       auto extra = auth_payload_utils::parse_challenge_extra(stored->extra_data);
       if (!auth_payload_utils::challenge_has_type(extra, "join_request")) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Challenge is not for a join request"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("400")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Challenge is not for a join request"})");
+        });
         return;
       }
 
@@ -1228,9 +1603,12 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
         config.webauthn_rp_id);
 
       if (!result) {
-        res->writeStatus("401")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"WebAuthn verification failed"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"WebAuthn verification failed"})");
+        });
         return;
       }
 
@@ -1245,9 +1623,12 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
 
     } else if (auth_method == "password") {
       if (!is_method_enabled("password")) {
-        res->writeStatus("403")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(R"({"error":"Password authentication is not enabled"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("403")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Password authentication is not enabled"})");
+        });
         return;
       }
 
@@ -1257,9 +1638,11 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
       auto policy = get_password_policy();
       auto validation_error = password_auth::validate_password(password, policy);
       if (!validation_error.empty()) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(json({{"error", validation_error}}).dump());
+        auto err_body = json({{"error", validation_error}}).dump();
+        loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+          if (*aborted) return;
+          res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+        });
         return;
       }
 
@@ -1268,9 +1651,12 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
       credential_data = json({{"password_hash", hash}}).dump();
 
     } else {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid auth_method. Use 'passkey', 'pki', or 'password'."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid auth_method. Use 'passkey', 'pki', or 'password'."})");
+      });
       return;
     }
 
@@ -1306,11 +1692,17 @@ void AuthHandler<SSL>::handle_request_access(uWS::HttpResponse<SSL>* res, const 
     }
 
     json resp = {{"request_id", id}, {"status", "pending"}};
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
@@ -1324,12 +1716,15 @@ password_auth::PasswordPolicy AuthHandler<SSL>::get_password_policy() {
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_register(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("password")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Password authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Password authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -1343,18 +1738,22 @@ void AuthHandler<SSL>::handle_password_register(
     auto policy = get_password_policy();
     auto validation_error = password_auth::validate_password(password, policy);
     if (!validation_error.empty()) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", validation_error}}).dump());
+      auto err_body = json({{"error", validation_error}}).dump();
+      loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+        if (*aborted) return;
+        res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+      });
       return;
     }
 
     // Check registration eligibility
     auto eligibility_error = check_registration_eligibility(username, invite_token);
     if (!eligibility_error.empty()) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", eligibility_error}}).dump());
+      auto err_body = json({{"error", eligibility_error}}).dump();
+      loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+        if (*aborted) return;
+        res->writeStatus("403")->writeHeader("Content-Type", "application/json")->end(err_body);
+      });
       return;
     }
 
@@ -1374,25 +1773,38 @@ void AuthHandler<SSL>::handle_password_register(
     auto token = db.create_session(user.id, get_session_expiry());
 
     json resp = auth_payload_utils::build_token_user_response(token, make_user_json(user));
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const pqxx::unique_violation&) {
-    res->writeStatus("409")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(R"({"error":"Username already taken"})");
+    loop_->defer([res, aborted]() {
+      if (*aborted) return;
+      res->writeStatus("409")
+        ->writeHeader("Content-Type", "application/json")
+        ->end(R"({"error":"Username already taken"})");
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_password_login(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_password_login(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     if (!is_method_enabled("password")) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Password authentication is not enabled on this server"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Password authentication is not enabled on this server"})");
+      });
       return;
     }
 
@@ -1403,44 +1815,59 @@ void AuthHandler<SSL>::handle_password_login(uWS::HttpResponse<SSL>* res, const 
     // Find user by username
     auto user = db.find_user_by_username(username);
     if (!user) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid username or password"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid username or password"})");
+      });
       return;
     }
 
     // Get stored password hash
     auto stored_hash = db.get_password_hash(user->id);
     if (!stored_hash) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid username or password"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid username or password"})");
+      });
       return;
     }
 
     // Verify password
     if (!password_auth::verify_password(password, *stored_hash)) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid username or password"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid username or password"})");
+      });
       return;
     }
 
     if (user->is_banned) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Your account has been banned"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Your account has been banned"})");
+      });
       return;
     }
 
     if (db.is_server_locked_down() && user->role != "admin" && user->role != "owner") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      });
       return;
     }
 
-    if (check_and_handle_mfa(res, *user, "password")) return;
+    if (check_and_handle_mfa(res, aborted, *user, "password")) return;
 
     // Create session
     auto token = db.create_session(user->id, get_session_expiry());
@@ -1453,23 +1880,35 @@ void AuthHandler<SSL>::handle_password_login(uWS::HttpResponse<SSL>* res, const 
       policy.max_age_days > 0
         ? json{{"must_change_password", db.is_password_expired(user->id, policy.max_age_days)}}
         : json::object());
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_change(
-  uWS::HttpResponse<SSL>* res, const std::string& body, const std::string& session_token) {
+  uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
+  const std::string& body,
+  const std::string& session_token) {
   try {
     auto user_id = db.validate_session(session_token);
     if (!user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Unauthorized"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Unauthorized"})");
+      });
       return;
     }
 
@@ -1480,9 +1919,12 @@ void AuthHandler<SSL>::handle_password_change(
     // Verify current password
     auto stored_hash = db.get_password_hash(*user_id);
     if (!stored_hash || !password_auth::verify_password(current_password, *stored_hash)) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Current password is incorrect"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Current password is incorrect"})");
+      });
       return;
     }
 
@@ -1490,9 +1932,11 @@ void AuthHandler<SSL>::handle_password_change(
     auto policy = get_password_policy();
     auto validation_error = password_auth::validate_password(new_password, policy);
     if (!validation_error.empty()) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", validation_error}}).dump());
+      auto err_body = json({{"error", validation_error}}).dump();
+      loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+        if (*aborted) return;
+        res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+      });
       return;
     }
 
@@ -1502,9 +1946,12 @@ void AuthHandler<SSL>::handle_password_change(
       // Also include the current password in history check
       history.push_back(*stored_hash);
       if (password_auth::matches_history(new_password, history)) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->end(json({{"error", "Cannot reuse a recent password"}}).dump());
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("400")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Cannot reuse a recent password"})");
+        });
         return;
       }
     }
@@ -1516,40 +1963,57 @@ void AuthHandler<SSL>::handle_password_change(
     auto new_hash = password_auth::hash_password(new_password);
     db.store_password(*user_id, new_hash);
 
-    res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+    loop_->defer([res, aborted]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_set(
-  uWS::HttpResponse<SSL>* res, const std::string& body, const std::string& session_token) {
+  uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
+  const std::string& body,
+  const std::string& session_token) {
   try {
     auto user_id = db.validate_session(session_token);
     if (!user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Unauthorized"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Unauthorized"})");
+      });
       return;
     }
 
     // Check that password auth is enabled
     auto methods_str = db.get_setting("auth_methods").value_or("");
     if (methods_str.find("password") == std::string::npos) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Password authentication is not enabled"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Password authentication is not enabled"})");
+      });
       return;
     }
 
     // User must NOT already have a password
     if (db.has_password(*user_id)) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Password already set. Use the change password endpoint instead."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Password already set. Use the change password endpoint instead."})");
+      });
       return;
     }
 
@@ -1560,9 +2024,11 @@ void AuthHandler<SSL>::handle_password_set(
     auto policy = get_password_policy();
     auto validation_error = password_auth::validate_password(new_password, policy);
     if (!validation_error.empty()) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(json({{"error", validation_error}}).dump());
+      auto err_body = json({{"error", validation_error}}).dump();
+      loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+        if (*aborted) return;
+        res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+      });
       return;
     }
 
@@ -1570,54 +2036,74 @@ void AuthHandler<SSL>::handle_password_set(
     auto hash = password_auth::hash_password(new_password);
     db.store_password(*user_id, hash);
 
-    res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+    loop_->defer([res, aborted]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_delete(
-  uWS::HttpResponse<SSL>* res, const std::string& session_token) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& session_token) {
   try {
     auto user_id = db.validate_session(session_token);
     if (!user_id) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Unauthorized"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Unauthorized"})");
+      });
       return;
     }
 
     if (!db.has_password(*user_id)) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"No password is set"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"No password is set"})");
+      });
       return;
     }
 
     // Ensure the user has at least one other auth credential
     int other_creds = db.count_user_credentials(*user_id);
     if (other_creds < 1) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(
-          R"({"error":"Cannot remove password — no other login method configured. Add a passkey or browser key first."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(
+            R"({"error":"Cannot remove password — no other login method configured. Add a passkey or browser key first."})");
+      });
       return;
     }
 
     db.delete_password(*user_id);
-    res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+    loop_->defer([res, aborted]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_mfa_verify(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_mfa_verify(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string mfa_token = j.at("mfa_token");
@@ -1625,9 +2111,12 @@ void AuthHandler<SSL>::handle_mfa_verify(uWS::HttpResponse<SSL>* res, const std:
 
     auto pending = db.validate_mfa_pending_token(mfa_token);
     if (!pending) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired MFA token"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired MFA token"})");
+      });
       return;
     }
 
@@ -1635,41 +2124,56 @@ void AuthHandler<SSL>::handle_mfa_verify(uWS::HttpResponse<SSL>* res, const std:
 
     auto secret = db.get_totp_secret(user_id);
     if (!secret) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"TOTP is not set up"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"TOTP is not set up"})");
+      });
       return;
     }
 
     if (!totp::verify_code(*secret, totp_code)) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid verification code"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid verification code"})");
+      });
       return;
     }
 
-    // MFA verified — consume the token and create a real session
+    // MFA verified -- consume the token and create a real session
     db.delete_mfa_pending_token(mfa_token);
 
     auto user = db.find_user_by_id(user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
     if (user->is_banned) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Your account has been banned"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Your account has been banned"})");
+      });
       return;
     }
 
     if (db.is_server_locked_down() && user->role != "admin" && user->role != "owner") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      });
       return;
     }
 
@@ -1684,25 +2188,35 @@ void AuthHandler<SSL>::handle_mfa_verify(uWS::HttpResponse<SSL>* res, const std:
 
     json resp = auth_payload_utils::build_token_user_response(token, make_user_json(*user), extra);
 
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
-void AuthHandler<SSL>::handle_mfa_setup(uWS::HttpResponse<SSL>* res, const std::string& body) {
+void AuthHandler<SSL>::handle_mfa_setup(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string mfa_token = j.at("mfa_token");
 
     auto pending = db.validate_mfa_pending_token(mfa_token);
     if (!pending) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired MFA token"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired MFA token"})");
+      });
       return;
     }
 
@@ -1710,9 +2224,12 @@ void AuthHandler<SSL>::handle_mfa_setup(uWS::HttpResponse<SSL>* res, const std::
 
     auto user = db.find_user_by_id(user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
@@ -1723,17 +2240,23 @@ void AuthHandler<SSL>::handle_mfa_setup(uWS::HttpResponse<SSL>* res, const std::
     auto uri = totp::build_uri(secret, user->username, server_name);
 
     json resp = auth_payload_utils::build_totp_setup_response(secret, uri);
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_mfa_setup_verify(
-  uWS::HttpResponse<SSL>* res, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string mfa_token = j.at("mfa_token");
@@ -1741,9 +2264,12 @@ void AuthHandler<SSL>::handle_mfa_setup_verify(
 
     auto pending = db.validate_mfa_pending_token(mfa_token);
     if (!pending) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid or expired MFA token"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid or expired MFA token"})");
+      });
       return;
     }
 
@@ -1751,42 +2277,57 @@ void AuthHandler<SSL>::handle_mfa_setup_verify(
 
     auto secret = db.get_unverified_totp_secret(user_id);
     if (!secret) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"No TOTP setup in progress"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("400")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"No TOTP setup in progress"})");
+      });
       return;
     }
 
     if (!totp::verify_code(*secret, code)) {
-      res->writeStatus("401")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Invalid verification code"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Invalid verification code"})");
+      });
       return;
     }
 
-    // TOTP verified — mark as verified, consume MFA token, create session
+    // TOTP verified -- mark as verified, consume MFA token, create session
     db.verify_totp(user_id);
     db.delete_mfa_pending_token(mfa_token);
 
     auto user = db.find_user_by_id(user_id);
     if (!user) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"User not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"User not found"})");
+      });
       return;
     }
 
     if (user->is_banned) {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Your account has been banned"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Your account has been banned"})");
+      });
       return;
     }
 
     if (db.is_server_locked_down() && user->role != "admin" && user->role != "owner") {
-      res->writeStatus("403")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("403")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Server is in lockdown mode. Only administrators may log in."})");
+      });
       return;
     }
 
@@ -1801,24 +2342,33 @@ void AuthHandler<SSL>::handle_mfa_setup_verify(
 
     json resp = auth_payload_utils::build_token_user_response(token, make_user_json(*user), extra);
 
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 
 // Poll for join request status
 template <bool SSL>
 void AuthHandler<SSL>::handle_request_status(
-  uWS::HttpResponse<SSL>* res, const std::string& request_id) {
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& request_id) {
   try {
     auto request = db.get_join_request(request_id);
     if (!request) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->end(R"({"error":"Request not found"})");
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("404")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"Request not found"})");
+      });
       return;
     }
 
@@ -1836,11 +2386,17 @@ void AuthHandler<SSL>::handle_request_status(
       }
     }
 
-    res->writeHeader("Content-Type", "application/json")->end(resp.dump());
+    auto resp_body = resp.dump();
+    loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+      if (*aborted) return;
+      res->writeHeader("Content-Type", "application/json")->end(resp_body);
+    });
   } catch (const std::exception& e) {
-    res->writeStatus("400")
-      ->writeHeader("Content-Type", "application/json")
-      ->end(json({{"error", e.what()}}).dump());
+    auto err_body = json({{"error", e.what()}}).dump();
+    loop_->defer([res, aborted, err_body = std::move(err_body)]() {
+      if (*aborted) return;
+      res->writeStatus("400")->writeHeader("Content-Type", "application/json")->end(err_body);
+    });
   }
 }
 

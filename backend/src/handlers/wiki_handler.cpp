@@ -108,765 +108,1252 @@ void WikiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   // List pages in folder
   app.get("/api/spaces/:id/wiki/pages", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter("id"));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_permission(res, space_id, user_id, "view")) return;
-
     std::string parent_id(req->getQuery("parent_id"));
-    auto pages = db.list_wiki_pages(space_id, parent_id);
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  parent_id = std::move(parent_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_permission(res, aborted, space_id, user_id, "view")) return;
 
-    json arr = json::array();
-    for (const auto& p : pages) arr.push_back(page_to_json(p));
+      auto pages = db.list_wiki_pages(space_id, parent_id);
 
-    json resp = {{"pages", arr}, {"my_permission", get_access_level(space_id, user_id)}};
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      json arr = json::array();
+      for (const auto& p : pages) arr.push_back(page_to_json(p));
+
+      json resp = {{"pages", arr}, {"my_permission", get_access_level(space_id, user_id)}};
+      auto body = resp.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
   // Full page tree for sidebar
   app.get("/api/spaces/:id/wiki/tree", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter("id"));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_permission(res, space_id, user_id, "view")) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token), space_id = std::move(space_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_permission(res, aborted, space_id, user_id, "view")) return;
 
-    auto pages = db.get_wiki_tree(space_id);
+      auto pages = db.get_wiki_tree(space_id);
 
-    json arr = json::array();
-    for (const auto& p : pages) arr.push_back(page_to_json(p));
+      json arr = json::array();
+      for (const auto& p : pages) arr.push_back(page_to_json(p));
 
-    json resp = {{"pages", arr}, {"my_permission", get_access_level(space_id, user_id)}};
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      json resp = {{"pages", arr}, {"my_permission", get_access_level(space_id, user_id)}};
+      auto body = resp.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
   // Create page or folder
   app.post("/api/spaces/:id/wiki/pages", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter("id"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_permission(res, space_id, user_id, "edit")) return;
-
-      try {
-        auto j = json::parse(body);
-        std::string title = j.at("title");
-        std::string parent_id = j.value("parent_id", "");
-        bool is_folder = j.value("is_folder", false);
-        std::string content = j.value("content", "");
-        std::string content_text = content;
-        std::string icon = j.value("icon", "");
-        int position = j.value("position", 0);
-
-        if (title.empty() || title.length() > 255) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"json({"error":"Title is required (max 255 characters)"})json");
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    body = std::move(body),
+                    token = std::move(token),
+                    space_id = std::move(space_id)]() {
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
           return;
         }
+        auto user_id = *user_id_opt;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_permission(res, aborted, space_id, user_id, "edit")) return;
 
-        // Generate slug from title
-        std::string slug = generate_slug(title);
-        if (slug.empty()) slug = "page";
+        try {
+          auto j = json::parse(body);
+          std::string title = j.at("title");
+          std::string parent_id = j.value("parent_id", "");
+          bool is_folder = j.value("is_folder", false);
+          std::string content = j.value("content", "");
+          std::string content_text = content;
+          std::string icon = j.value("icon", "");
+          int position = j.value("position", 0);
 
-        // Ensure unique slug within parent
-        if (db.wiki_page_slug_exists(space_id, parent_id, slug)) {
-          int suffix = 2;
-          while (
-            db.wiki_page_slug_exists(space_id, parent_id, slug + "-" + std::to_string(suffix))) {
-            suffix++;
+          if (title.empty() || title.length() > 255) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"json({"error":"Title is required (max 255 characters)"})json");
+            });
+            return;
           }
-          slug = slug + "-" + std::to_string(suffix);
-        }
 
-        auto page = db.create_wiki_page(
-          space_id,
-          parent_id,
-          title,
-          slug,
-          is_folder,
-          content,
-          content_text,
-          icon,
-          position,
-          user_id);
-        // Create initial version for history (major)
-        db.create_wiki_page_version(page.id, title, content, content_text, user_id, true);
-
-        auto creator = db.find_user_by_id(user_id);
-        page.created_by_username = creator ? creator->username : "";
-
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(page_to_json(page).dump());
-      } catch (const std::exception& e) {
-        std::cerr << "[Wiki] Create page error: " << e.what() << std::endl;
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
-    });
-    res->onAborted([]() {});
-  });
-
-  // Get page with content + path
-  app.get("/api/spaces/:id/wiki/pages/:pageId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    std::string space_id(req->getParameter(0));
-    std::string page_id(req->getParameter(1));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_page_permission(res, space_id, page_id, user_id, "view")) return;
-
-    auto page = db.find_wiki_page(page_id);
-    if (!page || page->space_id != space_id || page->is_deleted) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"Page not found"})");
-      return;
-    }
-
-    json resp = page_to_json(*page);
-    resp["my_permission"] = get_page_access_level(space_id, page_id, user_id);
-
-    // Include breadcrumb path
-    auto path = db.get_wiki_page_path(page_id);
-    json path_arr = json::array();
-    for (const auto& p : path) {
-      path_arr.push_back({{"id", p.id}, {"title", p.title}, {"slug", p.slug}});
-    }
-    resp["path"] = path_arr;
-
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
-  });
-
-  // Update page
-  app.put("/api/spaces/:id/wiki/pages/:pageId", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
-    std::string space_id(req->getParameter(0));
-    std::string page_id(req->getParameter(1));
-    std::string body;
-    res->onData([this,
-                 res,
-                 user_id = std::move(user_id_copy),
-                 space_id = std::move(space_id),
-                 page_id = std::move(page_id),
-                 body = std::move(body)](std::string_view data, bool last) mutable {
-      body.append(data);
-      if (!last) return;
-      if (user_id.empty()) return;
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_page_permission(res, space_id, page_id, user_id, "edit")) return;
-
-      auto existing = db.find_wiki_page(page_id);
-      if (!existing || existing->space_id != space_id || existing->is_deleted) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Page not found"})");
-        return;
-      }
-
-      try {
-        auto j = json::parse(body);
-        std::string title = j.value("title", existing->title);
-        std::string content = j.value("content", existing->content);
-        std::string content_text = content;
-        std::string icon = j.value("icon", existing->icon);
-        std::string cover_image_file_id =
-          j.value("cover_image_file_id", existing->cover_image_file_id);
-        bool create_version = j.value("create_version", false);
-
-        // Generate slug from title if title changed
-        std::string slug = existing->slug;
-        if (title != existing->title) {
-          slug = generate_slug(title);
+          // Generate slug from title
+          std::string slug = generate_slug(title);
           if (slug.empty()) slug = "page";
-          if (db.wiki_page_slug_exists(space_id, existing->parent_id, slug, page_id)) {
+
+          // Ensure unique slug within parent
+          if (db.wiki_page_slug_exists(space_id, parent_id, slug)) {
             int suffix = 2;
-            while (db.wiki_page_slug_exists(
-              space_id, existing->parent_id, slug + "-" + std::to_string(suffix), page_id)) {
+            while (
+              db.wiki_page_slug_exists(space_id, parent_id, slug + "-" + std::to_string(suffix))) {
               suffix++;
             }
             slug = slug + "-" + std::to_string(suffix);
           }
+
+          auto page = db.create_wiki_page(
+            space_id,
+            parent_id,
+            title,
+            slug,
+            is_folder,
+            content,
+            content_text,
+            icon,
+            position,
+            user_id);
+          // Create initial version for history (major)
+          db.create_wiki_page_version(page.id, title, content, content_text, user_id, true);
+
+          auto creator = db.find_user_by_id(user_id);
+          page.created_by_username = creator ? creator->username : "";
+
+          auto resp_body = page_to_json(page).dump();
+          loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_body);
+          });
+        } catch (const std::exception& e) {
+          std::cerr << "[Wiki] Create page error: " << e.what() << std::endl;
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
         }
-
-        // Create a major version snapshot when explicitly requested (e.g. leaving edit mode)
-        // but only if content or title actually changed since the last version
-        if (create_version) {
-          auto prev_versions = db.list_wiki_page_versions(page_id);
-          bool changed = prev_versions.empty() || prev_versions[0].title != existing->title ||
-                         prev_versions[0].content != existing->content;
-          if (changed) {
-            db.create_wiki_page_version(
-              page_id, existing->title, existing->content, existing->content_text, user_id, true);
-          }
-        }
-
-        // Update page
-        auto page = db.update_wiki_page(
-          page_id, title, slug, content, content_text, icon, cover_image_file_id, user_id);
-
-        auto creator = db.find_user_by_id(page.created_by);
-        page.created_by_username = creator ? creator->username : "";
-        auto editor = db.find_user_by_id(user_id);
-        page.last_edited_by_username = editor ? editor->username : "";
-
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(page_to_json(page).dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+      });
     });
-    res->onAborted([]() {});
   });
 
-  // Delete page (soft-delete)
-  app.del("/api/spaces/:id/wiki/pages/:pageId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+  // Get page with content + path
+  app.get("/api/spaces/:id/wiki/pages/:pageId", [this](auto* res, auto* req) {
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string page_id(req->getParameter(1));
-    if (!check_space_access(res, space_id, user_id)) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  page_id = std::move(page_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_page_permission(res, aborted, space_id, page_id, user_id, "view")) return;
 
-    auto page = db.find_wiki_page(page_id);
-    if (!page || page->space_id != space_id || page->is_deleted) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"Page not found"})");
-      return;
-    }
+      auto page = db.find_wiki_page(page_id);
+      if (!page || page->space_id != space_id || page->is_deleted) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Page not found"})");
+        });
+        return;
+      }
 
-    // Owner of the page can delete with edit permission, otherwise need owner
-    if (page->created_by == user_id) {
-      if (!require_page_permission(res, space_id, page_id, user_id, "edit")) return;
-    } else {
-      if (!require_page_permission(res, space_id, page_id, user_id, "owner")) return;
-    }
+      json resp = page_to_json(*page);
+      resp["my_permission"] = get_page_access_level(space_id, page_id, user_id);
 
-    db.soft_delete_wiki_page(page_id);
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(R"({"ok":true})");
+      // Include breadcrumb path
+      auto path = db.get_wiki_page_path(page_id);
+      json path_arr = json::array();
+      for (const auto& p : path) {
+        path_arr.push_back({{"id", p.id}, {"title", p.title}, {"slug", p.slug}});
+      }
+      resp["path"] = path_arr;
+
+      auto body = resp.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
-  // Move page to new parent
-  app.put("/api/spaces/:id/wiki/pages/:pageId/move", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
+  // Update page
+  app.put("/api/spaces/:id/wiki/pages/:pageId", [this](auto* res, auto* req) {
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string page_id(req->getParameter(1));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  page_id = std::move(page_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_page_permission(res, space_id, page_id, user_id, "edit")) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    body = std::move(body),
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    page_id = std::move(page_id)]() {
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
+        }
+        auto user_id = *user_id_opt;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_page_permission(res, aborted, space_id, page_id, user_id, "edit")) return;
+
+        auto existing = db.find_wiki_page(page_id);
+        if (!existing || existing->space_id != space_id || existing->is_deleted) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Page not found"})");
+          });
+          return;
+        }
+
+        try {
+          auto j = json::parse(body);
+          std::string title = j.value("title", existing->title);
+          std::string content = j.value("content", existing->content);
+          std::string content_text = content;
+          std::string icon = j.value("icon", existing->icon);
+          std::string cover_image_file_id =
+            j.value("cover_image_file_id", existing->cover_image_file_id);
+          bool create_version = j.value("create_version", false);
+
+          // Generate slug from title if title changed
+          std::string slug = existing->slug;
+          if (title != existing->title) {
+            slug = generate_slug(title);
+            if (slug.empty()) slug = "page";
+            if (db.wiki_page_slug_exists(space_id, existing->parent_id, slug, page_id)) {
+              int suffix = 2;
+              while (db.wiki_page_slug_exists(
+                space_id, existing->parent_id, slug + "-" + std::to_string(suffix), page_id)) {
+                suffix++;
+              }
+              slug = slug + "-" + std::to_string(suffix);
+            }
+          }
+
+          // Create a major version snapshot when explicitly requested (e.g. leaving edit mode)
+          // but only if content or title actually changed since the last version
+          if (create_version) {
+            auto prev_versions = db.list_wiki_page_versions(page_id);
+            bool changed = prev_versions.empty() || prev_versions[0].title != existing->title ||
+                           prev_versions[0].content != existing->content;
+            if (changed) {
+              db.create_wiki_page_version(
+                page_id, existing->title, existing->content, existing->content_text, user_id, true);
+            }
+          }
+
+          // Update page
+          auto page = db.update_wiki_page(
+            page_id, title, slug, content, content_text, icon, cover_image_file_id, user_id);
+
+          auto creator = db.find_user_by_id(page.created_by);
+          page.created_by_username = creator ? creator->username : "";
+          auto editor = db.find_user_by_id(user_id);
+          page.last_edited_by_username = editor ? editor->username : "";
+
+          auto resp_body = page_to_json(page).dump();
+          loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_body);
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
+        }
+      });
+    });
+  });
+
+  // Delete page (soft-delete)
+  app.del("/api/spaces/:id/wiki/pages/:pageId", [this](auto* res, auto* req) {
+    auto token = extract_bearer_token(req);
+    std::string space_id(req->getParameter(0));
+    std::string page_id(req->getParameter(1));
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  page_id = std::move(page_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
 
       auto page = db.find_wiki_page(page_id);
       if (!page || page->space_id != space_id || page->is_deleted) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Page not found"})");
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Page not found"})");
+        });
         return;
       }
 
-      try {
-        auto j = json::parse(body);
-        std::string new_parent_id = j.value("parent_id", "");
+      // Owner of the page can delete with edit permission, otherwise need owner
+      if (page->created_by == user_id) {
+        if (!require_page_permission(res, aborted, space_id, page_id, user_id, "edit")) return;
+      } else {
+        if (!require_page_permission(res, aborted, space_id, page_id, user_id, "owner")) return;
+      }
 
-        db.move_wiki_page(page_id, new_parent_id);
-
-        auto updated = db.find_wiki_page(page_id);
+      db.soft_delete_wiki_page(page_id);
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
         res->writeHeader("Content-Type", "application/json")
           ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(page_to_json(updated ? *updated : *page).dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+          ->end(R"({"ok":true})");
+      });
     });
-    res->onAborted([]() {});
+  });
+
+  // Move page to new parent
+  app.put("/api/spaces/:id/wiki/pages/:pageId/move", [this](auto* res, auto* req) {
+    auto token = extract_bearer_token(req);
+    std::string space_id(req->getParameter(0));
+    std::string page_id(req->getParameter(1));
+    std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this,
+                 res,
+                 aborted,
+                 token = std::move(token),
+                 space_id = std::move(space_id),
+                 page_id = std::move(page_id),
+                 body = std::move(body)](std::string_view data, bool last) mutable {
+      body.append(data);
+      if (!last) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    body = std::move(body),
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    page_id = std::move(page_id)]() {
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
+        }
+        auto user_id = *user_id_opt;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_page_permission(res, aborted, space_id, page_id, user_id, "edit")) return;
+
+        auto page = db.find_wiki_page(page_id);
+        if (!page || page->space_id != space_id || page->is_deleted) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Page not found"})");
+          });
+          return;
+        }
+
+        try {
+          auto j = json::parse(body);
+          std::string new_parent_id = j.value("parent_id", "");
+
+          db.move_wiki_page(page_id, new_parent_id);
+
+          auto updated = db.find_wiki_page(page_id);
+          auto resp_body = page_to_json(updated ? *updated : *page).dump();
+          loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_body);
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
+        }
+      });
+    });
   });
 
   // Reorder pages within folder
   app.post("/api/spaces/:id/wiki/pages/reorder", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter("id"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_permission(res, space_id, user_id, "edit")) return;
-
-      try {
-        auto j = json::parse(body);
-        auto positions = j.at("positions").get<std::vector<json>>();
-        std::vector<std::pair<std::string, int>> page_positions;
-        for (const auto& pos : positions) {
-          page_positions.emplace_back(
-            pos.at("id").get<std::string>(), pos.at("position").get<int>());
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    body = std::move(body),
+                    token = std::move(token),
+                    space_id = std::move(space_id)]() {
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
         }
-        db.reorder_wiki_pages(page_positions);
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"ok":true})");
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+        auto user_id = *user_id_opt;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_permission(res, aborted, space_id, user_id, "edit")) return;
+
+        try {
+          auto j = json::parse(body);
+          auto positions = j.at("positions").get<std::vector<json>>();
+          std::vector<std::pair<std::string, int>> page_positions;
+          for (const auto& pos : positions) {
+            page_positions.emplace_back(
+              pos.at("id").get<std::string>(), pos.at("position").get<int>());
+          }
+          db.reorder_wiki_pages(page_positions);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"ok":true})");
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
+        }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // --- Versions ---
 
   // List version history
   app.get("/api/spaces/:id/wiki/pages/:pageId/versions", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string page_id(req->getParameter(1));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_page_permission(res, space_id, page_id, user_id, "view")) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  page_id = std::move(page_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_page_permission(res, aborted, space_id, page_id, user_id, "view")) return;
 
-    auto page = db.find_wiki_page(page_id);
-    if (!page || page->space_id != space_id || page->is_deleted) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"Page not found"})");
-      return;
-    }
+      auto page = db.find_wiki_page(page_id);
+      if (!page || page->space_id != space_id || page->is_deleted) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Page not found"})");
+        });
+        return;
+      }
 
-    auto versions = db.list_wiki_page_versions(page_id);
-    json arr = json::array();
-    for (const auto& v : versions) arr.push_back(version_to_json(v));
+      auto versions = db.list_wiki_page_versions(page_id);
+      json arr = json::array();
+      for (const auto& v : versions) arr.push_back(version_to_json(v));
 
-    json resp = {{"versions", arr}};
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      json resp = {{"versions", arr}};
+      auto body = resp.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
   // Get specific version
   app.get("/api/spaces/:id/wiki/pages/:pageId/versions/:versionId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string page_id(req->getParameter(1));
     std::string version_id(req->getParameter(2));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_page_permission(res, space_id, page_id, user_id, "view")) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  page_id = std::move(page_id),
+                  version_id = std::move(version_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_page_permission(res, aborted, space_id, page_id, user_id, "view")) return;
 
-    auto page = db.find_wiki_page(page_id);
-    if (!page || page->space_id != space_id || page->is_deleted) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"Page not found"})");
-      return;
-    }
+      auto page = db.find_wiki_page(page_id);
+      if (!page || page->space_id != space_id || page->is_deleted) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Page not found"})");
+        });
+        return;
+      }
 
-    auto version = db.get_wiki_page_version(version_id);
-    if (!version || version->page_id != page_id) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"Version not found"})");
-      return;
-    }
+      auto version = db.get_wiki_page_version(version_id);
+      if (!version || version->page_id != page_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Version not found"})");
+        });
+        return;
+      }
 
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(version_to_json(*version).dump());
+      auto body = version_to_json(*version).dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
   // Revert to version
   app.post(
     "/api/spaces/:id/wiki/pages/:pageId/versions/:versionId/revert", [this](auto* res, auto* req) {
-      auto user_id_copy = get_user_id(res, req);
+      auto token = extract_bearer_token(req);
       std::string space_id(req->getParameter(0));
       std::string page_id(req->getParameter(1));
       std::string version_id(req->getParameter(2));
       std::string body;
+      auto aborted = std::make_shared<bool>(false);
+      res->onAborted([aborted]() { *aborted = true; });
       res->onData([this,
                    res,
-                   user_id = std::move(user_id_copy),
+                   aborted,
+                   token = std::move(token),
                    space_id = std::move(space_id),
                    page_id = std::move(page_id),
                    version_id = std::move(version_id),
                    body = std::move(body)](std::string_view data, bool last) mutable {
         body.append(data);
         if (!last) return;
-        if (user_id.empty()) return;
-        if (!check_space_access(res, space_id, user_id)) return;
-        if (!require_page_permission(res, space_id, page_id, user_id, "edit")) return;
+        pool_.submit([this,
+                      res,
+                      aborted,
+                      body = std::move(body),
+                      token = std::move(token),
+                      space_id = std::move(space_id),
+                      page_id = std::move(page_id),
+                      version_id = std::move(version_id)]() {
+          auto user_id_opt = db.validate_session(token);
+          if (!user_id_opt) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Unauthorized"})");
+            });
+            return;
+          }
+          auto user_id = *user_id_opt;
+          if (!check_space_access(res, aborted, space_id, user_id)) return;
+          if (!require_page_permission(res, aborted, space_id, page_id, user_id, "edit")) return;
 
-        auto page = db.find_wiki_page(page_id);
-        if (!page || page->space_id != space_id || page->is_deleted) {
-          res->writeStatus("404")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Page not found"})");
-          return;
-        }
+          auto page = db.find_wiki_page(page_id);
+          if (!page || page->space_id != space_id || page->is_deleted) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("404")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Page not found"})");
+            });
+            return;
+          }
 
-        auto version = db.get_wiki_page_version(version_id);
-        if (!version || version->page_id != page_id) {
-          res->writeStatus("404")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Version not found"})");
-          return;
-        }
+          auto version = db.get_wiki_page_version(version_id);
+          if (!version || version->page_id != page_id) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("404")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Version not found"})");
+            });
+            return;
+          }
 
-        try {
-          // Create a new version with the current content
-          db.create_wiki_page_version(
-            page_id, page->title, page->content, page->content_text, user_id);
+          try {
+            // Create a new version with the current content
+            db.create_wiki_page_version(
+              page_id, page->title, page->content, page->content_text, user_id);
 
-          // Update page with the version's content
-          auto updated = db.update_wiki_page(
-            page_id,
-            version->title,
-            page->slug,
-            version->content,
-            version->content_text,
-            page->icon,
-            page->cover_image_file_id,
-            user_id);
+            // Update page with the version's content
+            auto updated = db.update_wiki_page(
+              page_id,
+              version->title,
+              page->slug,
+              version->content,
+              version->content_text,
+              page->icon,
+              page->cover_image_file_id,
+              user_id);
 
-          auto creator = db.find_user_by_id(updated.created_by);
-          updated.created_by_username = creator ? creator->username : "";
-          auto editor = db.find_user_by_id(user_id);
-          updated.last_edited_by_username = editor ? editor->username : "";
+            auto creator = db.find_user_by_id(updated.created_by);
+            updated.created_by_username = creator ? creator->username : "";
+            auto editor = db.find_user_by_id(user_id);
+            updated.last_edited_by_username = editor ? editor->username : "";
 
-          res->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(page_to_json(updated).dump());
-        } catch (const std::exception& e) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(json({{"error", e.what()}}).dump());
-        }
+            auto resp_body = page_to_json(updated).dump();
+            loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+              if (*aborted) return;
+              res->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(resp_body);
+            });
+          } catch (const std::exception& e) {
+            auto err = json({{"error", e.what()}}).dump();
+            loop_->defer([res, aborted, err = std::move(err)]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(err);
+            });
+          }
+        });
       });
-      res->onAborted([]() {});
     });
 
   // --- Page Permissions ---
 
   // List page permissions
   app.get("/api/spaces/:id/wiki/pages/:pageId/permissions", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string page_id(req->getParameter(1));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_page_permission(res, space_id, page_id, user_id, "view")) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  page_id = std::move(page_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_page_permission(res, aborted, space_id, page_id, user_id, "view")) return;
 
-    auto perms = db.get_wiki_page_permissions(page_id);
-    json arr = json::array();
-    for (const auto& p : perms) arr.push_back(page_permission_to_json(p));
+      auto perms = db.get_wiki_page_permissions(page_id);
+      json arr = json::array();
+      for (const auto& p : perms) arr.push_back(page_permission_to_json(p));
 
-    json resp = {
-      {"permissions", arr}, {"my_permission", get_page_access_level(space_id, page_id, user_id)}};
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      json resp = {
+        {"permissions", arr}, {"my_permission", get_page_access_level(space_id, page_id, user_id)}};
+      auto body = resp.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
   // Set page permission
   app.post("/api/spaces/:id/wiki/pages/:pageId/permissions", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string page_id(req->getParameter(1));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  page_id = std::move(page_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_page_permission(res, space_id, page_id, user_id, "owner")) return;
-
-      try {
-        auto j = json::parse(body);
-        std::string target_user_id = j.at("user_id");
-        std::string permission = j.at("permission");
-
-        if (permission != "owner" && permission != "edit" && permission != "view") {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Invalid permission level"})");
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    body = std::move(body),
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    page_id = std::move(page_id)]() {
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
           return;
         }
+        auto user_id = *user_id_opt;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_page_permission(res, aborted, space_id, page_id, user_id, "owner")) return;
 
-        // Personal spaces: only view and edit allowed, not owner
-        {
-          auto space_perm_check = db.find_space_by_id(space_id);
-          if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
+        try {
+          auto j = json::parse(body);
+          std::string target_user_id = j.at("user_id");
+          std::string permission = j.at("permission");
+
+          if (permission != "owner" && permission != "edit" && permission != "view") {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Invalid permission level"})");
+            });
+            return;
+          }
+
+          // Personal spaces: only view and edit allowed, not owner
+          {
+            auto space_perm_check = db.find_space_by_id(space_id);
+            if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("400")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->writeHeader("Access-Control-Allow-Origin", "*")
+                  ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
+              });
+              return;
+            }
+          }
+
+          db.set_wiki_page_permission(page_id, target_user_id, permission, user_id);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"ok":true})");
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
             res->writeStatus("400")
               ->writeHeader("Content-Type", "application/json")
               ->writeHeader("Access-Control-Allow-Origin", "*")
-              ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
-            return;
-          }
+              ->end(err);
+          });
         }
-
-        db.set_wiki_page_permission(page_id, target_user_id, permission, user_id);
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"ok":true})");
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // Remove page permission
   app.del("/api/spaces/:id/wiki/pages/:pageId/permissions/:userId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string page_id(req->getParameter(1));
     std::string target_user_id(req->getParameter(2));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_page_permission(res, space_id, page_id, user_id, "owner")) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  page_id = std::move(page_id),
+                  target_user_id = std::move(target_user_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_page_permission(res, aborted, space_id, page_id, user_id, "owner")) return;
 
-    db.remove_wiki_page_permission(page_id, target_user_id);
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(R"({"ok":true})");
+      db.remove_wiki_page_permission(page_id, target_user_id);
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(R"({"ok":true})");
+      });
+    });
   });
 
   // --- Space-level Wiki Permissions ---
 
   // List space-level wiki permissions
   app.get("/api/spaces/:id/wiki/permissions", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter("id"));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_permission(res, space_id, user_id, "view")) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token), space_id = std::move(space_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_permission(res, aborted, space_id, user_id, "view")) return;
 
-    auto perms = db.get_wiki_permissions(space_id);
-    json arr = json::array();
-    for (const auto& p : perms) arr.push_back(wiki_permission_to_json(p));
+      auto perms = db.get_wiki_permissions(space_id);
+      json arr = json::array();
+      for (const auto& p : perms) arr.push_back(wiki_permission_to_json(p));
 
-    json resp = {{"permissions", arr}, {"my_permission", get_access_level(space_id, user_id)}};
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      json resp = {{"permissions", arr}, {"my_permission", get_access_level(space_id, user_id)}};
+      auto body = resp.dump();
+      loop_->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
   // Set space-level wiki permission
   app.post("/api/spaces/:id/wiki/permissions", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter("id"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_permission(res, space_id, user_id, "owner")) return;
-
-      try {
-        auto j = json::parse(body);
-        std::string target_user_id = j.at("user_id");
-        std::string permission = j.at("permission");
-
-        if (permission != "owner" && permission != "edit" && permission != "view") {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Invalid permission level"})");
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    body = std::move(body),
+                    token = std::move(token),
+                    space_id = std::move(space_id)]() {
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
           return;
         }
+        auto user_id = *user_id_opt;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_permission(res, aborted, space_id, user_id, "owner")) return;
 
-        // Personal spaces: only view and edit allowed, not owner
-        {
-          auto space_perm_check = db.find_space_by_id(space_id);
-          if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
+        try {
+          auto j = json::parse(body);
+          std::string target_user_id = j.at("user_id");
+          std::string permission = j.at("permission");
+
+          if (permission != "owner" && permission != "edit" && permission != "view") {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Invalid permission level"})");
+            });
+            return;
+          }
+
+          // Personal spaces: only view and edit allowed, not owner
+          {
+            auto space_perm_check = db.find_space_by_id(space_id);
+            if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("400")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->writeHeader("Access-Control-Allow-Origin", "*")
+                  ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
+              });
+              return;
+            }
+          }
+
+          db.set_wiki_permission(space_id, target_user_id, permission, user_id);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"ok":true})");
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
             res->writeStatus("400")
               ->writeHeader("Content-Type", "application/json")
               ->writeHeader("Access-Control-Allow-Origin", "*")
-              ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
-            return;
-          }
+              ->end(err);
+          });
         }
-
-        db.set_wiki_permission(space_id, target_user_id, permission, user_id);
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"ok":true})");
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // Remove space-level wiki permission
   app.del("/api/spaces/:id/wiki/permissions/:userId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string target_user_id(req->getParameter(1));
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_permission(res, space_id, user_id, "owner")) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  target_user_id = std::move(target_user_id)]() {
+      auto user_id_opt = db.validate_session(token);
+      if (!user_id_opt) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("401")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Unauthorized"})");
+        });
+        return;
+      }
+      auto user_id = *user_id_opt;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_permission(res, aborted, space_id, user_id, "owner")) return;
 
-    db.remove_wiki_permission(space_id, target_user_id);
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(R"({"ok":true})");
+      db.remove_wiki_permission(space_id, target_user_id);
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(R"({"ok":true})");
+      });
+    });
   });
 
   // --- Chunked upload: init ---
   app.post("/api/spaces/:id/wiki/upload/init", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter("id"));
-
     auto body = std::make_shared<std::string>();
-    res->onData([this, res, body, space_id, user_id](std::string_view data, bool last) {
-      body->append(data);
-      if (!last) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this, res, aborted, body, token = std::move(token), space_id = std::move(space_id)](
+        std::string_view data, bool last) mutable {
+        body->append(data);
+        if (!last) return;
+        pool_.submit(
+          [this, res, aborted, body, token = std::move(token), space_id = std::move(space_id)]() {
+            auto user_id_opt = db.validate_session(token);
+            if (!user_id_opt) {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("401")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->end(R"({"error":"Unauthorized"})");
+              });
+              return;
+            }
+            auto user_id = *user_id_opt;
 
-      try {
-        auto j = json::parse(*body);
-        std::string filename = j.value("filename", "upload");
-        std::string content_type = j.value("content_type", "application/octet-stream");
-        int64_t total_size = j.value("total_size", int64_t(0));
-        int chunk_count = j.value("chunk_count", 0);
-        int64_t chunk_size = j.value("chunk_size", int64_t(0));
+            try {
+              auto j = json::parse(*body);
+              std::string filename = j.value("filename", "upload");
+              std::string content_type = j.value("content_type", "application/octet-stream");
+              int64_t total_size = j.value("total_size", int64_t(0));
+              int chunk_count = j.value("chunk_count", 0);
+              int64_t chunk_size = j.value("chunk_size", int64_t(0));
 
-        if (chunk_count <= 0 || chunk_size <= 0) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Invalid chunk count or size"})");
-          return;
-        }
+              if (chunk_count <= 0 || chunk_size <= 0) {
+                loop_->defer([res, aborted]() {
+                  if (*aborted) return;
+                  res->writeStatus("400")
+                    ->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Invalid chunk count or size"})");
+                });
+                return;
+              }
 
-        if (!check_space_access(res, space_id, user_id)) return;
-        if (!require_permission(res, space_id, user_id, "edit")) return;
+              if (!check_space_access(res, aborted, space_id, user_id)) return;
+              if (!require_permission(res, aborted, space_id, user_id, "edit")) return;
 
-        int64_t max_size = file_access_utils::parse_max_file_size(
-          db.get_setting("max_file_size"), config.max_file_size);
-        if (file_access_utils::exceeds_file_size_limit(max_size, total_size)) {
-          std::string msg = file_access_utils::file_too_large_message(max_size);
-          res->writeStatus("413")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(json{{"error", msg}}.dump());
-          return;
-        }
+              int64_t max_size = file_access_utils::parse_max_file_size(
+                db.get_setting("max_file_size"), config.max_file_size);
+              if (file_access_utils::exceeds_file_size_limit(max_size, total_size)) {
+                std::string msg = file_access_utils::file_too_large_message(max_size);
+                auto err = json{{"error", msg}}.dump();
+                loop_->defer([res, aborted, err = std::move(err)]() {
+                  if (*aborted) return;
+                  res->writeStatus("413")
+                    ->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(err);
+                });
+                return;
+              }
 
-        int64_t max_storage =
-          file_access_utils::parse_max_storage_size(db.get_setting("max_storage_size"));
-        if (
-          max_storage > 0 && file_access_utils::exceeds_storage_limit(
-                               max_storage, db.get_total_file_size(), total_size)) {
-          res->writeStatus("413")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Server storage limit reached"})");
-          return;
-        }
+              int64_t max_storage =
+                file_access_utils::parse_max_storage_size(db.get_setting("max_storage_size"));
+              if (
+                max_storage > 0 && file_access_utils::exceeds_storage_limit(
+                                     max_storage, db.get_total_file_size(), total_size)) {
+                loop_->defer([res, aborted]() {
+                  if (*aborted) return;
+                  res->writeStatus("413")
+                    ->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Server storage limit reached"})");
+                });
+                return;
+              }
 
-        int64_t space_limit = file_access_utils::parse_space_storage_limit(
-          db.get_setting("space_storage_limit_" + space_id));
-        if (
-          space_limit > 0 && file_access_utils::exceeds_storage_limit(
-                               space_limit, db.get_space_storage_used(space_id), total_size)) {
-          res->writeStatus("413")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Space storage limit reached"})");
-          return;
-        }
+              int64_t space_limit = file_access_utils::parse_space_storage_limit(
+                db.get_setting("space_storage_limit_" + space_id));
+              if (
+                space_limit > 0 &&
+                file_access_utils::exceeds_storage_limit(
+                  space_limit, db.get_space_storage_used(space_id), total_size)) {
+                loop_->defer([res, aborted]() {
+                  if (*aborted) return;
+                  res->writeStatus("413")
+                    ->writeHeader("Content-Type", "application/json")
+                    ->writeHeader("Access-Control-Allow-Origin", "*")
+                    ->end(R"({"error":"Space storage limit reached"})");
+                });
+                return;
+              }
 
-        json metadata = {
-          {"filename", filename}, {"content_type", content_type}, {"space_id", space_id}};
-        std::string upload_id =
-          uploads.create_session(user_id, total_size, chunk_count, chunk_size, metadata);
+              json metadata = {
+                {"filename", filename}, {"content_type", content_type}, {"space_id", space_id}};
+              std::string upload_id =
+                uploads.create_session(user_id, total_size, chunk_count, chunk_size, metadata);
 
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json{{"upload_id", upload_id}}.dump());
-      } catch (...) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Invalid request body"})");
-      }
-    });
-    res->onAborted([]() {});
+              auto resp_body = json{{"upload_id", upload_id}}.dump();
+              loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+                if (*aborted) return;
+                res->writeHeader("Content-Type", "application/json")
+                  ->writeHeader("Access-Control-Allow-Origin", "*")
+                  ->end(resp_body);
+              });
+            } catch (...) {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("400")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->writeHeader("Access-Control-Allow-Origin", "*")
+                  ->end(R"({"error":"Invalid request body"})");
+              });
+            }
+          });
+      });
   });
 
   // --- Chunked upload: receive chunk ---
   app.post("/api/spaces/:id/wiki/upload/:uploadId/chunk", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string upload_id(req->getParameter(1));
     std::string index_str(req->getQuery("index"));
     std::string expected_hash(req->getQuery("hash"));
@@ -877,142 +1364,230 @@ void WikiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     } catch (...) {}
 
     auto body = std::make_shared<std::string>();
-    res->onData([this, res, body, upload_id, user_id, index, expected_hash](
-                  std::string_view data, bool last) {
-      body->append(data);
-      if (!last) return;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData(
+      [this,
+       res,
+       aborted,
+       body,
+       token = std::move(token),
+       upload_id = std::move(upload_id),
+       index,
+       expected_hash = std::move(expected_hash)](std::string_view data, bool last) mutable {
+        body->append(data);
+        if (!last) return;
+        pool_.submit([this,
+                      res,
+                      aborted,
+                      body,
+                      token = std::move(token),
+                      upload_id = std::move(upload_id),
+                      index,
+                      expected_hash = std::move(expected_hash)]() {
+          auto user_id_opt = db.validate_session(token);
+          if (!user_id_opt) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("401")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Unauthorized"})");
+            });
+            return;
+          }
+          auto user_id = *user_id_opt;
 
-      auto* session = uploads.get_session(upload_id);
-      if (!session || session->user_id != user_id) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Upload session not found"})");
-        return;
-      }
+          auto* session = uploads.get_session(upload_id);
+          if (!session || session->user_id != user_id) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("404")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Upload session not found"})");
+            });
+            return;
+          }
 
-      auto err = uploads.store_chunk_err(upload_id, index, *body, expected_hash);
-      if (!err.empty()) {
-        if (err == "hash_mismatch") {
-          res->writeStatus("409")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Chunk integrity check failed"})");
-        } else if (err == "invalid_index") {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Invalid chunk index"})");
-        } else {
-          res->writeStatus("500")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Failed to store chunk"})");
-        }
-        return;
-      }
+          auto err = uploads.store_chunk_err(upload_id, index, *body, expected_hash);
+          if (!err.empty()) {
+            if (err == "hash_mismatch") {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("409")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->writeHeader("Access-Control-Allow-Origin", "*")
+                  ->end(R"({"error":"Chunk integrity check failed"})");
+              });
+            } else if (err == "invalid_index") {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("400")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->writeHeader("Access-Control-Allow-Origin", "*")
+                  ->end(R"({"error":"Invalid chunk index"})");
+              });
+            } else {
+              loop_->defer([res, aborted]() {
+                if (*aborted) return;
+                res->writeStatus("500")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->writeHeader("Access-Control-Allow-Origin", "*")
+                  ->end(R"({"error":"Failed to store chunk"})");
+              });
+            }
+            return;
+          }
 
-      res->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"ok":true})");
-    });
-    res->onAborted([]() {});
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"ok":true})");
+          });
+        });
+      });
   });
 
   // --- Chunked upload: complete ---
   app.post("/api/spaces/:id/wiki/upload/:uploadId/complete", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
+    auto token = extract_bearer_token(req);
     std::string space_id(req->getParameter(0));
     std::string upload_id(req->getParameter(1));
-
-    res->onData([this, res, space_id, upload_id, user_id](std::string_view, bool last) {
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    res->onData([this,
+                 res,
+                 aborted,
+                 token = std::move(token),
+                 space_id = std::move(space_id),
+                 upload_id = std::move(upload_id)](std::string_view, bool last) mutable {
       if (!last) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    upload_id = std::move(upload_id)]() {
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+          });
+          return;
+        }
+        auto user_id = *user_id_opt;
 
-      auto* session = uploads.get_session(upload_id);
-      if (!session || session->user_id != user_id) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Upload session not found"})");
-        return;
-      }
+        auto* session = uploads.get_session(upload_id);
+        if (!session || session->user_id != user_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Upload session not found"})");
+          });
+          return;
+        }
 
-      if (!uploads.is_complete(upload_id)) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Not all chunks have been uploaded"})");
-        return;
-      }
+        if (!uploads.is_complete(upload_id)) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Not all chunks have been uploaded"})");
+          });
+          return;
+        }
 
-      if (!check_space_access(res, space_id, user_id)) {
-        uploads.remove_session(upload_id);
-        return;
-      }
-
-      if (!require_permission(res, space_id, user_id, "edit")) {
-        uploads.remove_session(upload_id);
-        return;
-      }
-
-      try {
-        std::string filename = session->metadata.value("filename", "upload");
-        std::string content_type =
-          session->metadata.value("content_type", "application/octet-stream");
-
-        std::string disk_file_id = format_utils::random_hex(32);
-        std::string dest_path = config.upload_dir + "/" + disk_file_id;
-
-        int64_t assembled_size = uploads.assemble(upload_id, dest_path);
-        if (assembled_size < 0) {
-          res->writeStatus("500")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Failed to assemble file"})");
+        if (!check_space_access(res, aborted, space_id, user_id)) {
           uploads.remove_session(upload_id);
           return;
         }
 
-        if (assembled_size != session->total_size) {
-          std::filesystem::remove(dest_path);
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Assembled file size does not match expected size"})");
+        if (!require_permission(res, aborted, space_id, user_id, "edit")) {
           uploads.remove_session(upload_id);
           return;
         }
 
-        // Create space_file with unique name (hidden via tool_source)
-        std::string unique_name = disk_file_id + "_" + filename;
-        auto file = db.create_space_file(
-          space_id, "", unique_name, disk_file_id, assembled_size, content_type, user_id);
+        try {
+          std::string filename = session->metadata.value("filename", "upload");
+          std::string content_type =
+            session->metadata.value("content_type", "application/octet-stream");
 
-        // Mark as wiki file
-        db.set_space_file_tool_source(file.id, "wiki");
+          std::string disk_file_id = format_utils::random_hex(32);
+          std::string dest_path = config.upload_dir + "/" + disk_file_id;
 
-        uploads.remove_session(upload_id);
+          int64_t assembled_size = uploads.assemble(upload_id, dest_path);
+          if (assembled_size < 0) {
+            uploads.remove_session(upload_id);
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("500")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Failed to assemble file"})");
+            });
+            return;
+          }
 
-        json resp = {{"file_id", file.id}, {"url", "/api/files/" + disk_file_id}};
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(resp.dump());
-      } catch (const pqxx::unique_violation&) {
-        uploads.remove_session(upload_id);
-        res->writeStatus("409")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"A file with this name already exists"})");
-      } catch (const std::exception& e) {
-        uploads.remove_session(upload_id);
-        res->writeStatus("500")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+          if (assembled_size != session->total_size) {
+            std::filesystem::remove(dest_path);
+            uploads.remove_session(upload_id);
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Assembled file size does not match expected size"})");
+            });
+            return;
+          }
+
+          // Create space_file with unique name (hidden via tool_source)
+          std::string unique_name = disk_file_id + "_" + filename;
+          auto file = db.create_space_file(
+            space_id, "", unique_name, disk_file_id, assembled_size, content_type, user_id);
+
+          // Mark as wiki file
+          db.set_space_file_tool_source(file.id, "wiki");
+
+          uploads.remove_session(upload_id);
+
+          json resp = {{"file_id", file.id}, {"url", "/api/files/" + disk_file_id}};
+          auto resp_body = resp.dump();
+          loop_->defer([res, aborted, resp_body = std::move(resp_body)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_body);
+          });
+        } catch (const pqxx::unique_violation&) {
+          uploads.remove_session(upload_id);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("409")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"A file with this name already exists"})");
+          });
+        } catch (const std::exception& e) {
+          uploads.remove_session(upload_id);
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("500")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
+        }
+      });
     });
-    res->onAborted([]() {});
   });
 }
 
@@ -1025,7 +1600,10 @@ std::string WikiHandler<SSL>::get_user_id(uWS::HttpResponse<SSL>* res, uWS::Http
 
 template <bool SSL>
 bool WikiHandler<SSL>::check_space_access(
-  uWS::HttpResponse<SSL>* res, const std::string& space_id, const std::string& user_id) {
+  uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
+  const std::string& space_id,
+  const std::string& user_id) {
   if (db.is_space_member(space_id, user_id)) return true;
   auto user = db.find_user_by_id(user_id);
   if (user && (user->role == "admin" || user->role == "owner")) return true;
@@ -1036,10 +1614,13 @@ bool WikiHandler<SSL>::check_space_access(
     if (db.has_resource_permission_in_space(space_id, user_id, "wiki")) return true;
   }
 
-  res->writeStatus("403")
-    ->writeHeader("Content-Type", "application/json")
-    ->writeHeader("Access-Control-Allow-Origin", "*")
-    ->end(R"({"error":"Not a member of this space"})");
+  loop_->defer([res, aborted]() {
+    if (*aborted) return;
+    res->writeStatus("403")
+      ->writeHeader("Content-Type", "application/json")
+      ->writeHeader("Access-Control-Allow-Origin", "*")
+      ->end(R"({"error":"Not a member of this space"})");
+  });
   return false;
 }
 
@@ -1077,22 +1658,28 @@ std::string WikiHandler<SSL>::get_page_access_level(
 template <bool SSL>
 bool WikiHandler<SSL>::require_permission(
   uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
   const std::string& space_id,
   const std::string& user_id,
   const std::string& required_level) {
   auto level = get_access_level(space_id, user_id);
   if (perm_rank(level) >= perm_rank(required_level)) return true;
 
-  res->writeStatus("403")
-    ->writeHeader("Content-Type", "application/json")
-    ->writeHeader("Access-Control-Allow-Origin", "*")
-    ->end(json({{"error", "Requires " + required_level + " permission"}}).dump());
+  auto err = json({{"error", "Requires " + required_level + " permission"}}).dump();
+  loop_->defer([res, aborted, err = std::move(err)]() {
+    if (*aborted) return;
+    res->writeStatus("403")
+      ->writeHeader("Content-Type", "application/json")
+      ->writeHeader("Access-Control-Allow-Origin", "*")
+      ->end(err);
+  });
   return false;
 }
 
 template <bool SSL>
 bool WikiHandler<SSL>::require_page_permission(
   uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
   const std::string& space_id,
   const std::string& page_id,
   const std::string& user_id,
@@ -1100,10 +1687,14 @@ bool WikiHandler<SSL>::require_page_permission(
   auto level = get_page_access_level(space_id, page_id, user_id);
   if (perm_rank(level) >= perm_rank(required_level)) return true;
 
-  res->writeStatus("403")
-    ->writeHeader("Content-Type", "application/json")
-    ->writeHeader("Access-Control-Allow-Origin", "*")
-    ->end(json({{"error", "Requires " + required_level + " permission"}}).dump());
+  auto err = json({{"error", "Requires " + required_level + " permission"}}).dump();
+  loop_->defer([res, aborted, err = std::move(err)]() {
+    if (*aborted) return;
+    res->writeStatus("403")
+      ->writeHeader("Content-Type", "application/json")
+      ->writeHeader("Access-Control-Allow-Origin", "*")
+      ->end(err);
+  });
   return false;
 }
 

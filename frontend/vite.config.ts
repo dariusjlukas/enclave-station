@@ -43,6 +43,9 @@ export default defineConfig({
     __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   server: {
+    watch: {
+      ignored: ['**/v86-assets/**'],
+    },
     proxy: {
       '/api': `http://localhost:${backendPort}`,
       '/ws': {

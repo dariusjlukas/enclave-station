@@ -741,6 +741,7 @@ export interface AdminSettings {
   personal_spaces_tasks_enabled: boolean;
   personal_spaces_wiki_enabled: boolean;
   personal_spaces_minigames_enabled: boolean;
+  personal_spaces_sandbox_enabled: boolean;
   personal_spaces_storage_limit: number;
   personal_spaces_total_storage_limit: number;
   llm_enabled: boolean;

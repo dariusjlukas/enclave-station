@@ -46,6 +46,7 @@ struct Snapshot {
   std::optional<std::string> personal_spaces_tasks_enabled;
   std::optional<std::string> personal_spaces_wiki_enabled;
   std::optional<std::string> personal_spaces_minigames_enabled;
+  std::optional<std::string> personal_spaces_sandbox_enabled;
   std::optional<std::string> personal_spaces_storage_limit;
   std::optional<std::string> personal_spaces_total_storage_limit;
 

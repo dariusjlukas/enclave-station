@@ -42,6 +42,8 @@ json build_settings_response(const Snapshot& snapshot) {
      parse_bool_setting_or(snapshot.personal_spaces_wiki_enabled, true)},
     {"personal_spaces_minigames_enabled",
      parse_bool_setting_or(snapshot.personal_spaces_minigames_enabled, true)},
+    {"personal_spaces_sandbox_enabled",
+     parse_bool_setting_or(snapshot.personal_spaces_sandbox_enabled, true)},
     {"personal_spaces_storage_limit",
      parse_i64_setting_or(snapshot.personal_spaces_storage_limit, 0)},
     {"personal_spaces_total_storage_limit",
@@ -166,6 +168,10 @@ std::map<std::string, std::string> collect_settings_updates(const json& settings
   if (settings.contains("personal_spaces_minigames_enabled")) {
     updates["personal_spaces_minigames_enabled"] =
       settings.at("personal_spaces_minigames_enabled").get<bool>() ? "true" : "false";
+  }
+  if (settings.contains("personal_spaces_sandbox_enabled")) {
+    updates["personal_spaces_sandbox_enabled"] =
+      settings.at("personal_spaces_sandbox_enabled").get<bool>() ? "true" : "false";
   }
   if (settings.contains("personal_spaces_storage_limit")) {
     int64_t value = settings.at("personal_spaces_storage_limit").get<int64_t>();

@@ -46,6 +46,14 @@ export function SidePanel({
     return <SharedWithMe />;
   }
 
+  if (activeView.type === 'sandbox') {
+    return (
+      <div className='p-3 border-b border-default-100'>
+        <span className='text-sm font-semibold text-foreground'>Sandbox</span>
+      </div>
+    );
+  }
+
   return (
     <SpacePanel
       spaceId={activeView.spaceId}

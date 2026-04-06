@@ -58,552 +58,770 @@ template <bool SSL>
 void CalendarHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List events in date range (with recurrence expansion)
   app.get("/api/spaces/:id/calendar/events", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    std::string space_id(req->getParameter("id"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto range_start = std::string(req->getQuery("start"));
+    auto range_end = std::string(req->getQuery("end"));
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  range_start = std::move(range_start),
+                  range_end = std::move(range_end)]() {
+      auto user_id = get_user_id(res, aborted, token);
+      if (user_id.empty()) return;
 
-    if (!check_space_access(res, space_id, user_id)) return;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
 
-    std::string range_start(req->getQuery("start"));
-    std::string range_end(req->getQuery("end"));
+      if (range_start.empty() || range_end.empty()) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("400")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"start and end query parameters required"})");
+        });
+        return;
+      }
 
-    if (range_start.empty() || range_end.empty()) {
-      res->writeStatus("400")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"start and end query parameters required"})");
-      return;
-    }
+      auto events = db.list_calendar_events(space_id, range_start, range_end);
+      std::string my_perm = get_access_level(space_id, user_id);
 
-    auto events = db.list_calendar_events(space_id, range_start, range_end);
-    std::string my_perm = get_access_level(space_id, user_id);
+      json arr = json::array();
 
-    json arr = json::array();
-
-    for (const auto& e : events) {
-      if (e.rrule.empty()) {
-        // Non-recurring event: return as-is
-        json obj = event_to_json(e);
-        // Include user's RSVP
-        auto rsvp = db.get_user_rsvp(e.id, user_id, "1970-01-01 00:00:00+00");
-        obj["my_rsvp"] = rsvp ? *rsvp : "";
-        obj["occurrence_date"] = nullptr;
-        obj["is_exception"] = false;
-        arr.push_back(obj);
-      } else {
-        // Recurring event: expand RRULE
-        auto rule = recurrence::parse_rrule(e.rrule);
-        auto occurrences = recurrence::expand_rrule(rule, e.start_time, range_start, range_end);
-        auto exceptions = db.get_event_exceptions(e.id);
-
-        long long duration = event_duration_seconds(e.start_time, e.end_time);
-
-        for (const auto& occ_start : occurrences) {
-          // Check if this occurrence has an exception
-          bool is_deleted = false;
-          bool is_exception = false;
+      for (const auto& e : events) {
+        if (e.rrule.empty()) {
+          // Non-recurring event: return as-is
           json obj = event_to_json(e);
+          // Include user's RSVP
+          auto rsvp = db.get_user_rsvp(e.id, user_id, "1970-01-01 00:00:00+00");
+          obj["my_rsvp"] = rsvp ? *rsvp : "";
+          obj["occurrence_date"] = nullptr;
+          obj["is_exception"] = false;
+          arr.push_back(obj);
+        } else {
+          // Recurring event: expand RRULE
+          auto rule = recurrence::parse_rrule(e.rrule);
+          auto occurrences = recurrence::expand_rrule(rule, e.start_time, range_start, range_end);
+          auto exceptions = db.get_event_exceptions(e.id);
 
-          for (const auto& ex : exceptions) {
-            // Match by comparing the occurrence start with the exception's original_date
-            // We need to compare just the date+time portion
-            auto ex_date = recurrence::parse_iso8601(ex.original_date);
-            auto occ_date = recurrence::parse_iso8601(occ_start);
-            if (
-              ex_date.tm_year == occ_date.tm_year && ex_date.tm_mon == occ_date.tm_mon &&
-              ex_date.tm_mday == occ_date.tm_mday && ex_date.tm_hour == occ_date.tm_hour &&
-              ex_date.tm_min == occ_date.tm_min) {
-              if (ex.is_deleted) {
-                is_deleted = true;
+          long long duration = event_duration_seconds(e.start_time, e.end_time);
+
+          for (const auto& occ_start : occurrences) {
+            // Check if this occurrence has an exception
+            bool is_deleted = false;
+            bool is_exception = false;
+            json obj = event_to_json(e);
+
+            for (const auto& ex : exceptions) {
+              auto ex_date = recurrence::parse_iso8601(ex.original_date);
+              auto occ_date = recurrence::parse_iso8601(occ_start);
+              if (
+                ex_date.tm_year == occ_date.tm_year && ex_date.tm_mon == occ_date.tm_mon &&
+                ex_date.tm_mday == occ_date.tm_mday && ex_date.tm_hour == occ_date.tm_hour &&
+                ex_date.tm_min == occ_date.tm_min) {
+                if (ex.is_deleted) {
+                  is_deleted = true;
+                  break;
+                }
+                // Apply overrides
+                is_exception = true;
+                if (!ex.title.empty()) obj["title"] = ex.title;
+                if (!ex.description.empty()) obj["description"] = ex.description;
+                if (!ex.location.empty()) obj["location"] = ex.location;
+                if (!ex.color.empty()) obj["color"] = ex.color;
+                if (!ex.start_time.empty()) obj["start_time"] = ex.start_time;
+                if (!ex.end_time.empty()) obj["end_time"] = ex.end_time;
+                obj["all_day"] = ex.all_day;
                 break;
               }
-              // Apply overrides
-              is_exception = true;
-              if (!ex.title.empty()) obj["title"] = ex.title;
-              if (!ex.description.empty()) obj["description"] = ex.description;
-              if (!ex.location.empty()) obj["location"] = ex.location;
-              if (!ex.color.empty()) obj["color"] = ex.color;
-              if (!ex.start_time.empty()) obj["start_time"] = ex.start_time;
-              if (!ex.end_time.empty()) obj["end_time"] = ex.end_time;
-              obj["all_day"] = ex.all_day;
-              break;
             }
+
+            if (is_deleted) continue;
+
+            if (!is_exception) {
+              // Set the occurrence's start/end based on the expansion
+              obj["start_time"] = occ_start;
+              // Compute end time by adding the original duration
+              auto occ_tm = recurrence::parse_iso8601(occ_start);
+              time_t occ_tt = timegm(&occ_tm);
+              occ_tt += duration;
+              std::tm end_tm{};
+              gmtime_r(&occ_tt, &end_tm);
+              obj["end_time"] = recurrence::format_iso8601(end_tm);
+            }
+
+            obj["occurrence_date"] = occ_start;
+            obj["is_exception"] = is_exception;
+
+            // Include user's RSVP for this occurrence
+            auto rsvp = db.get_user_rsvp(e.id, user_id, occ_start);
+            obj["my_rsvp"] = rsvp ? *rsvp : "";
+
+            arr.push_back(obj);
           }
-
-          if (is_deleted) continue;
-
-          if (!is_exception) {
-            // Set the occurrence's start/end based on the expansion
-            obj["start_time"] = occ_start;
-            // Compute end time by adding the original duration
-            auto occ_tm = recurrence::parse_iso8601(occ_start);
-            time_t occ_tt = timegm(&occ_tm);
-            occ_tt += duration;
-            std::tm end_tm{};
-            gmtime_r(&occ_tt, &end_tm);
-            obj["end_time"] = recurrence::format_iso8601(end_tm);
-          }
-
-          obj["occurrence_date"] = occ_start;
-          obj["is_exception"] = is_exception;
-
-          // Include user's RSVP for this occurrence
-          auto rsvp = db.get_user_rsvp(e.id, user_id, occ_start);
-          obj["my_rsvp"] = rsvp ? *rsvp : "";
-
-          arr.push_back(obj);
         }
       }
-    }
 
-    // Sort by start_time
-    std::sort(arr.begin(), arr.end(), [](const json& a, const json& b) {
-      return a["start_time"].get<std::string>() < b["start_time"].get<std::string>();
+      // Sort by start_time
+      std::sort(arr.begin(), arr.end(), [](const json& a, const json& b) {
+        return a["start_time"].get<std::string>() < b["start_time"].get<std::string>();
+      });
+
+      json resp = {{"events", arr}, {"my_permission", my_perm}};
+      auto resp_str = resp.dump();
+      loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(resp_str);
+      });
     });
-
-    json resp = {{"events", arr}, {"my_permission", my_perm}};
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
   });
 
   // Get single event
   app.get("/api/spaces/:id/calendar/events/:eventId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    std::string space_id(req->getParameter("id"));
-    std::string event_id(req->getParameter("eventId"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto event_id = std::string(req->getParameter("eventId"));
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  event_id = std::move(event_id)]() {
+      auto user_id = get_user_id(res, aborted, token);
+      if (user_id.empty()) return;
 
-    if (!check_space_access(res, space_id, user_id)) return;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
 
-    auto event = db.find_calendar_event(event_id);
-    if (!event || event->space_id != space_id) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"Event not found"})");
-      return;
-    }
+      auto event = db.find_calendar_event(event_id);
+      if (!event || event->space_id != space_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Event not found"})");
+        });
+        return;
+      }
 
-    json resp = event_to_json(*event);
-    auto rsvp = db.get_user_rsvp(event_id, user_id, "1970-01-01 00:00:00+00");
-    resp["my_rsvp"] = rsvp ? *rsvp : "";
-    resp["my_permission"] = get_access_level(space_id, user_id);
+      json resp = event_to_json(*event);
+      auto rsvp = db.get_user_rsvp(event_id, user_id, "1970-01-01 00:00:00+00");
+      resp["my_rsvp"] = rsvp ? *rsvp : "";
+      resp["my_permission"] = get_access_level(space_id, user_id);
 
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      auto resp_str = resp.dump();
+      loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(resp_str);
+      });
+    });
   });
 
   // Create event
   app.post("/api/spaces/:id/calendar/events", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
-    std::string space_id(req->getParameter("id"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    body = std::move(body)]() {
+        auto user_id = get_user_id(res, aborted, token);
+        if (user_id.empty()) return;
 
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_permission(res, space_id, user_id, "edit")) return;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_permission(res, aborted, space_id, user_id, "edit")) return;
 
-      try {
-        auto j = json::parse(body);
-        std::string title = j.at("title");
-        std::string description = j.value("description", "");
-        std::string location = j.value("location", "");
-        std::string color = j.value("color", "blue");
-        std::string start_time = j.at("start_time");
-        std::string end_time = j.at("end_time");
-        bool all_day = j.value("all_day", false);
-        std::string rrule = j.value("rrule", "");
+        try {
+          auto j = json::parse(body);
+          std::string title = j.at("title");
+          std::string description = j.value("description", "");
+          std::string location = j.value("location", "");
+          std::string color = j.value("color", "blue");
+          std::string start_time = j.at("start_time");
+          std::string end_time = j.at("end_time");
+          bool all_day = j.value("all_day", false);
+          std::string rrule = j.value("rrule", "");
 
-        if (title.empty() || title.length() > 255) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"json({"error":"Title is required (max 255 characters)"})json");
-          return;
+          if (title.empty() || title.length() > 255) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"json({"error":"Title is required (max 255 characters)"})json");
+            });
+            return;
+          }
+
+          auto event = db.create_calendar_event(
+            space_id,
+            title,
+            description,
+            location,
+            color,
+            start_time,
+            end_time,
+            all_day,
+            rrule,
+            user_id);
+          auto creator = db.find_user_by_id(user_id);
+          event.created_by_username = creator ? creator->username : "";
+          json resp = event_to_json(event);
+          resp["my_rsvp"] = "";
+          auto resp_str = resp.dump();
+          loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_str);
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
         }
-
-        auto event = db.create_calendar_event(
-          space_id,
-          title,
-          description,
-          location,
-          color,
-          start_time,
-          end_time,
-          all_day,
-          rrule,
-          user_id);
-        auto creator = db.find_user_by_id(user_id);
-        event.created_by_username = creator ? creator->username : "";
-        json resp = event_to_json(event);
-        resp["my_rsvp"] = "";
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(resp.dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // Update event
   app.put("/api/spaces/:id/calendar/events/:eventId", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
-    std::string space_id(req->getParameter("id"));
-    std::string event_id(req->getParameter("eventId"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto event_id = std::string(req->getParameter("eventId"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  event_id = std::move(event_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    event_id = std::move(event_id),
+                    body = std::move(body)]() {
+        auto user_id = get_user_id(res, aborted, token);
+        if (user_id.empty()) return;
 
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_permission(res, space_id, user_id, "edit")) return;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_permission(res, aborted, space_id, user_id, "edit")) return;
 
-      auto existing = db.find_calendar_event(event_id);
-      if (!existing || existing->space_id != space_id) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Event not found"})");
-        return;
-      }
-
-      try {
-        auto j = json::parse(body);
-        std::string title = j.value("title", existing->title);
-        std::string description = j.value("description", existing->description);
-        std::string location = j.value("location", existing->location);
-        std::string color = j.value("color", existing->color);
-        std::string start_time = j.value("start_time", existing->start_time);
-        std::string end_time = j.value("end_time", existing->end_time);
-        bool all_day = j.value("all_day", existing->all_day);
-        std::string rrule = j.value("rrule", existing->rrule);
-
-        if (title.empty() || title.length() > 255) {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"json({"error":"Title is required (max 255 characters)"})json");
+        auto existing = db.find_calendar_event(event_id);
+        if (!existing || existing->space_id != space_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Event not found"})");
+          });
           return;
         }
 
-        auto event = db.update_calendar_event(
-          event_id, title, description, location, color, start_time, end_time, all_day, rrule);
-        auto creator = db.find_user_by_id(event.created_by);
-        event.created_by_username = creator ? creator->username : "";
-        json resp = event_to_json(event);
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(resp.dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+        try {
+          auto j = json::parse(body);
+          std::string title = j.value("title", existing->title);
+          std::string description = j.value("description", existing->description);
+          std::string location = j.value("location", existing->location);
+          std::string color = j.value("color", existing->color);
+          std::string start_time = j.value("start_time", existing->start_time);
+          std::string end_time = j.value("end_time", existing->end_time);
+          bool all_day = j.value("all_day", existing->all_day);
+          std::string rrule = j.value("rrule", existing->rrule);
+
+          if (title.empty() || title.length() > 255) {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"json({"error":"Title is required (max 255 characters)"})json");
+            });
+            return;
+          }
+
+          auto event = db.update_calendar_event(
+            event_id, title, description, location, color, start_time, end_time, all_day, rrule);
+          auto creator = db.find_user_by_id(event.created_by);
+          event.created_by_username = creator ? creator->username : "";
+          json resp = event_to_json(event);
+          auto resp_str = resp.dump();
+          loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_str);
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
+        }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // Delete event
   app.del("/api/spaces/:id/calendar/events/:eventId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    std::string space_id(req->getParameter("id"));
-    std::string event_id(req->getParameter("eventId"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto event_id = std::string(req->getParameter("eventId"));
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  event_id = std::move(event_id)]() {
+      auto user_id = get_user_id(res, aborted, token);
+      if (user_id.empty()) return;
 
-    if (!check_space_access(res, space_id, user_id)) return;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
 
-    auto event = db.find_calendar_event(event_id);
-    if (!event || event->space_id != space_id) {
-      res->writeStatus("404")
-        ->writeHeader("Content-Type", "application/json")
-        ->writeHeader("Access-Control-Allow-Origin", "*")
-        ->end(R"({"error":"Event not found"})");
-      return;
-    }
+      auto event = db.find_calendar_event(event_id);
+      if (!event || event->space_id != space_id) {
+        loop_->defer([res, aborted]() {
+          if (*aborted) return;
+          res->writeStatus("404")
+            ->writeHeader("Content-Type", "application/json")
+            ->writeHeader("Access-Control-Allow-Origin", "*")
+            ->end(R"({"error":"Event not found"})");
+        });
+        return;
+      }
 
-    // Creator can delete their own events; otherwise need owner permission
-    if (event->created_by != user_id) {
-      if (!require_permission(res, space_id, user_id, "owner")) return;
-    }
+      // Creator can delete their own events; otherwise need owner permission
+      if (event->created_by != user_id) {
+        if (!require_permission(res, aborted, space_id, user_id, "owner")) return;
+      }
 
-    db.delete_calendar_event(event_id);
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(R"({"ok":true})");
+      db.delete_calendar_event(event_id);
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(R"({"ok":true})");
+      });
+    });
   });
 
   // Create/update exception (edit or delete single occurrence of recurring event)
   app.post("/api/spaces/:id/calendar/events/:eventId/exception", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
-    std::string space_id(req->getParameter("id"));
-    std::string event_id(req->getParameter("eventId"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto event_id = std::string(req->getParameter("eventId"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  event_id = std::move(event_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    event_id = std::move(event_id),
+                    body = std::move(body)]() {
+        auto user_id = get_user_id(res, aborted, token);
+        if (user_id.empty()) return;
 
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_permission(res, space_id, user_id, "edit")) return;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_permission(res, aborted, space_id, user_id, "edit")) return;
 
-      auto event = db.find_calendar_event(event_id);
-      if (!event || event->space_id != space_id) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Event not found"})");
-        return;
-      }
+        auto event = db.find_calendar_event(event_id);
+        if (!event || event->space_id != space_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Event not found"})");
+          });
+          return;
+        }
 
-      if (event->rrule.empty()) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Event is not recurring"})");
-        return;
-      }
+        if (event->rrule.empty()) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Event is not recurring"})");
+          });
+          return;
+        }
 
-      try {
-        auto j = json::parse(body);
-        std::string original_date = j.at("original_date");
-        bool is_deleted = j.value("is_deleted", false);
-        std::string title = j.value("title", "");
-        std::string description = j.value("description", "");
-        std::string location = j.value("location", "");
-        std::string color = j.value("color", "");
-        std::string start_time = j.value("start_time", "");
-        std::string end_time = j.value("end_time", "");
-        bool all_day = j.value("all_day", false);
+        try {
+          auto j = json::parse(body);
+          std::string original_date = j.at("original_date");
+          bool is_deleted = j.value("is_deleted", false);
+          std::string title = j.value("title", "");
+          std::string description = j.value("description", "");
+          std::string location = j.value("location", "");
+          std::string color = j.value("color", "");
+          std::string start_time = j.value("start_time", "");
+          std::string end_time = j.value("end_time", "");
+          bool all_day = j.value("all_day", false);
 
-        auto ex = db.create_event_exception(
-          event_id,
-          original_date,
-          is_deleted,
-          title,
-          description,
-          location,
-          color,
-          start_time,
-          end_time,
-          all_day);
-        json resp = {
-          {"id", ex.id},
-          {"event_id", ex.event_id},
-          {"original_date", ex.original_date},
-          {"is_deleted", ex.is_deleted}};
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(resp.dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+          auto ex = db.create_event_exception(
+            event_id,
+            original_date,
+            is_deleted,
+            title,
+            description,
+            location,
+            color,
+            start_time,
+            end_time,
+            all_day);
+          json resp = {
+            {"id", ex.id},
+            {"event_id", ex.event_id},
+            {"original_date", ex.original_date},
+            {"is_deleted", ex.is_deleted}};
+          auto resp_str = resp.dump();
+          loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_str);
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
+        }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // Set RSVP
   app.post("/api/spaces/:id/calendar/events/:eventId/rsvp", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
-    std::string space_id(req->getParameter("id"));
-    std::string event_id(req->getParameter("eventId"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto event_id = std::string(req->getParameter("eventId"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  event_id = std::move(event_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    event_id = std::move(event_id),
+                    body = std::move(body)]() {
+        auto user_id = get_user_id(res, aborted, token);
+        if (user_id.empty()) return;
 
-      if (!check_space_access(res, space_id, user_id)) return;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
 
-      auto event = db.find_calendar_event(event_id);
-      if (!event || event->space_id != space_id) {
-        res->writeStatus("404")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"error":"Event not found"})");
-        return;
-      }
-
-      try {
-        auto j = json::parse(body);
-        std::string status = j.at("status");
-        std::string occurrence_date = j.value("occurrence_date", "1970-01-01 00:00:00+00");
-
-        if (status != "yes" && status != "no" && status != "maybe") {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Status must be yes, no, or maybe"})");
+        auto event = db.find_calendar_event(event_id);
+        if (!event || event->space_id != space_id) {
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeStatus("404")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"error":"Event not found"})");
+          });
           return;
         }
 
-        db.set_event_rsvp(event_id, user_id, occurrence_date, status);
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"status", status}}).dump());
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+        try {
+          auto j = json::parse(body);
+          std::string status = j.at("status");
+          std::string occurrence_date = j.value("occurrence_date", "1970-01-01 00:00:00+00");
+
+          if (status != "yes" && status != "no" && status != "maybe") {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Status must be yes, no, or maybe"})");
+            });
+            return;
+          }
+
+          db.set_event_rsvp(event_id, user_id, occurrence_date, status);
+          auto resp_str = json({{"status", status}}).dump();
+          loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(resp_str);
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
+        }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // Get RSVPs for an event
   app.get("/api/spaces/:id/calendar/events/:eventId/rsvps", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    std::string space_id(req->getParameter("id"));
-    std::string event_id(req->getParameter("eventId"));
-    std::string occurrence_date(req->getQuery("date"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto event_id = std::string(req->getParameter("eventId"));
+    auto occurrence_date = std::string(req->getQuery("date"));
     if (occurrence_date.empty()) occurrence_date = "1970-01-01 00:00:00+00";
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  event_id = std::move(event_id),
+                  occurrence_date = std::move(occurrence_date)]() {
+      auto user_id = get_user_id(res, aborted, token);
+      if (user_id.empty()) return;
 
-    if (!check_space_access(res, space_id, user_id)) return;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
 
-    auto rsvps = db.get_event_rsvps(event_id, occurrence_date);
+      auto rsvps = db.get_event_rsvps(event_id, occurrence_date);
 
-    json arr = json::array();
-    for (const auto& r : rsvps) arr.push_back(rsvp_to_json(r));
+      json arr = json::array();
+      for (const auto& r : rsvps) arr.push_back(rsvp_to_json(r));
 
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(json({{"rsvps", arr}}).dump());
+      auto resp_str = json({{"rsvps", arr}}).dump();
+      loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(resp_str);
+      });
+    });
   });
 
   // List calendar permissions
   app.get("/api/spaces/:id/calendar/permissions", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    std::string space_id(req->getParameter("id"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this, res, aborted, token = std::move(token), space_id = std::move(space_id)]() {
+      auto user_id = get_user_id(res, aborted, token);
+      if (user_id.empty()) return;
 
-    if (!check_space_access(res, space_id, user_id)) return;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
 
-    auto perms = db.get_calendar_permissions(space_id);
-    json arr = json::array();
-    for (const auto& p : perms) arr.push_back(permission_to_json(p));
+      auto perms = db.get_calendar_permissions(space_id);
+      json arr = json::array();
+      for (const auto& p : perms) arr.push_back(permission_to_json(p));
 
-    std::string my_perm = get_access_level(space_id, user_id);
+      std::string my_perm = get_access_level(space_id, user_id);
 
-    json resp = {{"permissions", arr}, {"my_permission", my_perm}};
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      json resp = {{"permissions", arr}, {"my_permission", my_perm}};
+      auto resp_str = resp.dump();
+      loop_->defer([res, aborted, resp_str = std::move(resp_str)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(resp_str);
+      });
+    });
   });
 
   // Set calendar permission
   app.post("/api/spaces/:id/calendar/permissions", [this](auto* res, auto* req) {
-    auto user_id_copy = get_user_id(res, req);
-    std::string space_id(req->getParameter("id"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
     std::string body;
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
     res->onData([this,
                  res,
-                 user_id = std::move(user_id_copy),
+                 aborted,
+                 token = std::move(token),
                  space_id = std::move(space_id),
                  body = std::move(body)](std::string_view data, bool last) mutable {
       body.append(data);
       if (!last) return;
-      if (user_id.empty()) return;
+      pool_.submit([this,
+                    res,
+                    aborted,
+                    token = std::move(token),
+                    space_id = std::move(space_id),
+                    body = std::move(body)]() {
+        auto user_id = get_user_id(res, aborted, token);
+        if (user_id.empty()) return;
 
-      if (!check_space_access(res, space_id, user_id)) return;
-      if (!require_permission(res, space_id, user_id, "owner")) return;
+        if (!check_space_access(res, aborted, space_id, user_id)) return;
+        if (!require_permission(res, aborted, space_id, user_id, "owner")) return;
 
-      try {
-        auto j = json::parse(body);
-        std::string target_user_id = j.at("user_id");
-        std::string permission = j.at("permission");
+        try {
+          auto j = json::parse(body);
+          std::string target_user_id = j.at("user_id");
+          std::string permission = j.at("permission");
 
-        if (permission != "owner" && permission != "edit" && permission != "view") {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Permission must be owner, edit, or view"})");
-          return;
+          if (permission != "owner" && permission != "edit" && permission != "view") {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Permission must be owner, edit, or view"})");
+            });
+            return;
+          }
+
+          // Personal spaces: only view and edit allowed, not owner
+          auto space_perm_check = db.find_space_by_id(space_id);
+          if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
+            loop_->defer([res, aborted]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->writeHeader("Access-Control-Allow-Origin", "*")
+                ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
+            });
+            return;
+          }
+
+          db.set_calendar_permission(space_id, target_user_id, permission, user_id);
+          loop_->defer([res, aborted]() {
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(R"({"ok":true})");
+          });
+        } catch (const std::exception& e) {
+          auto err = json({{"error", e.what()}}).dump();
+          loop_->defer([res, aborted, err = std::move(err)]() {
+            if (*aborted) return;
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->writeHeader("Access-Control-Allow-Origin", "*")
+              ->end(err);
+          });
         }
-
-        // Personal spaces: only view and edit allowed, not owner
-        auto space_perm_check = db.find_space_by_id(space_id);
-        if (space_perm_check && space_perm_check->is_personal && permission == "owner") {
-          res->writeStatus("400")
-            ->writeHeader("Content-Type", "application/json")
-            ->writeHeader("Access-Control-Allow-Origin", "*")
-            ->end(R"({"error":"Cannot assign owner permission in a personal space"})");
-          return;
-        }
-
-        db.set_calendar_permission(space_id, target_user_id, permission, user_id);
-        res->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(R"({"ok":true})");
-      } catch (const std::exception& e) {
-        res->writeStatus("400")
-          ->writeHeader("Content-Type", "application/json")
-          ->writeHeader("Access-Control-Allow-Origin", "*")
-          ->end(json({{"error", e.what()}}).dump());
-      }
+      });
     });
-    res->onAborted([]() {});
   });
 
   // Remove calendar permission
   app.del("/api/spaces/:id/calendar/permissions/:userId", [this](auto* res, auto* req) {
-    std::string user_id = get_user_id(res, req);
-    if (user_id.empty()) return;
-    std::string space_id(req->getParameter("id"));
-    std::string target_user_id(req->getParameter("userId"));
+    auto token = extract_bearer_token(req);
+    auto space_id = std::string(req->getParameter("id"));
+    auto target_user_id = std::string(req->getParameter("userId"));
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool_.submit([this,
+                  res,
+                  aborted,
+                  token = std::move(token),
+                  space_id = std::move(space_id),
+                  target_user_id = std::move(target_user_id)]() {
+      auto user_id = get_user_id(res, aborted, token);
+      if (user_id.empty()) return;
 
-    if (!check_space_access(res, space_id, user_id)) return;
-    if (!require_permission(res, space_id, user_id, "owner")) return;
+      if (!check_space_access(res, aborted, space_id, user_id)) return;
+      if (!require_permission(res, aborted, space_id, user_id, "owner")) return;
 
-    db.remove_calendar_permission(space_id, target_user_id);
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(R"({"ok":true})");
+      db.remove_calendar_permission(space_id, target_user_id);
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(R"({"ok":true})");
+      });
+    });
   });
 }
 
 template <bool SSL>
-std::string CalendarHandler<SSL>::get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
-  return validate_session_or_401(res, req, db);
+std::string CalendarHandler<SSL>::get_user_id(
+  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& token) {
+  auto user_id = db.validate_session(token);
+  if (!user_id) {
+    loop_->defer([res, aborted]() {
+      if (*aborted) return;
+      res->writeStatus("401")
+        ->writeHeader("Content-Type", "application/json")
+        ->end(R"({"error":"Unauthorized"})");
+    });
+    return "";
+  }
+  return *user_id;
 }
 
 template <bool SSL>
 bool CalendarHandler<SSL>::check_space_access(
-  uWS::HttpResponse<SSL>* res, const std::string& space_id, const std::string& user_id) {
+  uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
+  const std::string& space_id,
+  const std::string& user_id) {
   if (db.is_space_member(space_id, user_id)) return true;
   auto user = db.find_user_by_id(user_id);
   if (user && (user->role == "admin" || user->role == "owner")) return true;
@@ -614,10 +832,13 @@ bool CalendarHandler<SSL>::check_space_access(
     if (db.has_resource_permission_in_space(space_id, user_id, "calendar")) return true;
   }
 
-  res->writeStatus("403")
-    ->writeHeader("Content-Type", "application/json")
-    ->writeHeader("Access-Control-Allow-Origin", "*")
-    ->end(R"({"error":"Not a member of this space"})");
+  loop_->defer([res, aborted]() {
+    if (*aborted) return;
+    res->writeStatus("403")
+      ->writeHeader("Content-Type", "application/json")
+      ->writeHeader("Access-Control-Allow-Origin", "*")
+      ->end(R"({"error":"Not a member of this space"})");
+  });
   return false;
 }
 
@@ -644,16 +865,21 @@ std::string CalendarHandler<SSL>::get_access_level(
 template <bool SSL>
 bool CalendarHandler<SSL>::require_permission(
   uWS::HttpResponse<SSL>* res,
+  std::shared_ptr<bool> aborted,
   const std::string& space_id,
   const std::string& user_id,
   const std::string& required_level) {
   auto level = get_access_level(space_id, user_id);
   if (perm_rank(level) >= perm_rank(required_level)) return true;
 
-  res->writeStatus("403")
-    ->writeHeader("Content-Type", "application/json")
-    ->writeHeader("Access-Control-Allow-Origin", "*")
-    ->end(json({{"error", "Requires " + required_level + " permission"}}).dump());
+  auto err = json({{"error", "Requires " + required_level + " permission"}}).dump();
+  loop_->defer([res, aborted, err = std::move(err)]() {
+    if (*aborted) return;
+    res->writeStatus("403")
+      ->writeHeader("Content-Type", "application/json")
+      ->writeHeader("Access-Control-Allow-Origin", "*")
+      ->end(err);
+  });
   return false;
 }
 

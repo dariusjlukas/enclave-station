@@ -162,6 +162,8 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
     useState(true);
   const [personalSpacesMinigamesEnabled, setPersonalSpacesMinigamesEnabled] =
     useState(true);
+  const [personalSpacesSandboxEnabled, setPersonalSpacesSandboxEnabled] =
+    useState(true);
   const [personalSpacesStorageValue, setPersonalSpacesStorageValue] =
     useState('0');
   const [personalSpacesStorageUnit, setPersonalSpacesStorageUnit] =
@@ -254,6 +256,7 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
         personalSpacesTasksEnabled,
         personalSpacesWikiEnabled,
         personalSpacesMinigamesEnabled,
+        personalSpacesSandboxEnabled,
         personalSpacesStorageValue,
         personalSpacesStorageUnit,
         personalSpacesTotalStorageValue,
@@ -414,6 +417,7 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
     setPersonalSpacesTasksEnabled(data.personal_spaces_tasks_enabled);
     setPersonalSpacesWikiEnabled(data.personal_spaces_wiki_enabled);
     setPersonalSpacesMinigamesEnabled(data.personal_spaces_minigames_enabled);
+    setPersonalSpacesSandboxEnabled(data.personal_spaces_sandbox_enabled);
     if (data.personal_spaces_storage_limit > 0) {
       const ps = toHumanUnit(data.personal_spaces_storage_limit);
       setPersonalSpacesStorageValue(String(ps.value));
@@ -483,6 +487,7 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       personal_spaces_tasks_enabled: personalSpacesTasksEnabled,
       personal_spaces_wiki_enabled: personalSpacesWikiEnabled,
       personal_spaces_minigames_enabled: personalSpacesMinigamesEnabled,
+      personal_spaces_sandbox_enabled: personalSpacesSandboxEnabled,
       personal_spaces_storage_limit: Math.round(personalSpacesStorageBytes),
       personal_spaces_total_storage_limit: Math.round(
         personalSpacesTotalStorageBytes,
@@ -1155,6 +1160,14 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
                     <Switch
                       isSelected={personalSpacesMinigamesEnabled}
                       onValueChange={setPersonalSpacesMinigamesEnabled}
+                      size='sm'
+                    />
+                  </div>
+                  <div className='flex items-center justify-between'>
+                    <span className='text-sm text-foreground'>Sandbox</span>
+                    <Switch
+                      isSelected={personalSpacesSandboxEnabled}
+                      onValueChange={setPersonalSpacesSandboxEnabled}
                       size='sm'
                     />
                   </div>

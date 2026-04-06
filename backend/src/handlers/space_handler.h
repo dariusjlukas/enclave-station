@@ -3,11 +3,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <random>
 #include <sstream>
 #include "config.h"
 #include "db/database.h"
+#include "db/db_thread_pool.h"
 #include "handlers/handler_utils.h"
 #include "ws/ws_handler.h"
 
@@ -18,6 +20,8 @@ struct SpaceHandler {
   Database& db;
   WsHandler<SSL>& ws;
   const Config& config;
+  uWS::Loop* loop_;
+  DbThreadPool& pool_;
 
   void register_routes(uWS::TemplatedApp<SSL>& app);
 

@@ -20,34 +20,34 @@ test.beforeEach(async ({ workerConfig }) => {
   admin = await setupAdminUser(workerConfig.apiConfig);
 });
 
-/** Click the personal space button in the icon rail. */
+/** Click the personal space button in the icon rail and ensure the panel is expanded. */
 async function openPersonalSpace(page: import("@playwright/test").Page) {
   const personalSpaceBtn = page
     .locator("aside button")
     .filter({ has: page.locator('svg[data-icon="house-user"]') });
   await expect(personalSpaceBtn).toBeVisible({ timeout: 10_000 });
+
+  const filesBtn = page.locator("aside button", { hasText: "Files" });
+
+  // The personal space may already be auto-selected on login.
+  // Clicking an already-active icon toggles the side panel collapse.
+  // Strategy: click the icon, then check if Files is actionable.
+  // If not, click again to re-expand.
   await personalSpaceBtn.click();
+  // Allow CSS transition to finish
+  await page.waitForTimeout(350);
 
-  // Wait for React to commit the re-render triggered by the click.
-  // This ensures the aside's class (w-72 expanded vs w-16 collapsed)
-  // reflects the new state before we inspect it.
-  await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+  const isClickable = await filesBtn
+    .click({ trial: true, timeout: 1_000 })
+    .then(() => true)
+    .catch(() => false);
 
-  // If the space was already auto-selected, clicking the icon toggled the
-  // side-panel collapse (aside gets class w-16). Click again to re-expand.
-  const isCollapsed = await page.evaluate(
-    () => document.querySelector("aside")?.classList.contains("w-16") ?? true,
-  );
-  if (isCollapsed) {
+  if (!isClickable) {
+    // Panel was collapsed by the click (icon was already selected)
     await personalSpaceBtn.click();
+    await page.waitForTimeout(350);
+    await filesBtn.click({ trial: true, timeout: 5_000 });
   }
-
-  // Wait for the panel to finish its CSS transition and be interactable.
-  // Playwright's click() auto-waits for stability, but we need to ensure
-  // the panel content is clickable before returning.
-  await page
-    .locator("aside button", { hasText: "Files" })
-    .click({ trial: true, timeout: 10_000 });
 }
 
 test.describe("Minigames Tool", () => {

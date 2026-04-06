@@ -54,6 +54,7 @@ set(LIB_SOURCES
     src/auth/totp.cpp
     src/db/connection_pool.cpp
     src/db/database.cpp
+    src/db/db_thread_pool.cpp
     src/handlers/auth_handler.cpp
     src/handlers/auth_payload_utils.cpp
     src/handlers/auth_utils.cpp

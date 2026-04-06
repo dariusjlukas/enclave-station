@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 #include "config.h"
 #include "db/database.h"
+#include "db/db_thread_pool.h"
 #include "handlers/handler_utils.h"
 #include "upload_manager.h"
 
@@ -14,6 +15,8 @@ struct FileHandler {
   const Config& config;
   UploadManager& uploads;
   uWS::TemplatedApp<SSL>* app_ = nullptr;
+  uWS::Loop* loop_ = nullptr;
+  DbThreadPool* pool_ = nullptr;
 
   void register_routes(uWS::TemplatedApp<SSL>& app);
 

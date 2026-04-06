@@ -73,7 +73,8 @@ export type SpaceToolName =
   | 'calendar'
   | 'tasks'
   | 'wiki'
-  | 'minigames';
+  | 'minigames'
+  | 'sandbox';
 
 export interface WikiPage {
   id: string;
@@ -146,7 +147,8 @@ export type SidebarView =
   | { type: 'space'; spaceId: string }
   | { type: 'messages' }
   | { type: 'ai' }
-  | { type: 'sharedWithMe' };
+  | { type: 'sharedWithMe' }
+  | { type: 'sandbox' };
 
 export interface Reaction {
   emoji: string;

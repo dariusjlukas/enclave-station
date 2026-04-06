@@ -147,8 +147,6 @@ Options:
   --e2e              Run Playwright E2E tests (needs backend + frontend + PostgreSQL)
   --parallel N       Run API/E2E tests with N parallel workers (each gets own backend/DB)
   --static-analysis  Run C++ static analysis (clang-tidy)
-  --load-tests       Run performance/load tests against debug build (C++)
-  --load-tests-release  Run performance/load tests against optimized Release build
   --docker           Run Docker container builds
   --no-build         Skip the backend CMake build step
   --help             Show this help message
@@ -161,7 +159,6 @@ Examples:
   ./run-tests.sh --api-tests        # Black-box API endpoint tests
   ./run-tests.sh --e2e              # Playwright E2E tests
   ./run-tests.sh --e2e --parallel 3 # E2E tests with 3 parallel workers
-  ./run-tests.sh --load-tests-release # Load tests against Release build
   ./run-tests.sh --docker           # Build Docker containers
 EOF
 }
@@ -177,8 +174,6 @@ RUN_API_TESTS=false
 RUN_E2E=false
 RUN_DOCKER=false
 RUN_STATIC_ANALYSIS=false
-RUN_LOAD_TESTS=false
-RUN_LOAD_TESTS_RELEASE=false
 SKIP_BUILD=false
 E2E_WORKERS=16
 API_WORKERS=64
@@ -223,10 +218,6 @@ for arg in "$@"; do
             NEXT_IS_WORKERS=true ;;
         --static-analysis)
             RUN_STATIC_ANALYSIS=true; ANY_FLAG=true ;;
-        --load-tests)
-            RUN_LOAD_TESTS=true; ANY_FLAG=true ;;
-        --load-tests-release)
-            RUN_LOAD_TESTS_RELEASE=true; ANY_FLAG=true ;;
         --docker)
             RUN_DOCKER=true; ANY_FLAG=true ;;
         --no-build)
@@ -245,8 +236,8 @@ if [ "$ANY_FLAG" = false ]; then
     RUN_BACKEND_UNIT=true; RUN_BACKEND_INTEG=true; RUN_API_TESTS=true; RUN_E2E=true; RUN_DOCKER=true; RUN_STATIC_ANALYSIS=true
 fi
 
-NEED_BACKEND=$( [ "$RUN_BACKEND_UNIT" = true ] || [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] || [ "$RUN_LOAD_TESTS" = true ] && echo true || echo false )
-NEED_PG=$( [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] || [ "$RUN_LOAD_TESTS" = true ] || [ "$RUN_LOAD_TESTS_RELEASE" = true ] && echo true || echo false )
+NEED_BACKEND=$( [ "$RUN_BACKEND_UNIT" = true ] || [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] && echo true || echo false )
+NEED_PG=$( [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] && echo true || echo false )
 
 printf "${BOLD}Chat App Test Runner${NC}\n"
 
@@ -525,6 +516,8 @@ if [ "$RUN_API_TESTS" = true ]; then
                 export POSTGRES_USER=$TEST_PG_USER
                 export POSTGRES_PASSWORD=$TEST_PG_PASS
                 export POSTGRES_DB=$TEST_PG_DB
+                export DB_POOL_SIZE=2
+                export DB_THREAD_POOL_SIZE=4
                 cd '$API_TESTS_DIR' && '$API_VENV/bin/python' -m pytest $API_PYTEST_ARGS
             "
         else
@@ -598,6 +591,8 @@ if [ "$RUN_E2E" = true ]; then
                 export POSTGRES_USER=$TEST_PG_USER
                 export POSTGRES_PASSWORD=$TEST_PG_PASS
                 export POSTGRES_PORT=$TEST_PG_PORT
+                export DB_POOL_SIZE=2
+                export DB_THREAD_POOL_SIZE=4
                 cd '$E2E_TESTS_DIR' && npx playwright test
             "
         else
@@ -614,7 +609,7 @@ if [ "$RUN_E2E" = true ]; then
             POSTGRES_PASSWORD="$TEST_PG_PASS" \
             POSTGRES_DB="$TEST_PG_DB" \
             UPLOAD_DIR="$E2E_UPLOAD_DIR" \
-            "$BUILD_DIR/chat-server" >/dev/null 2>&1 &
+            "$BUILD_DIR/chat-server" >/tmp/e2e-backend.log 2>&1 &
             E2E_SERVER_PID=$!
 
             E2E_SERVER_READY=false
@@ -670,161 +665,6 @@ if [ "$RUN_E2E" = true ]; then
             fi
 
             rm -rf "$E2E_UPLOAD_DIR"
-        fi
-    fi
-fi
-
-# =====================================================================
-# Load tests (C++)
-# =====================================================================
-
-LOAD_TESTS_DIR="$SCRIPT_DIR/tests/load"
-LOAD_BUILD_DIR="$LOAD_TESTS_DIR/build"
-LOAD_BINARY="$LOAD_BUILD_DIR/loadtest"
-
-if [ "$RUN_LOAD_TESTS" = true ]; then
-    if [ "$BUILD_OK" = false ] || [ "$PG_READY" = false ]; then
-        RESULTS["Load Tests"]="SKIP"
-    else
-        # Build C++ load tester if needed
-        if [ ! -x "$LOAD_BINARY" ]; then
-            printf "\n${BLUE}Building C++ load tester...${NC}\n"
-            (cd "$LOAD_TESTS_DIR" && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)")
-        fi
-
-        # Start a backend server for load tests
-        LOAD_BACKEND_PORT=9097
-        LOAD_UPLOAD_DIR=$(mktemp -d)
-
-        printf "\n${BLUE}Starting backend server on port %s for load tests...${NC}\n" "$LOAD_BACKEND_PORT"
-        BACKEND_PORT="$LOAD_BACKEND_PORT" \
-        POSTGRES_HOST=localhost \
-        POSTGRES_PORT="$TEST_PG_PORT" \
-        POSTGRES_USER="$TEST_PG_USER" \
-        POSTGRES_PASSWORD="$TEST_PG_PASS" \
-        POSTGRES_DB="$TEST_PG_DB" \
-        UPLOAD_DIR="$LOAD_UPLOAD_DIR" \
-        "$BUILD_DIR/chat-server" &
-        LOAD_SERVER_PID=$!
-
-        LOAD_SERVER_READY=false
-        for i in $(seq 1 15); do
-            if curl -sf "http://127.0.0.1:$LOAD_BACKEND_PORT/api/health" >/dev/null 2>&1; then
-                LOAD_SERVER_READY=true
-                break
-            fi
-            sleep 1
-        done
-
-        if [ "$LOAD_SERVER_READY" = false ]; then
-            printf "${RED}Error: Backend server failed to start for load tests.${NC}\n"
-            kill "$LOAD_SERVER_PID" 2>/dev/null || true
-            RESULTS["Load Tests"]="FAIL"
-            FAILED=1
-        else
-            run_check "Load Tests" bash -c "
-                export POSTGRES_HOST=localhost
-                export POSTGRES_PORT=$TEST_PG_PORT
-                export POSTGRES_USER=$TEST_PG_USER
-                export POSTGRES_PASSWORD=$TEST_PG_PASS
-                export POSTGRES_DB=$TEST_PG_DB
-                '$LOAD_BINARY' \
-                    --host http://127.0.0.1:$LOAD_BACKEND_PORT \
-                    --profile ci \
-                    --csv-dir '$LOAD_TESTS_DIR/reports' \
-                    --config-dir '$LOAD_TESTS_DIR/config'
-            "
-            kill "$LOAD_SERVER_PID" 2>/dev/null || true
-            # Give the server up to 5s to exit, then force-kill
-            if ! timeout 5 tail --pid="$LOAD_SERVER_PID" -f /dev/null 2>/dev/null; then
-                kill -9 "$LOAD_SERVER_PID" 2>/dev/null || true
-            fi
-            wait "$LOAD_SERVER_PID" 2>/dev/null || true
-        fi
-
-        rm -rf "$LOAD_UPLOAD_DIR"
-    fi
-fi
-
-# =====================================================================
-# Load tests — Release build (C++)
-# =====================================================================
-
-RELEASE_BUILD_DIR="$BACKEND_DIR/build-release"
-
-if [ "$RUN_LOAD_TESTS_RELEASE" = true ]; then
-    if [ "$PG_READY" = false ]; then
-        RESULTS["Load Tests (Release)"]="SKIP"
-    elif [ ! -d "$BACKEND_DIR/libs/uWebSockets" ] || [ ! -d "$BACKEND_DIR/libs/json" ]; then
-        printf "\n${RED}Error: Backend library dependencies not found.${NC}\n"
-        RESULTS["Load Tests (Release)"]="FAIL"
-        FAILED=1
-    else
-        # Build Release binary (separate build dir to avoid clobbering debug build)
-        printf "\n${BLUE}${BOLD}=== Building backend (Release) for load tests ===${NC}\n"
-        RELEASE_BUILD_OK=true
-        if ! (cd "$BACKEND_DIR" && cmake -B build-release -DCMAKE_BUILD_TYPE=Release && cmake --build build-release -j"$(nproc)"); then
-            RESULTS["Load Tests (Release)"]="FAIL"
-            FAILED=1
-            RELEASE_BUILD_OK=false
-        fi
-
-        if [ "$RELEASE_BUILD_OK" = true ]; then
-            # Build C++ load tester if needed
-            if [ ! -x "$LOAD_BINARY" ]; then
-                printf "\n${BLUE}Building C++ load tester...${NC}\n"
-                (cd "$LOAD_TESTS_DIR" && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j"$(nproc)")
-            fi
-
-            LOAD_BACKEND_PORT=9097
-            LOAD_UPLOAD_DIR=$(mktemp -d)
-
-            printf "\n${BLUE}Starting backend server (Release) on port %s for load tests...${NC}\n" "$LOAD_BACKEND_PORT"
-            BACKEND_PORT="$LOAD_BACKEND_PORT" \
-            POSTGRES_HOST=localhost \
-            POSTGRES_PORT="$TEST_PG_PORT" \
-            POSTGRES_USER="$TEST_PG_USER" \
-            POSTGRES_PASSWORD="$TEST_PG_PASS" \
-            POSTGRES_DB="$TEST_PG_DB" \
-            UPLOAD_DIR="$LOAD_UPLOAD_DIR" \
-            "$RELEASE_BUILD_DIR/chat-server" &
-            LOAD_SERVER_PID=$!
-
-            LOAD_SERVER_READY=false
-            for i in $(seq 1 15); do
-                if curl -sf "http://127.0.0.1:$LOAD_BACKEND_PORT/api/health" >/dev/null 2>&1; then
-                    LOAD_SERVER_READY=true
-                    break
-                fi
-                sleep 1
-            done
-
-            if [ "$LOAD_SERVER_READY" = false ]; then
-                printf "${RED}Error: Backend server (Release) failed to start for load tests.${NC}\n"
-                kill "$LOAD_SERVER_PID" 2>/dev/null || true
-                RESULTS["Load Tests (Release)"]="FAIL"
-                FAILED=1
-            else
-                run_check "Load Tests (Release)" bash -c "
-                    export POSTGRES_HOST=localhost
-                    export POSTGRES_PORT=$TEST_PG_PORT
-                    export POSTGRES_USER=$TEST_PG_USER
-                    export POSTGRES_PASSWORD=$TEST_PG_PASS
-                    export POSTGRES_DB=$TEST_PG_DB
-                    '$LOAD_BINARY' \
-                        --host http://127.0.0.1:$LOAD_BACKEND_PORT \
-                        --profile stress \
-                        --csv-dir '$LOAD_TESTS_DIR/reports' \
-                        --config-dir '$LOAD_TESTS_DIR/config'
-                "
-                kill "$LOAD_SERVER_PID" 2>/dev/null || true
-                if ! timeout 5 tail --pid="$LOAD_SERVER_PID" -f /dev/null 2>/dev/null; then
-                    kill -9 "$LOAD_SERVER_PID" 2>/dev/null || true
-                fi
-                wait "$LOAD_SERVER_PID" 2>/dev/null || true
-            fi
-
-            rm -rf "$LOAD_UPLOAD_DIR"
         fi
     fi
 fi

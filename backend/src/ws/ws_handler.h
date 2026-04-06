@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include "config.h"
 #include "db/database.h"
+#include "db/db_thread_pool.h"
 
 using json = nlohmann::json;
 
@@ -22,8 +23,10 @@ class WsHandler {
 public:
   Database& db;
   const Config& config;
+  uWS::Loop* loop_;
+  DbThreadPool& pool_;
 
-  WsHandler(Database& db, const Config& config);
+  WsHandler(Database& db, const Config& config, uWS::Loop* loop, DbThreadPool& pool);
 
   void register_routes(uWS::TemplatedApp<SSL>& app);
   void close_all();

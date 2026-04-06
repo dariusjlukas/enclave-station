@@ -7,6 +7,7 @@ import {
   faHouseUser,
   faShareNodes,
   faHexagonNodes,
+  faTerminal,
 } from '@fortawesome/free-solid-svg-icons';
 import { useChatStore } from '../../stores/chatStore';
 import type { SidebarView } from '../../types';
@@ -158,6 +159,19 @@ export function IconRail({ onBrowseSpaces }: Props) {
           </button>
         </Tooltip>
       )}
+
+      <Tooltip content='Sandbox' placement='right'>
+        <button
+          onClick={() => handleViewClick({ type: 'sandbox' })}
+          className={`relative w-11 h-11 rounded-xl flex items-center justify-center transition-all bg-content2 text-default-500 cursor-pointer ${
+            isActive({ type: 'sandbox' })
+              ? 'ring-2 ring-primary text-primary'
+              : 'hover:ring-2 hover:ring-default-300 hover:text-foreground'
+          }`}
+        >
+          <FontAwesomeIcon icon={faTerminal} className='text-lg' />
+        </button>
+      </Tooltip>
 
       <div className='w-8 border-t border-default-200 my-1' />
 

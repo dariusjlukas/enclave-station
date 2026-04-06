@@ -370,7 +370,12 @@ export const useChatStore = create<ChatState>((set) => ({
           : state.activeView,
     })),
 
-  setActiveView: (view) => set({ activeView: view, sidePanelCollapsed: false }),
+  setActiveView: (view) =>
+    set((state) => ({
+      activeView: view,
+      activeToolView: view?.type === 'space' ? state.activeToolView : null,
+      sidePanelCollapsed: false,
+    })),
 
   setSidePanelCollapsed: (collapsed) => set({ sidePanelCollapsed: collapsed }),
 

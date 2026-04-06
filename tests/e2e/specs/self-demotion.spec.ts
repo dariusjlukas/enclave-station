@@ -119,7 +119,16 @@ test.describe("Server-level self-demotion", () => {
     // Wait for the popover/dropdown to appear and click the Admin option
     // HeroUI renders the listbox in a portal; use a CSS selector for the option
     const adminOption = page.locator("li").filter({ hasText: /^Admin$/ });
-    await adminOption.click({ timeout: 5_000 });
+    // Wait for the role change PUT request to complete before checking
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/admin/users/") &&
+          resp.url().includes("/role") &&
+          resp.request().method() === "PUT",
+      ),
+      adminOption.click({ timeout: 5_000 }),
+    ]);
 
     // Verify the role changed via the API
     const users = await apiGetAdminUsers(

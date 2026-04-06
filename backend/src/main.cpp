@@ -3,9 +3,13 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <memory>
+#include "ai/tool_registry.h"
 #include "config.h"
 #include "db/database.h"
+#include "db/db_thread_pool.h"
 #include "handlers/admin_handler.h"
+#include "handlers/ai_handler.h"
 #include "handlers/auth_handler.h"
 #include "handlers/calendar_handler.h"
 #include "handlers/channel_handler.h"
@@ -17,8 +21,6 @@
 #include "handlers/task_board_handler.h"
 #include "handlers/user_handler.h"
 #include "handlers/wiki_handler.h"
-#include "ai/tool_registry.h"
-#include "handlers/ai_handler.h"
 #include "upload_manager.h"
 #include "ws/ws_handler.h"
 
@@ -43,24 +45,30 @@ void shutdown_handler(int signum) {
 
 template <bool SSL>
 void run_server(
-  uWS::TemplatedApp<SSL>&& app, Config& config, Database& db, UploadManager& upload_manager) {
-  WsHandler<SSL> ws_handler(db, config);
-  AuthHandler<SSL> auth_handler{db, config, ws_handler};
-  ChannelHandler<SSL> channel_handler{db, ws_handler};
-  SpaceHandler<SSL> space_handler{db, ws_handler, config};
-  UserHandler<SSL> user_handler{db, ws_handler, config};
-  AdminHandler<SSL> admin_handler{db, config, ws_handler};
-  FileHandler<SSL> file_handler{db, config, upload_manager};
-  SearchHandler<SSL> search_handler{db};
-  NotificationHandler<SSL> notification_handler{db};
-  SpaceFileHandler<SSL> space_file_handler{db, config, upload_manager};
-  CalendarHandler<SSL> calendar_handler{db, config};
-  TaskBoardHandler<SSL> task_board_handler{db, config};
-  WikiHandler<SSL> wiki_handler{db, config, upload_manager};
+  uWS::TemplatedApp<SSL>&& app,
+  Config& config,
+  Database& db,
+  UploadManager& upload_manager,
+  DbThreadPool& pool) {
+  auto* loop = uWS::Loop::get();
+
+  WsHandler<SSL> ws_handler(db, config, loop, pool);
+  AuthHandler<SSL> auth_handler{db, config, ws_handler, loop, pool};
+  ChannelHandler<SSL> channel_handler{db, ws_handler, loop, pool};
+  SpaceHandler<SSL> space_handler{db, ws_handler, config, loop, pool};
+  UserHandler<SSL> user_handler{db, ws_handler, config, loop, pool};
+  AdminHandler<SSL> admin_handler{db, config, ws_handler, loop, pool};
+  FileHandler<SSL> file_handler{db, config, upload_manager, nullptr, loop, &pool};
+  SearchHandler<SSL> search_handler{db, loop, pool};
+  NotificationHandler<SSL> notification_handler{db, loop, pool};
+  SpaceFileHandler<SSL> space_file_handler{db, config, upload_manager, loop, pool};
+  CalendarHandler<SSL> calendar_handler{db, config, loop, pool};
+  TaskBoardHandler<SSL> task_board_handler{db, config, loop, pool};
+  WikiHandler<SSL> wiki_handler{db, config, upload_manager, loop, pool};
 
   ToolRegistry tool_registry;
   register_all_tools(tool_registry);
-  AiHandler<SSL> ai_handler{db, config, ws_handler, tool_registry};
+  AiHandler<SSL> ai_handler{db, config, ws_handler, tool_registry, loop, pool};
 
   // CORS preflight
   app.options("/*", [](auto* res, auto* req) {
@@ -88,73 +96,81 @@ void run_server(
   ws_handler.register_routes(app);
 
   // Public config (non-sensitive settings for the frontend)
-  app.get("/api/config", [&config, &db](auto* res, auto* req) {
-    json resp;
-    resp["public_url"] = config.public_url;
+  app.get("/api/config", [&config, &db, loop, &pool](auto* res, auto* req) {
+    auto aborted = std::make_shared<bool>(false);
+    res->onAborted([aborted]() { *aborted = true; });
+    pool.submit([res, aborted, &config, &db, loop]() {
+      json resp;
+      resp["public_url"] = config.public_url;
 
-    resp["auth_methods"] = get_auth_methods(db);
+      resp["auth_methods"] = get_auth_methods(db);
 
-    auto server_name = db.get_setting("server_name");
-    resp["server_name"] = server_name.value_or("EnclaveStation");
+      auto server_name = db.get_setting("server_name");
+      resp["server_name"] = server_name.value_or("EnclaveStation");
 
-    auto server_icon = db.get_setting("server_icon_file_id");
-    resp["server_icon_file_id"] = server_icon.value_or("");
+      auto server_icon = db.get_setting("server_icon_file_id");
+      resp["server_icon_file_id"] = server_icon.value_or("");
 
-    auto server_icon_dark = db.get_setting("server_icon_dark_file_id");
-    resp["server_icon_dark_file_id"] = server_icon_dark.value_or("");
+      auto server_icon_dark = db.get_setting("server_icon_dark_file_id");
+      resp["server_icon_dark_file_id"] = server_icon_dark.value_or("");
 
-    auto reg_mode = db.get_setting("registration_mode");
-    resp["registration_mode"] = reg_mode.value_or("invite");
+      auto reg_mode = db.get_setting("registration_mode");
+      resp["registration_mode"] = reg_mode.value_or("invite");
 
-    auto setup = db.get_setting("setup_completed");
-    resp["setup_completed"] = (setup && *setup == "true");
+      auto setup = db.get_setting("setup_completed");
+      resp["setup_completed"] = (setup && *setup == "true");
 
-    resp["has_users"] = (db.count_users() > 0);
+      resp["has_users"] = (db.count_users() > 0);
 
-    auto uploads = db.get_setting("file_uploads_enabled");
-    resp["file_uploads_enabled"] = (!uploads || *uploads == "true");
+      auto uploads = db.get_setting("file_uploads_enabled");
+      resp["file_uploads_enabled"] = (!uploads || *uploads == "true");
 
-    resp["server_archived"] = db.is_server_archived();
-    resp["server_locked_down"] = db.is_server_locked_down();
+      resp["server_archived"] = db.is_server_archived();
+      resp["server_locked_down"] = db.is_server_locked_down();
 
-    // MFA requirements
-    auto mfa_pw = db.get_setting("mfa_required_password");
-    resp["mfa_required_password"] = (mfa_pw && *mfa_pw == "true");
-    auto mfa_pki = db.get_setting("mfa_required_pki");
-    resp["mfa_required_pki"] = (mfa_pki && *mfa_pki == "true");
-    auto mfa_pk = db.get_setting("mfa_required_passkey");
-    resp["mfa_required_passkey"] = (mfa_pk && *mfa_pk == "true");
+      // MFA requirements
+      auto mfa_pw = db.get_setting("mfa_required_password");
+      resp["mfa_required_password"] = (mfa_pw && *mfa_pw == "true");
+      auto mfa_pki = db.get_setting("mfa_required_pki");
+      resp["mfa_required_pki"] = (mfa_pki && *mfa_pki == "true");
+      auto mfa_pk = db.get_setting("mfa_required_passkey");
+      resp["mfa_required_passkey"] = (mfa_pk && *mfa_pk == "true");
 
-    // Password policy (public so registration form can validate client-side)
-    auto auth_methods = resp["auth_methods"];
-    bool password_enabled = false;
-    for (const auto& m : auth_methods) {
-      if (m.get<std::string>() == "password") {
-        password_enabled = true;
-        break;
+      // Password policy (public so registration form can validate client-side)
+      auto auth_methods = resp["auth_methods"];
+      bool password_enabled = false;
+      for (const auto& m : auth_methods) {
+        if (m.get<std::string>() == "password") {
+          password_enabled = true;
+          break;
+        }
       }
-    }
-    if (password_enabled) {
-      auto get_or = [&db](const std::string& key, const std::string& def) -> std::string {
-        auto v = db.get_setting(key);
-        return v.value_or(def);
-      };
-      resp["password_policy"] = {
-        {"min_length", std::stoi(get_or("password_min_length", "8"))},
-        {"require_uppercase", get_or("password_require_uppercase", "true") == "true"},
-        {"require_lowercase", get_or("password_require_lowercase", "true") == "true"},
-        {"require_number", get_or("password_require_number", "true") == "true"},
-        {"require_special", get_or("password_require_special", "false") == "true"},
-      };
-    }
+      if (password_enabled) {
+        auto get_or = [&db](const std::string& key, const std::string& def) -> std::string {
+          auto v = db.get_setting(key);
+          return v.value_or(def);
+        };
+        resp["password_policy"] = {
+          {"min_length", std::stoi(get_or("password_min_length", "8"))},
+          {"require_uppercase", get_or("password_require_uppercase", "true") == "true"},
+          {"require_lowercase", get_or("password_require_lowercase", "true") == "true"},
+          {"require_number", get_or("password_require_number", "true") == "true"},
+          {"require_special", get_or("password_require_special", "false") == "true"},
+        };
+      }
 
-    // LLM / AI assistant
-    auto llm_enabled = db.get_setting("llm_enabled");
-    resp["llm_enabled"] = (llm_enabled && *llm_enabled == "true");
+      // LLM / AI assistant
+      auto llm_enabled = db.get_setting("llm_enabled");
+      resp["llm_enabled"] = (llm_enabled && *llm_enabled == "true");
 
-    res->writeHeader("Content-Type", "application/json")
-      ->writeHeader("Access-Control-Allow-Origin", "*")
-      ->end(resp.dump());
+      auto body = resp.dump();
+      loop->defer([res, aborted, body = std::move(body)]() {
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")
+          ->writeHeader("Access-Control-Allow-Origin", "*")
+          ->end(body);
+      });
+    });
   });
 
   // Health check
@@ -165,7 +181,7 @@ void run_server(
   });
 
   // Start listening
-  global_loop = uWS::Loop::get();
+  global_loop = loop;
   global_close_connections = [&ws_handler]() { ws_handler.close_all(); };
   app
     .listen(
@@ -203,6 +219,9 @@ int main() {
   // Upload manager for chunked uploads
   UploadManager upload_manager(config.upload_dir);
 
+  // Thread pool for async DB operations
+  DbThreadPool pool(config.db_thread_pool_size);
+
   std::signal(SIGTERM, shutdown_handler);
   std::signal(SIGINT, shutdown_handler);
 
@@ -215,9 +234,10 @@ int main() {
          .cert_file_name = config.ssl_cert_path.c_str()}),
       config,
       db,
-      upload_manager);
+      upload_manager,
+      pool);
   } else {
-    run_server(uWS::App(), config, db, upload_manager);
+    run_server(uWS::App(), config, db, upload_manager, pool);
   }
 
   return 0;
