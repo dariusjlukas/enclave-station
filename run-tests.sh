@@ -95,8 +95,7 @@ print_summary() {
     local order=("Frontend Lint" "Frontend Type Check" "Frontend Format Check"
                  "Frontend Build" "Backend Build" "Backend Static Analysis"
                  "Backend Unit Tests" "Backend Integration Tests"
-                 "API Tests" "E2E Tests" "Load Tests" "Load Tests (Release)"
-                 "Docker Build")
+                 "API Tests" "E2E Tests" "Docker Build")
 
     printf "\n${BOLD}========================================${NC}\n"
     printf "${BOLD}  TEST RESULTS SUMMARY${NC}\n"
