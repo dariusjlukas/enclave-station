@@ -42,8 +42,9 @@ public:
     std::string out;
     // Reserve approximate size
     size_t approx = 0;
-    for (auto& e : entries_)
+    for (auto& e : entries_) {
       approx += 30 + e.name.size() + e.compressed.size() + 46 + e.name.size();
+    }
     approx += 22;
     out.reserve(approx);
 
@@ -56,7 +57,7 @@ public:
     }
 
     // Central directory
-    uint32_t cd_offset = static_cast<uint32_t>(out.size());
+    auto cd_offset = static_cast<uint32_t>(out.size());
     for (size_t i = 0; i < entries_.size(); ++i) {
       write_central_header(out, entries_[i], offsets[i]);
     }

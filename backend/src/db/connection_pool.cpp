@@ -8,7 +8,11 @@ PooledConnection::PooledConnection(ConnectionPool& pool, std::unique_ptr<pqxx::c
 
 PooledConnection::~PooledConnection() {
   if (conn_) {
-    pool_->release(std::move(conn_));
+    try {
+      pool_->release(std::move(conn_));
+    } catch (...) {
+      // Destructors must not throw; a failed release is non-fatal.
+    }
   }
 }
 
@@ -19,7 +23,13 @@ PooledConnection::PooledConnection(PooledConnection&& other) noexcept
 
 PooledConnection& PooledConnection::operator=(PooledConnection&& other) noexcept {
   if (this != &other) {
-    if (conn_) pool_->release(std::move(conn_));
+    if (conn_) {
+      try {
+        pool_->release(std::move(conn_));
+      } catch (...) {
+        // noexcept move-assignment; a failed release is non-fatal.
+      }
+    }
     pool_ = other.pool_;
     conn_ = std::move(other.conn_);
     other.pool_ = nullptr;
@@ -103,7 +113,7 @@ int ConnectionPool::available() const {
 size_t ConnectionPool::size_in_use() const {
   std::lock_guard<std::mutex> lock(mutex_);
   size_t available = connections_.size();
-  size_t total = static_cast<size_t>(pool_size_);
+  auto total = static_cast<size_t>(pool_size_);
   return total >= available ? total - available : 0;
 }
 

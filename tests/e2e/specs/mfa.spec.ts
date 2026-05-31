@@ -55,8 +55,9 @@ test.describe("Password login with MFA (TOTP)", () => {
       page.getByText("Enter the 6-digit code"),
     ).toBeVisible();
 
-    // Enter valid TOTP code — auto-submits on 6th digit
-    const code = generateTotpCode(user.totpSecret!);
+    // Enter valid TOTP code — auto-submits on 6th digit. Use the next step:
+    // setup already consumed the current one, and replayed steps are rejected.
+    const code = generateTotpCode(user.totpSecret!, 1);
     await page.getByLabel("Verification Code").fill(code);
 
     // Should be logged in

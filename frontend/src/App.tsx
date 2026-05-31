@@ -148,6 +148,18 @@ function App() {
   const [authPage, setAuthPage] = useState<AuthPage>(
     urlDeviceToken ? 'add-device' : urlInviteToken ? 'register' : 'login',
   );
+  // After logout (authenticated -> not), return to the login screen instead of
+  // leaving the user on whatever auth sub-page they last visited (e.g. the
+  // register view they used to create their account). Covers session expiry
+  // too, since both paths flip isAuthenticated to false. Implemented as the
+  // React "adjust state during render on value change" pattern rather than an
+  // effect, to avoid a cascading post-commit re-render.
+  const [prevIsAuthenticated, setPrevIsAuthenticated] =
+    useState(isAuthenticated);
+  if (prevIsAuthenticated !== isAuthenticated) {
+    setPrevIsAuthenticated(isAuthenticated);
+    if (!isAuthenticated) setAuthPage('login');
+  }
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showCreateConversation, setShowCreateConversation] = useState(false);
   const [showCreateSpace, setShowCreateSpace] = useState(false);

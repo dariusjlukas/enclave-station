@@ -68,10 +68,11 @@ std::string base64url_encode(const unsigned char* data, size_t len) {
 
   // Convert to base64url: replace + with -, / with _
   for (auto& c : result) {
-    if (c == '+')
+    if (c == '+') {
       c = '-';
-    else if (c == '/')
+    } else if (c == '/') {
       c = '_';
+    }
   }
   // No padding for base64url
   return result;
@@ -106,10 +107,11 @@ struct CborReader {
   CborReader(const std::vector<unsigned char>& v) : data(v.data()), size(v.size()), pos(0) {}
 
   void ensure(size_t n) const {
-    if (pos + n > size)
+    if (pos + n > size) {
       throw std::runtime_error(
         "CBOR: unexpected end of data at pos " + std::to_string(pos) + " need " +
         std::to_string(n));
+    }
   }
 
   uint8_t read_u8() {
@@ -155,9 +157,10 @@ struct CborReader {
     uint8_t b = read_u8();
     uint8_t major = b >> 5;
     uint8_t additional = b & 0x1f;
-    if (major != 2)
+    if (major != 2) {
       throw std::runtime_error(
         "CBOR: expected byte string, got major type " + std::to_string(major));
+    }
     uint64_t len = read_additional(additional);
     ensure(len);
     std::vector<unsigned char> result(data + pos, data + pos + len);
@@ -170,8 +173,9 @@ struct CborReader {
     uint8_t b = read_u8();
     uint8_t major = b >> 5;
     uint8_t additional = b & 0x1f;
-    if (major != 5)
+    if (major != 5) {
       throw std::runtime_error("CBOR: expected map, got major type " + std::to_string(major));
+    }
     return static_cast<size_t>(read_additional(additional));
   }
 

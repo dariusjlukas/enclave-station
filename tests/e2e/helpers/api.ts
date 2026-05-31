@@ -27,7 +27,7 @@ const defaultConfig: ApiConfig = {
 // state-changing requests include a matching X-CSRF-Token header.
 const TEST_CSRF = "e2e-csrf";
 
-function authHeaders(token: string | undefined, stateChanging: boolean): Record<string, string> {
+export function authHeaders(token: string | undefined, stateChanging: boolean): Record<string, string> {
   if (!token) return {};
   const headers: Record<string, string> = {
     Cookie: `session=${token}; csrf=${TEST_CSRF}`,
@@ -613,7 +613,7 @@ export async function apiUploadSpaceFile(
   });
   if (parentId) params.set("parent_id", parentId);
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
+    ...authHeaders(token, true),
   };
   const res = await fetch(
     `${config.apiBase}/api/spaces/${spaceId}/files/upload?${params}`,

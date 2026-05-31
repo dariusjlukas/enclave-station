@@ -1,8 +1,10 @@
 #include "db/database.h"
+#include <openssl/rand.h>
 #include <algorithm>
 #include <iomanip>
-#include <random>
 #include <sstream>
+#include <stdexcept>
+#include <vector>
 #include "logging/logger.h"
 
 Database::Database(const std::string& connection_string, int pool_size)
@@ -11,11 +13,14 @@ Database::Database(const std::string& connection_string, int pool_size)
 }
 
 static std::string random_hex(int bytes) {
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::uniform_int_distribution<> dist(0, 255);
+  std::vector<unsigned char> buf(static_cast<size_t>(bytes));
+  if (RAND_bytes(buf.data(), bytes) != 1) {
+    throw std::runtime_error("RAND_bytes failed in random_hex");
+  }
   std::ostringstream ss;
-  for (int i = 0; i < bytes; i++) ss << std::hex << std::setfill('0') << std::setw(2) << dist(gen);
+  for (unsigned char b : buf) {
+    ss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(b);
+  }
   return ss.str();
 }
 
@@ -398,7 +403,7 @@ Channel Database::create_channel(
       default_join);
   }
 
-  std::string channel_id = r[0][0].as<std::string>();
+  auto channel_id = r[0][0].as<std::string>();
 
   for (const auto& mid : member_ids) {
     std::string member_role = (!is_direct && mid == created_by) ? "admin" : default_role;
@@ -825,7 +830,7 @@ Space Database::create_space(
     is_public,
     default_role,
     created_by);
-  std::string space_id = ins[0][0].as<std::string>();
+  auto space_id = ins[0][0].as<std::string>();
   // Creator is owner
   txn.exec_params(
     "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'owner')",
@@ -1010,7 +1015,7 @@ Space Database::create_personal_space(const std::string& user_id, const std::str
     "VALUES ($1, '', FALSE, 'user', $2, TRUE, $2) RETURNING id",
     space_name,
     user_id);
-  std::string space_id = ins[0][0].as<std::string>();
+  auto space_id = ins[0][0].as<std::string>();
   txn.exec_params(
     "INSERT INTO space_members (space_id, user_id, role) VALUES ($1, $2, 'owner')",
     space_id,
@@ -1034,7 +1039,7 @@ Space Database::create_personal_space(const std::string& user_id, const std::str
   auto limit_row = txn.exec_params(
     "SELECT value FROM server_settings WHERE key = 'personal_spaces_storage_limit'");
   if (!limit_row.empty()) {
-    std::string limit_str = limit_row[0][0].as<std::string>();
+    auto limit_str = limit_row[0][0].as<std::string>();
     int64_t limit = 0;
     try {
       limit = std::stoll(limit_str);
@@ -1315,7 +1320,7 @@ Channel Database::create_conversation(
     created_by,
     name);
 
-  std::string channel_id = r[0][0].as<std::string>();
+  auto channel_id = r[0][0].as<std::string>();
   for (const auto& mid : member_ids) {
     txn.exec_params(
       "INSERT INTO channel_members (channel_id, user_id, role) VALUES ($1, $2, 'write') "
@@ -1595,19 +1600,25 @@ std::optional<Database::FileInfo> Database::get_file_info(const std::string& fil
   pqxx::work txn(conn.get());
   // Check messages table (chat file attachments)
   auto r = txn.exec_params(
-    "SELECT file_name, file_type FROM messages WHERE file_id = $1 LIMIT 1", file_id);
+    "SELECT file_name, file_type, channel_id FROM messages WHERE file_id = $1 LIMIT 1", file_id);
   if (!r.empty()) {
     txn.commit();
-    return FileInfo{r[0][0].as<std::string>(), r[0][1].as<std::string>()};
+    FileInfo info;
+    info.file_name = r[0][0].as<std::string>();
+    info.file_type = r[0][1].as<std::string>();
+    if (!r[0][2].is_null()) info.channel_id = r[0][2].as<std::string>();
+    return info;
   }
   // Check space_files table (space files and wiki media, keyed by disk_file_id)
   auto r2 = txn.exec_params(
-    "SELECT name, mime_type FROM space_files WHERE disk_file_id = $1 LIMIT 1", file_id);
+    "SELECT name, mime_type, space_id FROM space_files WHERE disk_file_id = $1 LIMIT 1", file_id);
   txn.commit();
   if (!r2.empty()) {
-    return FileInfo{
-      r2[0][0].as<std::string>(),
-      r2[0][1].is_null() ? "application/octet-stream" : r2[0][1].as<std::string>()};
+    FileInfo info;
+    info.file_name = r2[0][0].as<std::string>();
+    info.file_type = r2[0][1].is_null() ? "application/octet-stream" : r2[0][1].as<std::string>();
+    if (!r2[0][2].is_null()) info.space_id = r2[0][2].as<std::string>();
+    return info;
   }
   return std::nullopt;
 }
@@ -2370,8 +2381,8 @@ std::optional<std::string> Database::verify_and_consume_recovery_key(const std::
     txn.commit();
     return std::nullopt;
   }
-  std::string id = r[0][0].as<std::string>();
-  std::string user_id = r[0][1].as<std::string>();
+  auto id = r[0][0].as<std::string>();
+  auto user_id = r[0][1].as<std::string>();
   txn.exec_params("UPDATE recovery_keys SET used = true WHERE id = $1", id);
   txn.commit();
   return user_id;
@@ -3791,7 +3802,7 @@ std::vector<std::string> Database::hard_delete_space_file(const std::string& fil
     auto versions =
       txn.exec_params("SELECT disk_file_id FROM space_file_versions WHERE file_id = $1", fid);
     for (const auto& vrow : versions) {
-      std::string did = vrow[0].as<std::string>();
+      auto did = vrow[0].as<std::string>();
       if (!did.empty()) disk_ids.push_back(did);
     }
     // Also get the file's own disk_file_id (for the current version pointer)
@@ -3847,8 +3858,8 @@ std::vector<Database::StorageBreakdownEntry> Database::get_space_storage_breakdo
   const std::map<std::string, std::string> tool_labels = {
     {"files", "Files"}, {"wiki", "Wiki"}, {"calendar", "Calendar"}, {"tasks", "Tasks"}};
   for (const auto& row : tools) {
-    std::string source = row[0].as<std::string>();
-    int64_t used = row[1].as<int64_t>();
+    auto source = row[0].as<std::string>();
+    auto used = row[1].as<int64_t>();
     std::string name = tool_labels.count(source) ? tool_labels.at(source) : source;
     result.push_back({name, "tool", used});
   }
@@ -3864,7 +3875,7 @@ std::vector<Database::StorageBreakdownEntry> Database::get_space_storage_breakdo
     space_id);
   for (const auto& row : channels) {
     std::string name = "#" + row[0].as<std::string>();
-    int64_t used = row[1].as<int64_t>();
+    auto used = row[1].as<int64_t>();
     result.push_back({name, "channel", used});
   }
 

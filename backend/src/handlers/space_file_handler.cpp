@@ -42,7 +42,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List files in a folder (root if no parent_id)
   app.get("/api/spaces/:id/files", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces/:id/files");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -65,7 +64,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       // check_space_access inline
       if (!check_space_access_sync(space_id, user_id)) {
@@ -112,10 +111,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Create folder
-  app.post("/api/spaces/:id/files/folder", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/files/folder", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/files/folder");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -144,7 +142,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         if (!check_space_access_sync(space_id, user_id)) {
           loop_->defer([res, aborted, scope, origin]() {
@@ -249,10 +247,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Upload file
-  app.post("/api/spaces/:id/files/upload", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/files/upload", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/files/upload");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -306,13 +303,14 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         int64_t max_size = file_access_utils::parse_max_file_size(
           db.get_setting("max_file_size"), config.max_file_size);
 
-        if (file_access_utils::exceeds_file_size_limit(
-              max_size, static_cast<int64_t>(body->size()))) {
+        if (
+          file_access_utils::exceeds_file_size_limit(
+            max_size, static_cast<int64_t>(body->size()))) {
           std::string msg = file_access_utils::file_too_large_message(max_size);
           auto err_json = json{{"error", msg}}.dump();
           loop_->defer([res, aborted, scope, err_json = std::move(err_json), origin]() {
@@ -445,7 +443,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           out.write(body->data(), body->size());
           out.close();
 
-          int64_t file_size = static_cast<int64_t>(body->size());
+          auto file_size = static_cast<int64_t>(body->size());
 
           auto file = db.create_space_file(
             space_id, parent_id, filename, disk_file_id, file_size, content_type, user_id);
@@ -482,10 +480,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked upload: init ---
-  app.post("/api/spaces/:id/files/upload/init", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/files/upload/init", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/files/upload/init");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -514,7 +511,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         try {
           auto j = json::parse(*body);
@@ -680,10 +677,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked upload: receive chunk ---
-  app.post("/api/spaces/:id/files/upload/:uploadId/chunk", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/files/upload/:uploadId/chunk", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/spaces/:id/files/upload/:uploadId/chunk");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string upload_id(req->getParameter(1));
@@ -693,7 +689,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     int index = -1;
     try {
       index = std::stoi(index_str);
-    } catch (...) {}
+    } catch (...) { /* non-fatal: parse failed, keep default */
+    }
 
     auto body = std::make_shared<std::string>();
     auto aborted = std::make_shared<bool>(false);
@@ -720,7 +717,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          std::string user_id = *user_id_opt;
+          const std::string& user_id = *user_id_opt;
 
           auto session = uploads.get_session(upload_id);
           if (!session || session->user_id != user_id) {
@@ -770,10 +767,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked upload: complete ---
-  app.post("/api/spaces/:id/files/upload/:uploadId/complete", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/files/upload/:uploadId/complete", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/spaces/:id/files/upload/:uploadId/complete");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -800,7 +796,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          std::string user_id = *user_id_opt;
+          const std::string& user_id = *user_id_opt;
 
           auto session = uploads.get_session(upload_id);
           if (!session || session->user_id != user_id) {
@@ -927,10 +923,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked version upload: init ---
-  app.post("/api/spaces/:spaceId/files/:fileId/versions/init", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:spaceId/files/:fileId/versions/init", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/spaces/:spaceId/files/:fileId/versions/init");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -960,7 +955,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         try {
           auto j = json::parse(*body);
@@ -1105,11 +1100,12 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked version upload: receive chunk ---
-  app.post(
-    "/api/spaces/:spaceId/files/:fileId/versions/:uploadId/chunk", [this](auto* res, auto* req) {
+  post_csrf(
+    app,
+    "/api/spaces/:spaceId/files/:fileId/versions/:uploadId/chunk",
+    [this](auto* res, auto* req) {
       auto scope = std::make_shared<handler_utils::RequestScope>(
         "POST", "/api/spaces/:spaceId/files/:fileId/versions/:uploadId/chunk");
-      handler_utils::set_request_id_header(res, *scope);
       std::string origin(req->getHeader("origin"));
       std::string token = extract_session_token(req);
       std::string upload_id(req->getParameter(2));
@@ -1119,7 +1115,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       int index = -1;
       try {
         index = std::stoi(index_str);
-      } catch (...) {}
+      } catch (...) { /* non-fatal: parse failed, keep default */
+      }
 
       auto body = std::make_shared<std::string>();
       auto aborted = std::make_shared<bool>(false);
@@ -1146,7 +1143,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
               });
               return;
             }
-            std::string user_id = *user_id_opt;
+            const std::string& user_id = *user_id_opt;
 
             auto session = uploads.get_session(upload_id);
             if (!session || session->user_id != user_id) {
@@ -1198,11 +1195,12 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
 
   // --- Chunked version upload: complete ---
-  app.post(
-    "/api/spaces/:spaceId/files/:fileId/versions/:uploadId/complete", [this](auto* res, auto* req) {
+  post_csrf(
+    app,
+    "/api/spaces/:spaceId/files/:fileId/versions/:uploadId/complete",
+    [this](auto* res, auto* req) {
       auto scope = std::make_shared<handler_utils::RequestScope>(
         "POST", "/api/spaces/:spaceId/files/:fileId/versions/:uploadId/complete");
-      handler_utils::set_request_id_header(res, *scope);
       std::string origin(req->getHeader("origin"));
       std::string token = extract_session_token(req);
       std::string space_id(req->getParameter(0));
@@ -1230,7 +1228,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          std::string user_id = *user_id_opt;
+          const std::string& user_id = *user_id_opt;
 
           auto session = uploads.get_session(upload_id);
           if (!session || session->user_id != user_id) {
@@ -1359,7 +1357,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/spaces/:spaceId/files/:fileId", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces/:spaceId/files/:fileId");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -1382,7 +1379,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       if (!check_space_access_sync(space_id, user_id)) {
         loop_->defer([res, aborted, scope, origin]() {
@@ -1436,7 +1433,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/spaces/:spaceId/files/:fileId/download", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "GET", "/api/spaces/:spaceId/files/:fileId/download");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     if (token.empty()) token = std::string(req->getQuery("token"));
@@ -1462,7 +1458,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       if (!check_space_access_sync(space_id, user_id)) {
         loop_->defer([res, aborted, scope, origin]() {
@@ -1530,10 +1526,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Update file/folder (rename, move)
-  app.put("/api/spaces/:spaceId/files/:fileId", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/spaces/:spaceId/files/:fileId", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("PUT", "/api/spaces/:spaceId/files/:fileId");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -1563,7 +1558,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         if (!check_space_access_sync(space_id, user_id)) {
           loop_->defer([res, aborted, scope, origin]() {
@@ -1727,10 +1722,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Delete file/folder -- requires "owner" permission
-  app.del("/api/spaces/:spaceId/files/:fileId", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/spaces/:spaceId/files/:fileId", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("DEL", "/api/spaces/:spaceId/files/:fileId");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -1753,7 +1747,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       if (!check_space_access_sync(space_id, user_id)) {
         loop_->defer([res, aborted, scope, origin]() {
@@ -1812,7 +1806,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Get space storage usage
   app.get("/api/spaces/:id/storage", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces/:id/storage");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -1834,7 +1827,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       if (!check_space_access_sync(space_id, user_id)) {
         loop_->defer([res, aborted, scope, origin]() {
@@ -1854,7 +1847,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       if (limit_str) {
         try {
           limit = std::stoll(*limit_str);
-        } catch (...) {}
+        } catch (...) { /* non-fatal: parse failed, keep default */
+        }
       }
 
       auto breakdown = db.get_space_storage_breakdown(space_id);
@@ -1884,7 +1878,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/spaces/:spaceId/files/:fileId/permissions", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "GET", "/api/spaces/:spaceId/files/:fileId/permissions");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -1907,7 +1900,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       if (!check_space_access_sync(space_id, user_id)) {
         loop_->defer([res, aborted, scope, origin]() {
@@ -1964,10 +1957,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Set permission for a user on a file/folder -- requires "owner" on the file
-  app.put("/api/spaces/:spaceId/files/:fileId/permissions", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/spaces/:spaceId/files/:fileId/permissions", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "PUT", "/api/spaces/:spaceId/files/:fileId/permissions");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -1997,7 +1989,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         if (!check_space_access_sync(space_id, user_id)) {
           loop_->defer([res, aborted, scope, origin]() {
@@ -2110,68 +2102,68 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Remove a specific user's permission on a file
-  app.del("/api/spaces/:spaceId/files/:fileId/permissions/:userId", [this](auto* res, auto* req) {
-    auto scope = std::make_shared<handler_utils::RequestScope>(
-      "DEL", "/api/spaces/:spaceId/files/:fileId/permissions/:userId");
-    handler_utils::set_request_id_header(res, *scope);
-    std::string origin(req->getHeader("origin"));
-    std::string token = extract_session_token(req);
-    std::string space_id(req->getParameter(0));
-    std::string file_id(req->getParameter(1));
-    std::string target_user_id(req->getParameter(2));
+  del_csrf(
+    app, "/api/spaces/:spaceId/files/:fileId/permissions/:userId", [this](auto* res, auto* req) {
+      auto scope = std::make_shared<handler_utils::RequestScope>(
+        "DEL", "/api/spaces/:spaceId/files/:fileId/permissions/:userId");
+      std::string origin(req->getHeader("origin"));
+      std::string token = extract_session_token(req);
+      std::string space_id(req->getParameter(0));
+      std::string file_id(req->getParameter(1));
+      std::string target_user_id(req->getParameter(2));
 
-    auto aborted = std::make_shared<bool>(false);
-    res->onAborted([aborted, origin]() { *aborted = true; });
+      auto aborted = std::make_shared<bool>(false);
+      res->onAborted([aborted, origin]() { *aborted = true; });
 
-    pool_.submit([this, res, aborted, scope, token, space_id, file_id, target_user_id, origin]() {
-      if (*aborted) return;
-
-      auto user_id_opt = db.validate_session(token);
-      if (!user_id_opt) {
-        loop_->defer([res, aborted, scope, origin]() {
-          if (*aborted) return;
-          res->writeStatus("401")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"Unauthorized"})");
-          scope->observe(401);
-        });
-        return;
-      }
-      std::string user_id = *user_id_opt;
-
-      if (!check_space_access_sync(space_id, user_id)) {
-        loop_->defer([res, aborted, scope, origin]() {
-          if (*aborted) return;
-          cors::apply(res, origin);
-          res->writeStatus("403")
-            ->writeHeader("Content-Type", "application/json")
-            ->end(R"({"error":"Not a member of this space"})");
-          scope->observe(403);
-        });
-        return;
-      }
-
-      if (!require_permission_sync(space_id, file_id, user_id, "owner")) {
-        auto err = json({{"error", "Requires owner permission"}}).dump();
-        loop_->defer([res, aborted, scope, err = std::move(err), origin]() {
-          if (*aborted) return;
-          cors::apply(res, origin);
-          res->writeStatus("403")->writeHeader("Content-Type", "application/json")->end(err);
-          scope->observe(403);
-        });
-        return;
-      }
-
-      db.remove_file_permission(file_id, target_user_id);
-
-      loop_->defer([res, aborted, scope, origin]() {
+      pool_.submit([this, res, aborted, scope, token, space_id, file_id, target_user_id, origin]() {
         if (*aborted) return;
-        cors::apply(res, origin);
-        res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-        scope->observe(200);
+
+        auto user_id_opt = db.validate_session(token);
+        if (!user_id_opt) {
+          loop_->defer([res, aborted, scope, origin]() {
+            if (*aborted) return;
+            res->writeStatus("401")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Unauthorized"})");
+            scope->observe(401);
+          });
+          return;
+        }
+        const std::string& user_id = *user_id_opt;
+
+        if (!check_space_access_sync(space_id, user_id)) {
+          loop_->defer([res, aborted, scope, origin]() {
+            if (*aborted) return;
+            cors::apply(res, origin);
+            res->writeStatus("403")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Not a member of this space"})");
+            scope->observe(403);
+          });
+          return;
+        }
+
+        if (!require_permission_sync(space_id, file_id, user_id, "owner")) {
+          auto err = json({{"error", "Requires owner permission"}}).dump();
+          loop_->defer([res, aborted, scope, err = std::move(err), origin]() {
+            if (*aborted) return;
+            cors::apply(res, origin);
+            res->writeStatus("403")->writeHeader("Content-Type", "application/json")->end(err);
+            scope->observe(403);
+          });
+          return;
+        }
+
+        db.remove_file_permission(file_id, target_user_id);
+
+        loop_->defer([res, aborted, scope, origin]() {
+          if (*aborted) return;
+          cors::apply(res, origin);
+          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          scope->observe(200);
+        });
       });
     });
-  });
 
   // --- Version endpoints ---
 
@@ -2179,7 +2171,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/spaces/:spaceId/files/:fileId/versions", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "GET", "/api/spaces/:spaceId/files/:fileId/versions");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -2202,7 +2193,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       if (!check_space_access_sync(space_id, user_id)) {
         loop_->defer([res, aborted, scope, origin]() {
@@ -2248,10 +2239,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Upload new version of a file -- requires "edit" permission
-  app.post("/api/spaces/:spaceId/files/:fileId/versions", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:spaceId/files/:fileId/versions", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/spaces/:spaceId/files/:fileId/versions");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -2281,13 +2271,14 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         int64_t max_size = file_access_utils::parse_max_file_size(
           db.get_setting("max_file_size"), config.max_file_size);
 
-        if (file_access_utils::exceeds_file_size_limit(
-              max_size, static_cast<int64_t>(body->size()))) {
+        if (
+          file_access_utils::exceeds_file_size_limit(
+            max_size, static_cast<int64_t>(body->size()))) {
           std::string msg = file_access_utils::file_too_large_message(max_size);
           auto err_json = json{{"error", msg}}.dump();
           loop_->defer([res, aborted, scope, err_json = std::move(err_json), origin]() {
@@ -2405,7 +2396,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           out.write(body->data(), body->size());
           out.close();
 
-          int64_t file_size = static_cast<int64_t>(body->size());
+          auto file_size = static_cast<int64_t>(body->size());
           std::string mime_type = file->mime_type;
 
           auto version =
@@ -2439,7 +2430,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     [this](auto* res, auto* req) {
       auto scope = std::make_shared<handler_utils::RequestScope>(
         "GET", "/api/spaces/:spaceId/files/:fileId/versions/:versionId/download");
-      handler_utils::set_request_id_header(res, *scope);
       std::string origin(req->getHeader("origin"));
       std::string token = extract_session_token(req);
       if (token.empty()) token = std::string(req->getQuery("token"));
@@ -2465,7 +2455,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         if (!check_space_access_sync(space_id, user_id)) {
           loop_->defer([res, aborted, scope, origin]() {
@@ -2545,11 +2535,12 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
 
   // Revert to a specific version -- requires "edit" permission
-  app.post(
-    "/api/spaces/:spaceId/files/:fileId/versions/:versionId/revert", [this](auto* res, auto* req) {
+  post_csrf(
+    app,
+    "/api/spaces/:spaceId/files/:fileId/versions/:versionId/revert",
+    [this](auto* res, auto* req) {
       auto scope = std::make_shared<handler_utils::RequestScope>(
         "POST", "/api/spaces/:spaceId/files/:fileId/versions/:versionId/revert");
-      handler_utils::set_request_id_header(res, *scope);
       std::string origin(req->getHeader("origin"));
       std::string token = extract_session_token(req);
       std::string space_id(req->getParameter(0));
@@ -2577,7 +2568,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          std::string user_id = *user_id_opt;
+          const std::string& user_id = *user_id_opt;
 
           if (!check_space_access_sync(space_id, user_id)) {
             loop_->defer([res, aborted, scope, origin]() {
@@ -2648,7 +2639,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/admin/storage", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/admin/storage");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
 
@@ -2714,7 +2704,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/spaces/:spaceId/files/:folderId/download-zip", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "GET", "/api/spaces/:spaceId/files/:folderId/download-zip");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     if (token.empty()) token = std::string(req->getQuery("token"));
@@ -2739,7 +2728,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      std::string user_id = *user_id_opt;
+      const std::string& user_id = *user_id_opt;
 
       if (!check_space_access_sync(space_id, user_id)) {
         loop_->defer([res, aborted, scope, origin]() {

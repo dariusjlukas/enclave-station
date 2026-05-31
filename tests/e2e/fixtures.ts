@@ -14,6 +14,8 @@
 
 import { test as base } from "@playwright/test";
 import { execSync, spawn, type ChildProcess } from "child_process";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
 import type { ApiConfig } from "./helpers/api.js";
 import type { DbConfig } from "./helpers/db.js";
 
@@ -31,6 +33,23 @@ const BASE_FRONTEND_PORT = parseInt(
 const BUILD_DIR = process.env.TEST_BUILD_DIR ?? "";
 const FRONTEND_DIR = process.env.TEST_FRONTEND_DIR ?? "";
 const WORKERS = parseInt(process.env.TEST_WORKERS ?? "8");
+
+// The backend's run_migrations() is now a no-op — schema is managed by sqitch.
+// A freshly CREATEd per-worker DB is therefore empty, so we apply the canonical
+// sqitch deploy script before the backend connects (mirrors tests/api/conftest.py).
+const SCHEMA_SQL = readFileSync(
+  fileURLToPath(
+    new URL("../../sqitch/deploy/0001-initial-schema.sql", import.meta.url),
+  ),
+  "utf-8",
+);
+
+function applySchema(dbName: string): void {
+  execSync(
+    `docker exec -i ${PG_CONTAINER} psql -v ON_ERROR_STOP=1 -U "${PG_USER}" -d ${dbName}`,
+    { input: SCHEMA_SQL, stdio: ["pipe", "ignore", "pipe"] },
+  );
+}
 
 export interface WorkerConfig {
   apiConfig: ApiConfig;
@@ -113,6 +132,8 @@ export const test = base.extend<
         `docker exec ${PG_CONTAINER} psql -U "${PG_USER}" -c "CREATE DATABASE ${dbName} OWNER ${PG_USER}"`,
         { stdio: "pipe" },
       );
+      // Load the schema (backend no longer self-migrates; sqitch owns it).
+      applySchema(dbName);
 
       // Start backend server
       const uploadDir = execSync("mktemp -d", { encoding: "utf-8" }).trim();

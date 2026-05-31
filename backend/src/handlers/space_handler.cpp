@@ -13,7 +13,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List user's spaces
   app.get("/api/spaces", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string limit_str(req->getQuery("limit"));
@@ -44,7 +43,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto user = db.find_user_by_id(user_id);
       bool is_server_admin = user && (user->role == "admin" || user->role == "owner");
@@ -145,7 +144,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Browse public spaces
   app.get("/api/spaces/public", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces/public");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string search(req->getQuery("search"));
@@ -164,7 +162,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         auto spaces = db.list_public_spaces(user_id, search);
         json arr = json::array();
@@ -192,9 +190,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Create space
-  app.post("/api/spaces", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string body;
@@ -218,7 +215,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
               });
               return;
             }
-            auto user_id = *user_id_opt;
+            const auto& user_id = *user_id_opt;
 
             try {
               // Only server admins/owners can create spaces
@@ -297,7 +294,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Get space details
   app.get("/api/spaces/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces/:id");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -321,7 +317,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto sp = db.find_space_by_id(space_id);
       if (!sp) {
@@ -349,8 +345,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       }
       std::string my_role = db.get_space_member_role(space_id, user_id);
       auto user = db.find_user_by_id(user_id);
-      if (my_role.empty() && user && (user->role == "admin" || user->role == "owner"))
+      if (my_role.empty() && user && (user->role == "admin" || user->role == "owner")) {
         my_role = "admin";
+      }
 
       json resp = {
         {"id", sp->id},
@@ -378,9 +375,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Update space settings
-  app.put("/api/spaces/:id", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/spaces/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/spaces/:id");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -416,7 +412,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_space_member_role(space_id, user_id);
         auto user = db.find_user_by_id(user_id);
@@ -502,9 +498,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Join public space
-  app.post("/api/spaces/:id/join", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/join", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/join");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -528,7 +523,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto sp = db.find_space_by_id(space_id);
       if (!sp) {
@@ -607,23 +602,25 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     space_id,
                     channel_notifies = std::move(channel_notifies),
                     origin]() {
-        ws.subscribe_user_to_space(user_id, space_id);
-        for (const auto& cn : channel_notifies) {
-          ws.subscribe_user_to_channel(user_id, cn.ch_id);
-          ws.send_to_user(user_id, cn.notify_str);
+        try {
+          ws.subscribe_user_to_space(user_id, space_id);
+          for (const auto& cn : channel_notifies) {
+            ws.subscribe_user_to_channel(user_id, cn.ch_id);
+            ws.send_to_user(user_id, cn.notify_str);
+          }
+          if (*aborted) return;
+          cors::apply(res, origin);
+          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          scope->observe(200);
+        } catch (...) { /* non-fatal: deferred response write */
         }
-        if (*aborted) return;
-        cors::apply(res, origin);
-        res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-        scope->observe(200);
       });
     });
   });
 
   // Add member to space
-  app.post("/api/spaces/:id/members", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/members", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/members");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -784,10 +781,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Remove member from space
-  app.del("/api/spaces/:id/members/:userId", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/spaces/:id/members/:userId", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("DEL", "/api/spaces/:id/members/:userId");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -813,7 +809,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       std::string role = db.get_space_member_role(space_id, user_id);
       auto user = db.find_user_by_id(user_id);
@@ -872,10 +868,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Change space member role
-  app.put("/api/spaces/:id/members/:userId", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/spaces/:id/members/:userId", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("PUT", "/api/spaces/:id/members/:userId");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter(0));
@@ -914,7 +909,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_space_member_role(space_id, user_id);
         auto user = db.find_user_by_id(user_id);
@@ -949,10 +944,11 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
           // Actor's effective rank is the higher of space role and server role
           int actor_space_rank = space_role_rank(role);
-          if (user && user->role == "owner")
+          if (user && user->role == "owner") {
             actor_space_rank = space_role_rank("owner");
-          else if (user && user->role == "admin" && actor_space_rank < space_role_rank("admin"))
+          } else if (user && user->role == "admin" && actor_space_rank < space_role_rank("admin")) {
             actor_space_rank = space_role_rank("admin");
+          }
 
           std::string current_role = db.get_space_member_role(space_id, target_user_id);
           int target_rank = space_role_rank(current_role);
@@ -1047,7 +1043,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List channels in space
   app.get("/api/spaces/:id/channels", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces/:id/channels");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -1071,7 +1066,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto channels = db.list_user_channels(user_id);
       json arr = json::array();
@@ -1114,9 +1109,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Create channel in space
-  app.post("/api/spaces/:id/channels", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/channels", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/channels");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -1318,9 +1312,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Leave space
-  app.post("/api/spaces/:id/leave", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/leave", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/leave");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -1440,9 +1433,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Archive space
-  app.post("/api/spaces/:id/archive", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/archive", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/archive");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -1466,7 +1458,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       // Block archiving personal spaces
       auto space_archive_check = db.find_space_by_id(space_id);
@@ -1516,9 +1508,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Unarchive space
-  app.post("/api/spaces/:id/unarchive", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/unarchive", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/unarchive");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -1542,7 +1533,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       std::string role = db.get_space_member_role(space_id, user_id);
       auto user = db.find_user_by_id(user_id);
@@ -1595,7 +1586,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List conversations
   app.get("/api/conversations", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/conversations");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
@@ -1612,7 +1602,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto conversations = db.list_user_conversations(user_id);
       json arr = json::array();
@@ -1648,9 +1638,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Create conversation
-  app.post("/api/conversations", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/conversations", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/conversations");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string body;
@@ -1786,10 +1775,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Add member to conversation
-  app.post("/api/conversations/:id/members", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/conversations/:id/members", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/conversations/:id/members");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
@@ -1825,7 +1813,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         // Must be a member of the conversation
         if (!db.is_channel_member(channel_id, user_id)) {
@@ -1917,9 +1905,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Rename conversation
-  app.put("/api/conversations/:id", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/conversations/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/conversations/:id");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
@@ -1955,7 +1942,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         if (!db.is_channel_member(channel_id, user_id)) {
           loop_->defer([res, aborted, scope, origin]() {
@@ -2007,7 +1994,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List pending space invites for the authenticated user
   app.get("/api/space-invites", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/space-invites");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
@@ -2024,7 +2010,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto invites = db.list_pending_space_invites(user_id);
       json arr = json::array();
@@ -2048,10 +2034,9 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Accept space invite
-  app.post("/api/space-invites/:id/accept", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/space-invites/:id/accept", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/space-invites/:id/accept");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string invite_id(req->getParameter("id"));
@@ -2075,7 +2060,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto invite = db.get_space_invite(invite_id);
       if (!invite || invite->invited_user_id != user_id) {
@@ -2196,30 +2181,32 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     space_notify_str = std::move(space_notify_str),
                     space_update_str = std::move(space_update_str),
                     origin]() {
-        ws.subscribe_user_to_space(user_id, invite_space_id);
-        for (const auto& cn : channel_notifies) {
-          ws.subscribe_user_to_channel(user_id, cn.ch_id);
-          ws.send_to_user(user_id, cn.notify_str);
+        try {
+          ws.subscribe_user_to_space(user_id, invite_space_id);
+          for (const auto& cn : channel_notifies) {
+            ws.subscribe_user_to_channel(user_id, cn.ch_id);
+            ws.send_to_user(user_id, cn.notify_str);
+          }
+          if (!space_notify_str.empty()) {
+            ws.send_to_user(user_id, space_notify_str);
+          }
+          if (!space_update_str.empty()) {
+            ws.broadcast_to_space(invite_space_id, space_update_str);
+          }
+          if (*aborted) return;
+          cors::apply(res, origin);
+          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+          scope->observe(200);
+        } catch (...) { /* non-fatal: deferred response write */
         }
-        if (!space_notify_str.empty()) {
-          ws.send_to_user(user_id, space_notify_str);
-        }
-        if (!space_update_str.empty()) {
-          ws.broadcast_to_space(invite_space_id, space_update_str);
-        }
-        if (*aborted) return;
-        cors::apply(res, origin);
-        res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-        scope->observe(200);
       });
     });
   });
 
   // Decline space invite
-  app.post("/api/space-invites/:id/decline", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/space-invites/:id/decline", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/space-invites/:id/decline");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string invite_id(req->getParameter("id"));
@@ -2243,7 +2230,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto invite = db.get_space_invite(invite_id);
       if (!invite || invite->invited_user_id != user_id) {
@@ -2280,9 +2267,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Space avatar upload ---
-  app.post("/api/spaces/:id/avatar", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/spaces/:id/avatar", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/spaces/:id/avatar");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -2297,7 +2283,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     }
 
     auto body = std::make_shared<std::string>();
-    int64_t max_size = 50 * 1024 * 1024;
+    int64_t max_size = 50LL * 1024 * 1024;
 
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted, origin]() { *aborted = true; });
@@ -2343,7 +2329,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         // Check permissions
         std::string role = db.get_space_member_role(space_id, user_id);
@@ -2433,9 +2419,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Space avatar delete ---
-  app.del("/api/spaces/:id/avatar", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/spaces/:id/avatar", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/spaces/:id/avatar");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -2459,7 +2444,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       // Check permissions
       std::string role = db.get_space_member_role(space_id, user_id);
@@ -2532,7 +2517,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Get enabled tools for a space
   app.get("/api/spaces/:id/tools", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/spaces/:id/tools");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id(req->getParameter("id"));
@@ -2556,7 +2540,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       if (!db.is_space_member(space_id, user_id)) {
         auto user = db.find_user_by_id(user_id);
@@ -2585,9 +2569,8 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Enable/disable a tool for a space (admin/owner only)
-  app.put("/api/spaces/:id/tools", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/spaces/:id/tools", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/spaces/:id/tools");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     std::string space_id_copy(req->getParameter("id"));
@@ -2623,7 +2606,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         try {
           auto space_tools_check = db.find_space_by_id(space_id);
@@ -2724,7 +2707,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Shared with me -- resources from personal spaces shared with current user
   app.get("/api/shared-with-me", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/shared-with-me");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
@@ -2741,7 +2723,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto resources = db.list_shared_with_user(user_id);
       json files = json::array();
@@ -2756,14 +2738,15 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           {"space_id", r.space_id},
           {"owner_username", r.owner_username},
           {"permission", r.permission}};
-        if (r.resource_type == "file")
+        if (r.resource_type == "file") {
           files.push_back(item);
-        else if (r.resource_type == "wiki_page")
+        } else if (r.resource_type == "wiki_page") {
           wiki_pages.push_back(item);
-        else if (r.resource_type == "calendar")
+        } else if (r.resource_type == "calendar") {
           calendar_events.push_back(item);
-        else if (r.resource_type == "task_board")
+        } else if (r.resource_type == "task_board") {
           task_boards.push_back(item);
+        }
       }
 
       json resp = {

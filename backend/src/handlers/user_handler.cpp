@@ -8,7 +8,6 @@ template <bool SSL>
 void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/users", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/users");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -51,7 +50,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/users/me", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/users/me");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -102,9 +100,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.put("/api/users/me", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/users/me", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/users/me");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -190,9 +187,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/users/me", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/users/me", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/users/me");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -229,9 +225,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   // --- Avatar upload ---
 
-  app.post("/api/users/me/avatar", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/avatar", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/avatar");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string content_type(req->getQuery("content_type"));
     if (content_type.empty()) content_type = "image/png";
@@ -245,7 +240,7 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     }
 
     auto body = std::make_shared<std::string>();
-    int64_t max_size = 50 * 1024 * 1024;  // 50MB max for avatars
+    int64_t max_size = 50LL * 1024 * 1024;  // 50MB max for avatars
 
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -353,9 +348,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/users/me/avatar", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/users/me/avatar", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/users/me/avatar");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -426,7 +420,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Serve avatar files (public, no auth needed for displaying in chat)
   app.get("/api/avatars/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/avatars/:id");
-    handler_utils::set_request_id_header(res, *scope);
     std::string file_id(req->getParameter("id"));
 
     // Validate file_id is hex-only (prevent path traversal)
@@ -474,7 +467,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/users/me/passkeys", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/users/me/passkeys");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -506,10 +498,9 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/users/me/passkeys/options", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/passkeys/options", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/passkeys/options");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -591,10 +582,9 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/users/me/passkeys/verify", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/passkeys/verify", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/passkeys/verify");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -618,7 +608,7 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
         try {
           auto j = json::parse(body);
-          std::string credential_id = j.at("id");
+          (void)j.at("id");  // validate "id" is present
           auto response = j.at("response");
           std::string attestation_object = response.at("attestationObject");
           std::string client_data_json = response.at("clientDataJSON");
@@ -704,9 +694,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/users/me/passkeys/:id", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/users/me/passkeys/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/users/me/passkeys/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string credential_id(req->getParameter(0));
     auto aborted = std::make_shared<bool>(false);
@@ -760,10 +749,9 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   // --- PKI key management ---
 
-  app.post("/api/users/me/keys/challenge", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/keys/challenge", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/keys/challenge");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -801,9 +789,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/users/me/keys", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/keys", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/keys");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -901,7 +888,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/users/me/keys", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/users/me/keys");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -932,9 +918,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/users/me/keys/:id", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/users/me/keys/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/users/me/keys/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string key_id(req->getParameter(0));
     auto aborted = std::make_shared<bool>(false);
@@ -984,10 +969,9 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   // --- Device linking ---
 
-  app.post("/api/users/me/device-tokens", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/device-tokens", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/device-tokens");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1025,7 +1009,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/users/me/devices", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/users/me/devices");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1056,9 +1039,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/users/me/devices/:id", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/users/me/devices/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/users/me/devices/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string key_id(req->getParameter(0));
     auto aborted = std::make_shared<bool>(false);
@@ -1111,7 +1093,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/users/me/recovery-keys/count", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("GET", "/api/users/me/recovery-keys/count");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1138,10 +1119,9 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/users/me/recovery-keys/regenerate", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/recovery-keys/regenerate", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/users/me/recovery-keys/regenerate");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1183,7 +1163,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/users/me/totp/status", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/users/me/totp/status");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1209,9 +1188,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/users/me/totp/setup", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/totp/setup", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/totp/setup");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1264,9 +1242,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/users/me/totp/verify", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/users/me/totp/verify", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/users/me/totp/verify");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1340,9 +1317,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/users/me/totp", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/users/me/totp", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/users/me/totp");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1405,12 +1381,15 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           };
 
           std::vector<std::string> blocking_methods;
-          if (check_mfa("password") && db.has_password(*user_id))
-            blocking_methods.push_back("password");
-          if (check_mfa("pki") && !db.list_pki_credentials(*user_id).empty())
-            blocking_methods.push_back("browser key");
-          if (check_mfa("passkey") && !db.list_webauthn_credentials(*user_id).empty())
-            blocking_methods.push_back("passkey");
+          if (check_mfa("password") && db.has_password(*user_id)) {
+            blocking_methods.emplace_back("password");
+          }
+          if (check_mfa("pki") && !db.list_pki_credentials(*user_id).empty()) {
+            blocking_methods.emplace_back("browser key");
+          }
+          if (check_mfa("passkey") && !db.list_webauthn_credentials(*user_id).empty()) {
+            blocking_methods.emplace_back("passkey");
+          }
 
           if (!blocking_methods.empty()) {
             std::string methods_str;
@@ -1455,7 +1434,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // User settings (key-value preferences)
   app.get("/api/users/me/settings", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/users/me/settings");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1485,9 +1463,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.put("/api/users/me/settings", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/users/me/settings", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/users/me/settings");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });

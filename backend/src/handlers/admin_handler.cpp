@@ -90,9 +90,8 @@ using json = nlohmann::json;
 
 template <bool SSL>
 void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
-  app.post("/api/admin/invites", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/invites", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/invites");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -111,11 +110,13 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           auto j = json::parse(body);
           expiry = j.value("expiry_hours", defaults::INVITE_EXPIRY_HOURS);
           if (expiry < 1) expiry = 1;
-          if (expiry > defaults::MAX_INVITE_EXPIRY_HOURS)
+          if (expiry > defaults::MAX_INVITE_EXPIRY_HOURS) {
             expiry = defaults::MAX_INVITE_EXPIRY_HOURS;
+          }
           max_uses = j.value("max_uses", 1);
           if (max_uses < 0) max_uses = 0;
-        } catch (...) {}
+        } catch (...) { /* non-fatal: parse failed, keep default */
+        }
 
         auto invite_token = db.create_invite(user_id, expiry, max_uses);
         json resp = {{"token", invite_token}};
@@ -131,7 +132,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/admin/invites", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/admin/invites");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -167,9 +167,8 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/admin/invites/:id", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/admin/invites/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/admin/invites/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto invite_id = std::string(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -200,7 +199,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/admin/requests", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/admin/requests");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -228,10 +226,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/admin/requests/:id/approve", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/requests/:id/approve", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/requests/:id/approve");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto request_id = std::string(req->getParameter("id"));
     std::string body;
@@ -259,10 +256,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/admin/requests/:id/deny", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/requests/:id/deny", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/requests/:id/deny");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto request_id = std::string(req->getParameter("id"));
     std::string body;
@@ -298,7 +294,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/admin/settings", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/admin/settings");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -316,9 +311,8 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.put("/api/admin/settings", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/admin/settings", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/admin/settings");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -335,9 +329,8 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/admin/setup", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/setup", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/setup");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -367,10 +360,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/admin/recovery-tokens", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/recovery-tokens", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/recovery-tokens");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -422,7 +414,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/admin/recovery-tokens", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/admin/recovery-tokens");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -454,10 +445,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/admin/recovery-tokens/:id", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/admin/recovery-tokens/:id", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("DEL", "/api/admin/recovery-tokens/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto token_id = std::string(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -486,12 +476,11 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Upload server icon (owner only)
-  app.post("/api/admin/server-icon", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/server-icon", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/server-icon");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto body = std::make_shared<std::string>();
-    int64_t max_size = 50 * 1024 * 1024;
+    int64_t max_size = 50LL * 1024 * 1024;
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
 
@@ -561,9 +550,8 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Delete server icon (owner only)
-  app.del("/api/admin/server-icon", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/admin/server-icon", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/admin/server-icon");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -595,13 +583,12 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Upload dark mode server icon (owner only)
-  app.post("/api/admin/server-icon-dark", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/server-icon-dark", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/server-icon-dark");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto body = std::make_shared<std::string>();
-    int64_t max_size = 50 * 1024 * 1024;
+    int64_t max_size = 50LL * 1024 * 1024;
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
 
@@ -671,10 +658,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Delete dark mode server icon (owner only)
-  app.del("/api/admin/server-icon-dark", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/admin/server-icon-dark", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("DEL", "/api/admin/server-icon-dark");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -706,9 +692,8 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Archive server (owner only)
-  app.post("/api/admin/archive-server", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/archive-server", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/archive-server");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -733,10 +718,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/admin/unarchive-server", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/unarchive-server", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/unarchive-server");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -762,10 +746,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Lockdown server (owner only) — kicks all non-admin users
-  app.post("/api/admin/lockdown-server", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/lockdown-server", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/lockdown-server");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -798,9 +781,8 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/admin/unlock-server", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/unlock-server", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/unlock-server");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -828,7 +810,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List users (admin or owner)
   app.get("/api/admin/users", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/admin/users");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -858,10 +839,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Change user role (admin or owner, with hierarchy enforcement)
-  app.put("/api/admin/users/:userId/role", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/admin/users/:userId/role", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("PUT", "/api/admin/users/:userId/role");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto target_user_id = std::string(req->getParameter("userId"));
     std::string body;
@@ -994,10 +974,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Ban user (admin or owner, with hierarchy enforcement)
-  app.post("/api/admin/users/:userId/ban", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/admin/users/:userId/ban", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/admin/users/:userId/ban");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto target_user_id = std::string(req->getParameter("userId"));
     std::string body;
@@ -1110,10 +1089,9 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Unban user (admin or owner, with hierarchy enforcement)
-  app.del("/api/admin/users/:userId/ban", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/admin/users/:userId/ban", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("DEL", "/api/admin/users/:userId/ban");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto target_user_id = std::string(req->getParameter("userId"));
     auto aborted = std::make_shared<bool>(false);
@@ -1184,7 +1162,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // System resource monitoring
   app.get("/api/admin/system-stats", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/admin/system-stats");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
@@ -1246,7 +1223,7 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
 template <bool SSL>
 std::string AdminHandler<SSL>::get_admin_id(
-  uWS::HttpResponse<SSL>* res, const std::string& token, std::shared_ptr<bool> aborted) {
+  uWS::HttpResponse<SSL>* res, const std::string& token, const std::shared_ptr<bool>& aborted) {
   auto user_id = db.validate_session(token);
   if (!user_id) {
     loop_->defer([res, aborted]() {
@@ -1272,7 +1249,7 @@ std::string AdminHandler<SSL>::get_admin_id(
 
 template <bool SSL>
 std::string AdminHandler<SSL>::get_owner_id(
-  uWS::HttpResponse<SSL>* res, const std::string& token, std::shared_ptr<bool> aborted) {
+  uWS::HttpResponse<SSL>* res, const std::string& token, const std::shared_ptr<bool>& aborted) {
   auto user_id = db.validate_session(token);
   if (!user_id) {
     loop_->defer([res, aborted]() {
@@ -1359,7 +1336,7 @@ template <bool SSL>
 void AdminHandler<SSL>::save_settings(
   uWS::HttpResponse<SSL>* res,
   const std::string& body,
-  std::shared_ptr<bool> aborted,
+  const std::shared_ptr<bool>& aborted,
   bool mark_setup) {
   try {
     auto settings = json::parse(body);
@@ -1450,7 +1427,7 @@ void AdminHandler<SSL>::handle_approve(
   uWS::HttpResponse<SSL>* res,
   const std::string& request_id,
   const std::string& admin_id,
-  std::shared_ptr<bool> aborted) {
+  const std::shared_ptr<bool>& aborted) {
   try {
     auto request = db.get_join_request(request_id);
     if (!request) {

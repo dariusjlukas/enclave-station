@@ -35,9 +35,9 @@ struct AiHandler {
 
 private:
   std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req);
-  bool check_llm_enabled(uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted);
+  bool check_llm_enabled(uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted);
   bool check_agent_enabled(
-    uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& user_id);
+    uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& user_id);
   std::set<std::string> get_enabled_tool_categories(const std::string& user_id);
   std::string build_system_prompt(
     const std::string& user_id,

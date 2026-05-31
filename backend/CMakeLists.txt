@@ -133,6 +133,14 @@ target_link_libraries(chat-lib PUBLIC
 
 target_compile_definitions(chat-lib PUBLIC LIBUS_USE_OPENSSL CPPHTTPLIB_OPENSSL_SUPPORT)
 
+# macOS: cpp-httplib's tls::load_system_certs loads root CAs from the system
+# keychain (auto-enabled on Apple + OpenSSL), which calls into the Security and
+# CoreFoundation frameworks. Link them or the chat-server link fails with
+# undefined _SecTrustCopyAnchorCertificates / _CFArrayGetCount / etc.
+if(APPLE)
+    target_link_libraries(chat-lib PUBLIC "-framework Security" "-framework CoreFoundation")
+endif()
+
 if(ENCLAVE_ENABLE_REDIS)
     target_link_libraries(chat-lib PUBLIC hiredis::hiredis)
     target_compile_definitions(chat-lib PUBLIC BACKEND_HAS_REDIS=1)

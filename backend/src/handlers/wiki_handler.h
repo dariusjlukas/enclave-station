@@ -24,7 +24,7 @@ private:
   std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req);
   bool check_space_access(
     uWS::HttpResponse<SSL>* res,
-    std::shared_ptr<bool> aborted,
+    const std::shared_ptr<bool>& aborted,
     const std::string& space_id,
     const std::string& user_id,
     const std::string& origin);
@@ -33,14 +33,14 @@ private:
     const std::string& space_id, const std::string& page_id, const std::string& user_id);
   bool require_permission(
     uWS::HttpResponse<SSL>* res,
-    std::shared_ptr<bool> aborted,
+    const std::shared_ptr<bool>& aborted,
     const std::string& space_id,
     const std::string& user_id,
     const std::string& required_level,
     const std::string& origin);
   bool require_page_permission(
     uWS::HttpResponse<SSL>* res,
-    std::shared_ptr<bool> aborted,
+    const std::shared_ptr<bool>& aborted,
     const std::string& space_id,
     const std::string& page_id,
     const std::string& user_id,

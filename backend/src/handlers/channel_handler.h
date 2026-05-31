@@ -23,12 +23,12 @@ private:
   std::string get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req);
   void handle_create_channel(
     uWS::HttpResponse<SSL>* res,
-    std::shared_ptr<bool> aborted,
+    const std::shared_ptr<bool>& aborted,
     const std::string& body,
     const std::string& user_id);
   void handle_create_dm(
     uWS::HttpResponse<SSL>* res,
-    std::shared_ptr<bool> aborted,
+    const std::shared_ptr<bool>& aborted,
     const std::string& body,
     const std::string& user_id);
 };

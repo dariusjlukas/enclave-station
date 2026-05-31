@@ -1,9 +1,22 @@
 """Tests for multi-factor authentication: TOTP setup, MFA login flow, admin MFA settings."""
 
+import time
+
 import pyotp
 import pytest
 from conftest import (auth_header, pki_register, pki_login,
                       password_register, password_login)
+
+
+def _next_code(totp):
+    """TOTP code for the NEXT 30s step.
+
+    setup_totp() consumes the current step, and the backend rejects replayed
+    steps (it skips any step <= the last consumed one), so a follow-up
+    verification in the same window must use a fresh, later step. The verify
+    window is +/-1 step, so current+1 is accepted and is not a replay.
+    """
+    return totp.at(int(time.time()) + 30)
 
 
 def setup_totp(client, headers):
@@ -56,7 +69,7 @@ class TestTotpSetup:
 class TestTotpRemoval:
     def test_remove_totp(self, client, admin_user):
         totp = setup_totp(client, admin_user["headers"])
-        code = totp.now()
+        code = _next_code(totp)
         r = client.request("DELETE", "/api/users/me/totp",
                            json={"code": code}, headers=admin_user["headers"])
         assert r.status_code == 200
@@ -88,7 +101,7 @@ class TestTotpRemoval:
         totp = setup_totp(client, headers)
 
         # Try to remove TOTP — should be blocked
-        code = totp.now()
+        code = _next_code(totp)
         r = client.request("DELETE", "/api/users/me/totp",
                            json={"code": code}, headers=headers)
         assert r.status_code == 403
@@ -103,7 +116,7 @@ class TestTotpRemoval:
 
         totp = setup_totp(client, admin_user["headers"])
 
-        code = totp.now()
+        code = _next_code(totp)
         r = client.request("DELETE", "/api/users/me/totp",
                            json={"code": code}, headers=admin_user["headers"])
         assert r.status_code == 403
@@ -120,7 +133,7 @@ class TestTotpRemoval:
 
         totp = setup_totp(client, admin_user["headers"])
 
-        code = totp.now()
+        code = _next_code(totp)
         r = client.request("DELETE", "/api/users/me/totp",
                            json={"code": code}, headers=admin_user["headers"])
         assert r.status_code == 200
@@ -150,14 +163,14 @@ class TestMfaPasswordLogin:
         assert "mfa_token" in data
 
         # Verify with TOTP code
-        code = totp.now()
+        code = _next_code(totp)
         r = client.post("/api/auth/mfa/verify", json={
             "mfa_token": data["mfa_token"],
             "totp_code": code,
         })
         assert r.status_code == 200
         result = r.json()
-        assert result["token"]
+        assert r.cookies.get("session")
         assert result["user"]["username"] == "mfauser"
 
     def test_mfa_wrong_totp_code(self, client, admin_user):
@@ -212,10 +225,10 @@ class TestMfaPkiLogin:
         # Complete MFA
         r = client.post("/api/auth/mfa/verify", json={
             "mfa_token": data["mfa_token"],
-            "totp_code": totp.now(),
+            "totp_code": _next_code(totp),
         })
         assert r.status_code == 200
-        assert r.json()["token"]
+        assert r.cookies.get("session")
 
 
 class TestAdminMfaSettings:
@@ -287,7 +300,7 @@ class TestAdminMfaSettings:
         })
         assert r.status_code == 200
         result = r.json()
-        assert result["token"]
+        assert r.cookies.get("session")
         assert result["user"]["username"] == "nomfa"
 
     def test_mfa_setup_with_wrong_code(self, client, admin_user):
@@ -331,5 +344,5 @@ class TestAdminMfaSettings:
             "password": "TestPass123",
         })
         data = r.json()
-        assert data["token"]
+        assert r.cookies.get("session")
         assert data.get("mfa_required") is not True

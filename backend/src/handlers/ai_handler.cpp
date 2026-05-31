@@ -15,7 +15,6 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List conversations
   app.get("/api/ai/conversations", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/ai/conversations");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string q_limit(req->getQuery("limit"));
     std::string q_offset(req->getQuery("offset"));
@@ -39,7 +38,7 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
       if (!check_llm_enabled(res, aborted)) return;
       if (!check_agent_enabled(res, aborted, user_id)) return;
 
@@ -65,9 +64,8 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Create conversation
-  app.post("/api/ai/conversations", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/ai/conversations", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/ai/conversations");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -88,7 +86,7 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
         if (!check_llm_enabled(res, aborted)) return;
         if (!check_agent_enabled(res, aborted, user_id)) return;
 
@@ -97,7 +95,8 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           try {
             auto j = json::parse(body);
             if (j.contains("title")) title = j["title"].get<std::string>();
-          } catch (...) {}
+          } catch (...) { /* non-fatal: parse failed, keep default */
+          }
         }
 
         auto conv = db.create_ai_conversation(user_id, title);
@@ -119,7 +118,6 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Get conversation with messages
   app.get("/api/ai/conversations/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/ai/conversations/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string conv_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -137,7 +135,7 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
         if (!check_llm_enabled(res, aborted)) return;
 
         auto conv = db.find_ai_conversation(conv_id);
@@ -179,9 +177,8 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Delete conversation
-  app.del("/api/ai/conversations/:id", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/ai/conversations/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/ai/conversations/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string conv_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -199,7 +196,7 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         auto conv = db.find_ai_conversation(conv_id);
         if (!conv || conv->user_id != user_id) {
@@ -223,9 +220,8 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Update conversation title
-  app.put("/api/ai/conversations/:id", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/ai/conversations/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/ai/conversations/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string conv_id(req->getParameter("id"));
     std::string body;
@@ -258,7 +254,7 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         auto conv = db.find_ai_conversation(conv_id);
         if (!conv || conv->user_id != user_id) {
@@ -294,10 +290,9 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Send message and trigger LLM response
-  app.post("/api/ai/conversations/:id/messages", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/ai/conversations/:id/messages", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/ai/conversations/:id/messages");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string conv_id(req->getParameter("id"));
     std::string body;
@@ -459,8 +454,8 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             int tool_rounds = 0;
             const int max_tool_rounds = 10;
 
-            auto run_completion = [&](auto& self) -> void {
-              if (cancelled->load()) return;
+            while (true) {
+              if (cancelled->load()) break;
 
               std::string accumulated_content;
               std::vector<json> accumulated_tool_calls;
@@ -483,7 +478,9 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
               };
 
               cb.on_error = [&](const std::string& error) {
-                LOG_ERROR_N("ai", nullptr, "LLM error for conversation " + conv_id + ": " + error);
+                std::string err_log = "LLM error for conversation ";
+                err_log.append(conv_id).append(": ").append(error);
+                LOG_ERROR_N("ai", nullptr, err_log);
                 json msg = {
                   {"type", "ai_stream_error"}, {"conversation_id", conv_id}, {"error", error}};
                 auto msg_str = msg.dump();
@@ -497,7 +494,7 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
               client.chat_completion(messages, tools_schema, cb);
 
-              if (cancelled->load()) return;
+              if (cancelled->load()) break;
 
               if (has_tool_calls && tool_rounds < max_tool_rounds) {
                 tool_rounds++;
@@ -519,7 +516,7 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
                 // Execute each tool call
                 for (const auto& tc : accumulated_tool_calls) {
-                  if (cancelled->load()) return;
+                  if (cancelled->load()) break;
 
                   std::string tc_id = tc.value("id", "");
                   std::string fn_name = tc["function"]["name"].get<std::string>();
@@ -566,8 +563,9 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                   messages.push_back(std::move(tool_msg));
                 }
 
+                if (cancelled->load()) break;
                 // Continue the loop — call the LLM again with tool results
-                self(self);
+                continue;
               } else {
                 // Final response — save and notify
                 if (!accumulated_content.empty()) {
@@ -610,8 +608,9 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                       };
                       // Use generous max_tokens — reasoning models need room to think
                       auto title = client.streaming_completion(title_msgs, 256);
-                      LOG_INFO_N(
-                        "ai", nullptr, "Auto-title result for " + conv_id + ": \"" + title + "\"");
+                      std::string title_log = "Auto-title result for ";
+                      title_log.append(conv_id).append(": \"").append(title).append("\"");
+                      LOG_INFO_N("ai", nullptr, title_log);
                       // Clean up the title
                       if (!title.empty()) {
                         // Remove surrounding quotes if present
@@ -636,9 +635,8 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                   }
                 }
               }
-            };
-
-            run_completion(run_completion);
+              break;
+            }
 
             LOG_INFO_N("ai", nullptr, "LLM request completed for conversation " + conv_id);
 
@@ -662,10 +660,9 @@ void AiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Stop generation
-  app.post("/api/ai/conversations/:id/stop", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/ai/conversations/:id/stop", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/ai/conversations/:id/stop");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string conv_id(req->getParameter("id"));
     std::string body;
@@ -718,7 +715,8 @@ std::string AiHandler<SSL>::get_user_id(uWS::HttpResponse<SSL>* res, uWS::HttpRe
 }
 
 template <bool SSL>
-bool AiHandler<SSL>::check_llm_enabled(uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted) {
+bool AiHandler<SSL>::check_llm_enabled(
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted) {
   auto enabled = db.get_setting("llm_enabled");
   if (!enabled || *enabled != "true") {
     loop_->defer([res, aborted]() {
@@ -734,7 +732,7 @@ bool AiHandler<SSL>::check_llm_enabled(uWS::HttpResponse<SSL>* res, std::shared_
 
 template <bool SSL>
 bool AiHandler<SSL>::check_agent_enabled(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& user_id) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& user_id) {
   auto setting = db.get_user_setting(user_id, "agent_enabled");
   if (setting && *setting == "false") {
     loop_->defer([res, aborted]() {

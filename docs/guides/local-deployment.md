@@ -57,7 +57,19 @@ PUBLIC_URL=
 
 :::
 
-## Step 3: Build and start
+## Step 3: Create the shared LLM network
+
+The backend attaches to an external Docker network named `llm-network`, used to reach an LLM service you may run in a separate Compose project. Docker won't create it automatically, so create it once before the first start:
+
+```bash
+docker network create llm-network
+```
+
+This is a one-time step — the network persists across reboots and `docker compose down`. If you skip it, `docker compose up` fails with `network llm-network declared as external, but could not be found`.
+
+If you run an external LLM stack (e.g. Ollama), have that project join the same `llm-network` so the backend can reach it. You can run `docker network create llm-network` from either project — whichever starts first creates it.
+
+## Step 4: Build and start
 
 ```bash
 docker compose up -d --build
@@ -73,7 +85,7 @@ docker compose ps
 
 You should see three services (`postgres`, `backend`, `frontend`) all showing as **running**.
 
-## Step 4: Open the app
+## Step 5: Open the app
 
 Open [http://localhost](http://localhost) in your browser. **The first user to register becomes the admin.**
 

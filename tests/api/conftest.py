@@ -82,18 +82,26 @@ class PKIIdentity:
 # `auth_header(...)` for whichever user they want to act as. The shared client
 # jar is cleared after each capture so cookies from one user don't bleed into
 # another user's subsequent registration.
-def _capture_session(client: httpx.Client) -> tuple[str, str]:
+def _capture_session(client: httpx.Client, clear: bool = True) -> tuple[str, str]:
     session = client.cookies.get("session", "")
     csrf = client.cookies.get("csrf", "")
     # Clear so the next register/login on the shared client starts fresh.
-    client.cookies.clear()
+    # Tests that exercise the cookie jar itself (cookie-only auth) pass
+    # clear=False so the issued cookies stay available for follow-up requests.
+    if clear:
+        client.cookies.clear()
     return session, csrf
 
 
 def pki_register(client: httpx.Client, username: str, display_name: str,
                  identity: PKIIdentity | None = None,
-                 token: str | None = None) -> dict:
-    """Register a new user via PKI and return {token, csrf, user, recovery_keys, identity}."""
+                 token: str | None = None,
+                 clear_cookies: bool = True) -> dict:
+    """Register a new user via PKI and return {token, csrf, user, recovery_keys, identity}.
+
+    Pass clear_cookies=False to leave the issued session/csrf cookies in the
+    client's jar (for cookie-only auth tests that rely on automatic cookie
+    resend on follow-up requests)."""
     if identity is None:
         identity = PKIIdentity()
 
@@ -118,7 +126,7 @@ def pki_register(client: httpx.Client, username: str, display_name: str,
     r.raise_for_status()
     data = r.json()
     data["identity"] = identity
-    session, csrf = _capture_session(client)
+    session, csrf = _capture_session(client, clear=clear_cookies)
     data["token"] = session
     data["csrf"] = csrf
     return data

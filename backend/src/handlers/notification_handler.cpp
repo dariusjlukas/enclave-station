@@ -8,7 +8,6 @@ void NotificationHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // List notifications
   app.get("/api/notifications", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/notifications");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string limit_str(req->getQuery("limit"));
     std::string offset_str(req->getQuery("offset"));
@@ -75,10 +74,9 @@ void NotificationHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Mark single notification as read
-  app.post("/api/notifications/:id/read", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/notifications/:id/read", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/notifications/:id/read");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string notification_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -133,10 +131,9 @@ void NotificationHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Mark all notifications in a channel as read
-  app.post("/api/notifications/read-by-channel/:channelId", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/notifications/read-by-channel/:channelId", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/notifications/read-by-channel/:channelId");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("channelId"));
     auto aborted = std::make_shared<bool>(false);
@@ -191,10 +188,9 @@ void NotificationHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Mark all notifications as read
-  app.post("/api/notifications/read-all", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/notifications/read-all", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/notifications/read-all");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });

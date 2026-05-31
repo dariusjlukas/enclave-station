@@ -119,8 +119,9 @@ struct Config {
     if (!c.public_url.empty()) {
       c.webauthn_origin = c.public_url;
       // Remove trailing slash
-      while (!c.webauthn_origin.empty() && c.webauthn_origin.back() == '/')
+      while (!c.webauthn_origin.empty() && c.webauthn_origin.back() == '/') {
         c.webauthn_origin.pop_back();
+      }
     } else {
       c.webauthn_origin = "http://localhost:" + std::to_string(c.server_port);
     }

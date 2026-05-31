@@ -1,4 +1,9 @@
 ---
+# Note: bugprone-exception-escape is disabled below. This clang-tidy flags any
+# function transitively reaching a std::string allocation (bad_alloc) as
+# exception-escaping — including main and every deferred event-loop callback —
+# and it honors neither try/catch handlers nor IgnoredExceptions here, so it is
+# not satisfiable on this async/uWS codebase.
 Checks: >
   -*,
   bugprone-*,
@@ -17,7 +22,8 @@ Checks: >
   misc-redundant-expression,
   -bugprone-easily-swappable-parameters,
   -bugprone-narrowing-conversions,
-  -performance-avoid-endl
+  -performance-avoid-endl,
+  -bugprone-exception-escape
 
 WarningsAsErrors: ''
 
@@ -28,3 +34,8 @@ CheckOptions:
     value: false
   - key: readability-braces-around-statements.ShortStatementLines
     value: 1
+  # Intentional exception swallows are allowed when the catch comment contains
+  # the "non-fatal" marker (best-effort cleanup / deferred response writes whose
+  # only failure mode is unrecoverable OOM).
+  - key: bugprone-empty-catch.IgnoreCatchWithKeywords
+    value: 'non-fatal'

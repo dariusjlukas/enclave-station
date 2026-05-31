@@ -28,9 +28,13 @@ function base32Decode(encoded: string): Buffer {
  * Generate a TOTP code from a base32-encoded secret.
  * Uses HMAC-SHA1 with 30-second time steps and 6-digit codes (RFC 6238).
  */
-export function generateTotpCode(base32Secret: string): string {
+export function generateTotpCode(base32Secret: string, stepOffset = 0): string {
+  // stepOffset shifts the 30s window. Pass 1 to get the NEXT step's code: TOTP
+  // setup consumes the current step and the backend rejects replayed steps, so a
+  // follow-up login in the same window must use a fresh, later step (the verify
+  // window is +/-1, so current+1 is accepted and is not a replay).
   const key = base32Decode(base32Secret);
-  const timeStep = Math.floor(Date.now() / 1000 / 30);
+  const timeStep = Math.floor(Date.now() / 1000 / 30) + stepOffset;
 
   const timeBuffer = Buffer.alloc(8);
   timeBuffer.writeBigUInt64BE(BigInt(timeStep));

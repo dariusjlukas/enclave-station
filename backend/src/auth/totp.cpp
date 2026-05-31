@@ -39,14 +39,15 @@ std::string base32_decode(const std::string& encoded) {
   for (char c : encoded) {
     if (c == '=' || c == ' ') continue;
     int val;
-    if (c >= 'A' && c <= 'Z')
+    if (c >= 'A' && c <= 'Z') {
       val = c - 'A';
-    else if (c >= 'a' && c <= 'z')
+    } else if (c >= 'a' && c <= 'z') {
       val = c - 'a';
-    else if (c >= '2' && c <= '7')
+    } else if (c >= '2' && c <= '7') {
       val = c - '2' + 26;
-    else
+    } else {
       continue;
+    }
 
     buffer = (buffer << 5) | val;
     bits += 5;

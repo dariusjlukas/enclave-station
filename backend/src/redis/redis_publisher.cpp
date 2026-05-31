@@ -114,7 +114,7 @@ bool RedisPublisher::publish(const std::string& topic, const std::string& payloa
   if (!ensure_connected_locked()) return false;
 
   // PUBLISH <channel> <payload>
-  redisReply* reply = static_cast<redisReply*>(
+  auto* reply = static_cast<redisReply*>(
     redisCommand(ctx_, "PUBLISH %s %b", kBroadcastChannel, encoded.data(), encoded.size()));
   if (!reply || ctx_->err) {
     std::string err = ctx_ ? ctx_->errstr : "no reply";

@@ -16,10 +16,11 @@ std::vector<unsigned char> base64_decode(const std::string& b64) {
   // Handle URL-safe base64
   std::string input = b64;
   for (auto& c : input) {
-    if (c == '-')
+    if (c == '-') {
       c = '+';
-    else if (c == '_')
+    } else if (c == '_') {
       c = '/';
+    }
   }
   // Add padding if needed
   while (input.size() % 4 != 0) input += '=';

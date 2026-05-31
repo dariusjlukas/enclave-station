@@ -24,10 +24,17 @@ COPY libs/ libs/
 COPY CMakeLists.txt .
 COPY src/ src/
 
-# Build
+# Build. Cap parallelism by available memory (~1.5 GB per job): the large
+# template-heavy translation units (space_handler.cpp, space_file_handler.cpp)
+# can each use >1 GB under -O2, so -j$(nproc) OOM-kills cc1plus on low-RAM
+# Docker VMs. Use the smaller of (CPU count, memory-derived job count).
 RUN mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release && \
-    make -j$(nproc)
+    CPU_JOBS=$(nproc) && \
+    MEM_JOBS=$(awk '/MemTotal/ {j=int($2/1572864); print (j<1)?1:j}' /proc/meminfo) && \
+    JOBS=$([ "$MEM_JOBS" -lt "$CPU_JOBS" ] && echo "$MEM_JOBS" || echo "$CPU_JOBS") && \
+    echo "Compiling with -j$JOBS (cpus=$CPU_JOBS, mem-limited=$MEM_JOBS)" && \
+    make -j"$JOBS"
 
 # Runtime stage
 FROM alpine:3.21

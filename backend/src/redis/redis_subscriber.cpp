@@ -104,8 +104,9 @@ void RedisSubscriber::run() {
       int sleep_s = kBackoffSchedule[backoff_idx];
       if (backoff_idx + 1 < sizeof(kBackoffSchedule) / sizeof(kBackoffSchedule[0])) ++backoff_idx;
       // Sleep in 200ms slices so we wake quickly on stop_requested_.
-      for (int i = 0; i < sleep_s * 5 && !stop_requested_.load(); ++i)
+      for (int i = 0; i < sleep_s * 5 && !stop_requested_.load(); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      }
       continue;
     }
 
@@ -113,8 +114,7 @@ void RedisSubscriber::run() {
     metrics::redis_ok().set(1);
 
     // SUBSCRIBE is fire-and-forget; we read replies in a loop.
-    redisReply* sub =
-      static_cast<redisReply*>(redisCommand(ctx, "SUBSCRIBE %s", kBroadcastChannel));
+    auto* sub = static_cast<redisReply*>(redisCommand(ctx, "SUBSCRIBE %s", kBroadcastChannel));
     if (!sub || ctx->err) {
       std::string err = ctx->err ? ctx->errstr : "no reply";
       LOG_WARN_N("redis", nullptr, "RedisSubscriber: SUBSCRIBE failed: " + err);

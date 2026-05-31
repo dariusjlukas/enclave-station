@@ -10,7 +10,7 @@ import {
   loginViaToken,
   type TestUser,
 } from "../helpers/auth.js";
-import { apiEnablePersonalSpaces } from "../helpers/api.js";
+import { apiEnablePersonalSpaces, authHeaders } from "../helpers/api.js";
 
 let admin: TestUser;
 
@@ -213,7 +213,7 @@ test.describe("Personal Spaces", () => {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${admin.token}`,
+        ...authHeaders(admin.token, true),
       },
       body: JSON.stringify({
         personal_spaces_enabled: true,

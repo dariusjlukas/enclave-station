@@ -1,6 +1,7 @@
 #pragma once
 #include <map>
 #include <memory>
+#include <optional>
 #include <pqxx/pqxx>
 #include <queue>
 #include <string>
@@ -205,6 +206,8 @@ public:
   std::optional<MessageOwnership> get_message_ownership(const std::string& message_id);
   struct FileInfo {
     std::string file_name, file_type;
+    std::optional<std::string> channel_id;  // set for message attachments
+    std::optional<std::string> space_id;    // set for space files
   };
   std::optional<FileInfo> get_file_info(const std::string& file_id);
 

@@ -22,6 +22,7 @@ import {
   apiCreateSpaceFolder,
   apiJoinSpace,
   apiAcceptSpaceInvite,
+  authHeaders,
 } from "../helpers/api.js";
 
 let admin: TestUser;
@@ -303,7 +304,7 @@ test.describe("File permissions", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${admin.token}`,
+          ...authHeaders(admin.token, true),
         },
         body: JSON.stringify({ user_id: user.userId, role: "user" }),
       },

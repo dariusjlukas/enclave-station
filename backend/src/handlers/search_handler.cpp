@@ -10,7 +10,6 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Global search endpoint
   app.get("/api/search", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/search");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string query(req->getQuery("q"));
     std::string type(req->getQuery("type"));
@@ -228,7 +227,6 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Composite search endpoint
   app.get("/api/search/composite", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/search/composite");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string filters_str(req->getQuery("filters"));
     std::string result_type(req->getQuery("result_type"));
@@ -419,7 +417,6 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/channels/:id/messages/around", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("GET", "/api/channels/:id/messages/around");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     std::string message_id(req->getQuery("message_id"));
@@ -472,6 +469,7 @@ void SearchHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         auto msgs = db.get_messages_around(channel_id, message_id, limit);
 
         std::vector<std::string> msg_ids;
+        msg_ids.reserve(msgs.size());
         for (const auto& msg : msgs) msg_ids.push_back(msg.id);
         auto reactions_map = db.get_reactions_for_messages(msg_ids);
 
@@ -564,10 +562,11 @@ template <bool SSL>
 std::string SearchHandler<SSL>::quote_literal(const std::string& s) {
   std::string result = "'";
   for (char c : s) {
-    if (c == '\'')
+    if (c == '\'') {
       result += "''";
-    else
+    } else {
       result += c;
+    }
   }
   result += "'";
   return result;

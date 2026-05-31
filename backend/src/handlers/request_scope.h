@@ -33,11 +33,11 @@ struct RequestScope {
   }
 };
 
-// Helper to set X-Request-Id header on a response. Must be called before
-// any res->end(...) / res->writeStatus() that finalizes the response.
-template <bool SSL>
-inline void set_request_id_header(uWS::HttpResponse<SSL>* res, const RequestScope& scope) {
-  res->writeHeader("X-Request-Id", scope.ctx.request_id);
-}
+// NOTE: An X-Request-Id *response* header was intentionally removed here. In
+// uWebSockets the first writeHeader() call commits the status line as "200 OK",
+// so writing X-Request-Id at the top of a handler (before the response's own
+// writeStatus("4xx")) silently forced every error response to HTTP 200. The
+// request id is still emitted in server logs via RequestCtx (see logger.cpp).
+// To return it to clients, write it AFTER writeStatus() in each response.
 
 }  // namespace handler_utils

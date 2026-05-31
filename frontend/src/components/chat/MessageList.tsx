@@ -47,6 +47,7 @@ export function MessageList({
   const separatorDismissTimer =
     useRef<ReturnType<typeof setTimeout>>(undefined);
   const [isViewingAround, setIsViewingAround] = useState(false);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
   const [initialLastReadId, setInitialLastReadId] = useState<string | null>(
     null,
@@ -142,18 +143,24 @@ export function MessageList({
 
     let cancelled = false;
     let rafId: number | null = null;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    // Capture the target before any state changes clear the store value.
+    const target = jumpToMessageId;
 
-    api.getMessagesAround(channelId, jumpToMessageId).then((msgs) => {
+    api.getMessagesAround(channelId, target).then((msgs) => {
       if (cancelled) return;
       setMessages(channelId, msgs);
       setIsViewingAround(true);
-      clearJumpToMessage();
+      // NOTE: clearJumpToMessage() is intentionally deferred until after the
+      // element is found and scrolled into view. Clearing it sooner mutates a
+      // dependency of this effect, which re-runs the effect and fires this
+      // cleanup — cancelling the poll before it ever applies the scroll/
+      // highlight. (jumpToMessageId is still unchanged here, so the
+      // setMessages/setIsViewingAround re-render does not re-trigger us.)
 
       // Poll for the element — React may not have committed the DOM
       // update from setMessages by the next frame, especially when
       // replacing the full message list.
-      const targetId = `msg-${jumpToMessageId}`;
+      const targetId = `msg-${target}`;
       let attempts = 0;
       const poll = () => {
         if (cancelled) return;
@@ -161,14 +168,17 @@ export function MessageList({
         const el = document.getElementById(targetId);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          el.classList.add('highlight-flash');
-          timeoutId = setTimeout(() => {
-            timeoutId = null;
-            el.classList.remove('highlight-flash');
-          }, 2000);
+          // Highlight via React state so the class survives re-renders and
+          // is removed declaratively (see the highlight-timeout effect below).
+          setHighlightedId(target);
+          clearJumpToMessage();
         } else if (attempts < 20) {
           attempts++;
           rafId = requestAnimationFrame(poll);
+        } else {
+          // Target never rendered; give up but still reset the jump state so a
+          // later jump to the same message can re-trigger this effect.
+          clearJumpToMessage();
         }
       };
       rafId = requestAnimationFrame(poll);
@@ -177,7 +187,6 @@ export function MessageList({
     return () => {
       cancelled = true;
       if (rafId !== null) cancelAnimationFrame(rafId);
-      if (timeoutId !== null) clearTimeout(timeoutId);
     };
   }, [
     jumpToMessageId,
@@ -186,6 +195,14 @@ export function MessageList({
     setMessages,
     clearJumpToMessage,
   ]);
+
+  // Clear the highlight flash after the animation completes (2s). Kept
+  // separate from the jump effect so re-renders there don't reset the timer.
+  useEffect(() => {
+    if (!highlightedId) return;
+    const t = setTimeout(() => setHighlightedId(null), 2000);
+    return () => clearTimeout(t);
+  }, [highlightedId]);
 
   // Mark the channel as read when messages load or new messages arrive
   const lastMessage =
@@ -315,6 +332,7 @@ export function MessageList({
             )}
             <MessageBubble
               message={msg}
+              isHighlighted={msg.id === highlightedId}
               onEdit={onEditMessage}
               onDelete={onDeleteMessage}
               onAddReaction={onAddReaction}

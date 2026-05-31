@@ -119,14 +119,15 @@ RRule parse_rrule(const std::string& rrule_str) {
     std::string val = part.substr(eq + 1);
 
     if (key == "FREQ") {
-      if (val == "DAILY")
+      if (val == "DAILY") {
         rule.freq = Freq::DAILY;
-      else if (val == "WEEKLY")
+      } else if (val == "WEEKLY") {
         rule.freq = Freq::WEEKLY;
-      else if (val == "MONTHLY")
+      } else if (val == "MONTHLY") {
         rule.freq = Freq::MONTHLY;
-      else if (val == "YEARLY")
+      } else if (val == "YEARLY") {
         rule.freq = Freq::YEARLY;
+      }
     } else if (key == "INTERVAL") {
       rule.interval = std::max(1, safe_stoi(val, 1));
     } else if (key == "COUNT") {
@@ -150,8 +151,9 @@ RRule parse_rrule(const std::string& rrule_str) {
       for (const auto& d : days) {
         // Strip numeric prefix if present (e.g., "2MO" for "second Monday")
         std::string dayStr = d;
-        while (!dayStr.empty() && (dayStr[0] == '-' || (dayStr[0] >= '0' && dayStr[0] <= '9')))
+        while (!dayStr.empty() && (dayStr[0] == '-' || (dayStr[0] >= '0' && dayStr[0] <= '9'))) {
           dayStr = dayStr.substr(1);
+        }
         if (dayStr.size() == 2) rule.by_day.push_back(parse_weekday(dayStr));
       }
     } else if (key == "BYMONTHDAY") {
@@ -188,12 +190,12 @@ static std::tm advance(const std::tm& t, Freq freq, int interval) {
   switch (freq) {
   case Freq::DAILY: {
     time_t tt = tm_to_utc(next);
-    tt += 86400 * interval;
+    tt += static_cast<time_t>(86400) * interval;
     return utc_to_tm(tt);
   }
   case Freq::WEEKLY: {
     time_t tt = tm_to_utc(next);
-    tt += 86400 * 7 * interval;
+    tt += static_cast<time_t>(86400) * 7 * interval;
     return utc_to_tm(tt);
   }
   case Freq::MONTHLY: {
@@ -222,8 +224,9 @@ static std::tm advance(const std::tm& t, Freq freq, int interval) {
 static bool matches_by_rules(const std::tm& t, const RRule& rule) {
   if (!rule.by_month.empty()) {
     int month = t.tm_mon + 1;  // 1-based
-    if (std::find(rule.by_month.begin(), rule.by_month.end(), month) == rule.by_month.end())
+    if (std::find(rule.by_month.begin(), rule.by_month.end(), month) == rule.by_month.end()) {
       return false;
+    }
   }
   if (!rule.by_monthday.empty()) {
     int mday = t.tm_mday;
@@ -286,7 +289,7 @@ std::vector<std::string> expand_rrule(
     gmtime_r(&st_tt, &resolved);
     int wday = resolved.tm_wday;          // 0=Sun
     int days_since_mon = (wday + 6) % 7;  // 0=Mon
-    st_tt -= days_since_mon * 86400;
+    st_tt -= static_cast<time_t>(days_since_mon) * 86400;
     week_start = utc_to_tm(st_tt);
     // Keep the original time
     week_start.tm_hour = start.tm_hour;
@@ -300,7 +303,7 @@ std::vector<std::string> expand_rrule(
         int target_wday = static_cast<int>(day);
         int mon_offset = (target_wday + 6) % 7;  // offset from Monday
         time_t week_tt = tm_to_utc(current_week);
-        time_t day_tt = week_tt + mon_offset * 86400;
+        time_t day_tt = week_tt + static_cast<time_t>(mon_offset) * 86400;
         std::tm candidate = utc_to_tm(day_tt);
         candidate.tm_hour = start.tm_hour;
         candidate.tm_min = start.tm_min;
@@ -326,7 +329,7 @@ std::vector<std::string> expand_rrule(
       }
       // Advance by interval weeks
       time_t wt = tm_to_utc(current_week);
-      wt += 86400 * 7 * rule.interval;
+      wt += static_cast<time_t>(86400) * 7 * rule.interval;
       current_week = utc_to_tm(wt);
       current_week.tm_hour = start.tm_hour;
       current_week.tm_min = start.tm_min;

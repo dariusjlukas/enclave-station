@@ -22,6 +22,7 @@ import {
   apiCreateTask,
   apiJoinSpace,
   apiAcceptSpaceInvite,
+  authHeaders,
 } from "../helpers/api.js";
 
 let admin: TestUser;
@@ -371,7 +372,7 @@ test.describe("Task permissions", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${admin.token}`,
+          ...authHeaders(admin.token, true),
         },
         body: JSON.stringify({ user_id: viewer.userId, role: "user" }),
       },
@@ -422,7 +423,7 @@ test.describe("Task permissions", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${admin.token}`,
+          ...authHeaders(admin.token, true),
         },
         body: JSON.stringify({ user_id: viewer.userId, role: "user" }),
       },

@@ -54,12 +54,15 @@ async function registerFirstUserViaUi(
   await expect(page.getByText("EnclaveStation").first()).toBeVisible({
     timeout: 10_000,
   });
-  // First user triggers the Setup Wizard — dismiss if present so we land on
-  // the normal authenticated UI.
+  // First user triggers the Setup Wizard, which renders a beat after the
+  // authenticated layout. Wait for it to actually appear before dismissing —
+  // an instantaneous isVisible() check races the modal's mount and would skip
+  // the dismissal, leaving the (non-closable) wizard blocking later UI clicks.
   const setupWizard = page.getByText("Welcome! Server Setup");
+  await setupWizard.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {});
   if (await setupWizard.isVisible().catch(() => false)) {
     await page.getByRole("button", { name: "Complete Setup" }).click();
-    await setupWizard.waitFor({ state: "hidden", timeout: 5_000 });
+    await setupWizard.waitFor({ state: "hidden", timeout: 10_000 });
   }
 }
 
@@ -70,10 +73,12 @@ async function logoutViaUi(page: Page): Promise<void> {
   );
   await avatarBtn.click();
   await page.getByRole("menuitem", { name: "Logout" }).click();
-  // Wait for the login screen to come back — the sign-in button is the
-  // canonical "logged out" marker used by other specs.
+  // Wait for the login screen to come back — a sign-in button is the canonical
+  // "logged out" marker. The login screen shows one per enabled method
+  // ("Sign in with Passkey" / "...Browser Key"), so match the first to stay out
+  // of Playwright strict mode.
   await expect(
-    page.getByRole("button", { name: /sign in with/i }),
+    page.getByRole("button", { name: /sign in with/i }).first(),
   ).toBeVisible({ timeout: 10_000 });
 }
 
@@ -176,7 +181,18 @@ test.describe("Cookie auth (P1.4 Release C)", () => {
 
   test("WebSocket connects without ?token= query param", async ({ page }) => {
     const wsUrls: string[] = [];
-    page.on("websocket", (ws) => wsUrls.push(ws.url()));
+    page.on("websocket", (ws) => {
+      // Only inspect the app's own socket (path "/ws"). In dev the page also
+      // opens Vite's HMR socket (ws://host/?token=...), which is unrelated to
+      // app auth and legitimately carries a token.
+      let pathname = "";
+      try {
+        pathname = new URL(ws.url()).pathname;
+      } catch {
+        /* non-fatal: ignore unparseable ws url */
+      }
+      if (pathname === "/ws") wsUrls.push(ws.url());
+    });
 
     await registerFirstUserViaUi(page);
 

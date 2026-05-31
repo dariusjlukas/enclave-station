@@ -40,7 +40,8 @@ int parse_int_setting_or(const std::optional<std::string>& setting, int fallback
   if (setting) {
     try {
       return std::stoi(*setting);
-    } catch (...) {}
+    } catch (...) { /* non-fatal: parse failed, keep default */
+    }
   }
   return fallback;
 }
@@ -49,7 +50,8 @@ int64_t parse_i64_setting_or(const std::optional<std::string>& setting, int64_t 
   if (setting) {
     try {
       return std::stoll(*setting);
-    } catch (...) {}
+    } catch (...) { /* non-fatal: parse failed, keep default */
+    }
   }
   return fallback;
 }
@@ -67,7 +69,8 @@ json parse_auth_methods_setting(const std::optional<std::string>& setting) {
     try {
       auto parsed = json::parse(*setting);
       if (parsed.is_array()) auth_methods = parsed;
-    } catch (...) {}
+    } catch (...) { /* non-fatal: parse failed, keep default */
+    }
   }
   return auth_methods;
 }

@@ -219,7 +219,7 @@ void run_server(
       resp["llm_enabled"] = (llm_enabled && *llm_enabled == "true");
 
       auto body = resp.dump();
-      loop->defer([res, aborted, origin = std::move(origin), body = std::move(body)]() {
+      loop->defer([res, aborted, origin, body = std::move(body)]() {
         if (*aborted) return;
         res->writeHeader("Content-Type", "application/json");
         cors::apply(res, origin);
@@ -276,86 +276,94 @@ void run_server(
 }
 
 int main() {
-  // Initialize structured JSON logger before anything else. Reads LOG_LEVEL.
-  logging::init();
-  LOG_INFO_N("server", nullptr, "=== Chat Server ===");
+  try {
+    // Initialize structured JSON logger before anything else. Reads LOG_LEVEL.
+    logging::init();
+    LOG_INFO_N("server", nullptr, "=== Chat Server ===");
 
-  auto config = Config::from_env();
-  LOG_INFO_N("config", nullptr, "Port: " + std::to_string(config.server_port));
+    auto config = Config::from_env();
+    LOG_INFO_N("config", nullptr, "Port: " + std::to_string(config.server_port));
 
-  // Load CORS allowlist from env. Wildcard "*" is intentionally not supported.
-  cors::init_from_env(std::getenv("ALLOWED_ORIGINS"));
-  const auto& origins = cors::allowed_origins();
-  if (origins.empty()) {
-    LOG_WARN_N(
-      "config",
-      nullptr,
-      "ALLOWED_ORIGINS is not set; cross-origin browser requests will be rejected. "
-      "Set ALLOWED_ORIGINS to a comma-separated list of allowed origins "
-      "(e.g. https://example.com,https://app.example.com).");
-  } else {
-    std::string list;
-    for (size_t i = 0; i < origins.size(); ++i) {
-      if (i) list += ", ";
-      list += origins[i];
-    }
-    LOG_INFO_N("config", nullptr, "CORS allowlist: " + list);
-  }
-
-  // Create upload directory
-  std::filesystem::create_directories(config.upload_dir);
-  LOG_INFO_N("config", nullptr, "Upload dir: " + config.upload_dir);
-
-  // Connect to database
-  Database db(config.pg_connection_string(), config.db_pool_size);
-  if (config.enable_sqitch_only) {
-    LOG_INFO_N(
-      "db", nullptr, "ENABLE_SQITCH_ONLY=1; skipping run_migrations() (sqitch is authoritative)");
-    // Fail fast if the operator set ENABLE_SQITCH_ONLY=1 without applying a
-    // sqitch deploy first. Better to refuse to start than to begin serving
-    // requests against an empty schema.
-    if (!db.schema_initialized()) {
-      LOG_ERROR_N(
-        "db",
+    // Load CORS allowlist from env. Wildcard "*" is intentionally not supported.
+    cors::init_from_env(std::getenv("ALLOWED_ORIGINS"));
+    const auto& origins = cors::allowed_origins();
+    if (origins.empty()) {
+      LOG_WARN_N(
+        "config",
         nullptr,
-        "FATAL: ENABLE_SQITCH_ONLY=1 but the schema is not initialized "
-        "(no 'users' table found). Apply sqitch first: 'docker compose run --rm sqitch deploy'.");
-      return 1;
+        "ALLOWED_ORIGINS is not set; cross-origin browser requests will be rejected. "
+        "Set ALLOWED_ORIGINS to a comma-separated list of allowed origins "
+        "(e.g. https://example.com,https://app.example.com).");
+    } else {
+      std::string list;
+      for (size_t i = 0; i < origins.size(); ++i) {
+        if (i) list += ", ";
+        list += origins[i];
+      }
+      LOG_INFO_N("config", nullptr, "CORS allowlist: " + list);
     }
-  } else {
-    db.run_migrations();
+
+    // Create upload directory
+    std::filesystem::create_directories(config.upload_dir);
+    LOG_INFO_N("config", nullptr, "Upload dir: " + config.upload_dir);
+
+    // Connect to database
+    Database db(config.pg_connection_string(), config.db_pool_size);
+    if (config.enable_sqitch_only) {
+      LOG_INFO_N(
+        "db", nullptr, "ENABLE_SQITCH_ONLY=1; skipping run_migrations() (sqitch is authoritative)");
+      // Fail fast if the operator set ENABLE_SQITCH_ONLY=1 without applying a
+      // sqitch deploy first. Better to refuse to start than to begin serving
+      // requests against an empty schema.
+      if (!db.schema_initialized()) {
+        LOG_ERROR_N(
+          "db",
+          nullptr,
+          "FATAL: ENABLE_SQITCH_ONLY=1 but the schema is not initialized "
+          "(no 'users' table found). Apply sqitch first: 'docker compose run --rm sqitch deploy'.");
+        return 1;
+      }
+    } else {
+      db.run_migrations();
+    }
+    db.set_all_users_offline();
+
+    // Initialize Prometheus metrics state and seed the static DB pool size.
+    metrics::init();
+    metrics::db_pool_size().set(static_cast<int64_t>(db.pool_size()));
+
+    // Upload manager for chunked uploads
+    UploadManager upload_manager(config.upload_dir);
+
+    // Thread pool for async DB operations
+    DbThreadPool pool(config.db_thread_pool_size);
+
+    std::signal(SIGTERM, shutdown_handler);
+    std::signal(SIGINT, shutdown_handler);
+
+    if (config.has_ssl()) {
+      LOG_INFO_N(
+        "config",
+        nullptr,
+        "SSL enabled (cert: " + config.ssl_cert_path + ", key: " + config.ssl_key_path + ")");
+      run_server(
+        uWS::SSLApp(
+          {.key_file_name = config.ssl_key_path.c_str(),
+           .cert_file_name = config.ssl_cert_path.c_str()}),
+        config,
+        db,
+        upload_manager,
+        pool);
+    } else {
+      run_server(uWS::App(), config, db, upload_manager, pool);
+    }
+
+    return 0;
+  } catch (const std::exception& e) {
+    LOG_ERROR_N("server", nullptr, std::string("FATAL: ") + e.what());
+    return 1;
+  } catch (...) {
+    LOG_ERROR_N("server", nullptr, "FATAL: unknown exception");
+    return 1;
   }
-  db.set_all_users_offline();
-
-  // Initialize Prometheus metrics state and seed the static DB pool size.
-  metrics::init();
-  metrics::db_pool_size().set(static_cast<int64_t>(db.pool_size()));
-
-  // Upload manager for chunked uploads
-  UploadManager upload_manager(config.upload_dir);
-
-  // Thread pool for async DB operations
-  DbThreadPool pool(config.db_thread_pool_size);
-
-  std::signal(SIGTERM, shutdown_handler);
-  std::signal(SIGINT, shutdown_handler);
-
-  if (config.has_ssl()) {
-    LOG_INFO_N(
-      "config",
-      nullptr,
-      "SSL enabled (cert: " + config.ssl_cert_path + ", key: " + config.ssl_key_path + ")");
-    run_server(
-      uWS::SSLApp(
-        {.key_file_name = config.ssl_key_path.c_str(),
-         .cert_file_name = config.ssl_cert_path.c_str()}),
-      config,
-      db,
-      upload_manager,
-      pool);
-  } else {
-    run_server(uWS::App(), config, db, upload_manager, pool);
-  }
-
-  return 0;
 }

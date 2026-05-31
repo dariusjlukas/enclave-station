@@ -36,13 +36,21 @@ A self-hosted chat application with PKI-based authentication, multi-device suppo
 
    At minimum, change `POSTGRES_PASSWORD` to something secure.
 
-3. Build and start:
+3. Create the shared `llm-network` (one-time):
+
+   ```
+   docker network create llm-network
+   ```
+
+   The backend attaches to this external network to reach an optional LLM service you may run in a separate Compose project. Without it, `docker compose up` fails with `network llm-network declared as external, but could not be found`. The network persists across reboots and `docker compose down`.
+
+4. Build and start:
 
    ```
    docker compose up -d --build
    ```
 
-4. Open `http://localhost` in your browser. The first user to register becomes the admin.
+5. Open `http://localhost` in your browser. The first user to register becomes the admin.
 
 ## Development Setup
 

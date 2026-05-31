@@ -14,7 +14,14 @@ DbThreadPool::DbThreadPool(int num_threads) {
           task = std::move(tasks_.front());
           tasks_.pop();
         }
-        task();
+        try {
+          task();
+        } catch (const std::exception& e) {
+          LOG_ERROR_N(
+            "pool", nullptr, std::string("Unhandled exception in DB worker task: ") + e.what());
+        } catch (...) {
+          LOG_ERROR_N("pool", nullptr, "Unhandled non-standard exception in DB worker task");
+        }
       }
     });
   }

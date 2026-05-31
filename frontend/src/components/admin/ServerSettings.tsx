@@ -296,6 +296,7 @@ export function ServerSettings({ isSetup, onComplete, onDirtyChange }: Props) {
       personalSpacesTasksEnabled,
       personalSpacesWikiEnabled,
       personalSpacesMinigamesEnabled,
+      personalSpacesSandboxEnabled,
       personalSpacesStorageValue,
       personalSpacesStorageUnit,
       personalSpacesTotalStorageValue,

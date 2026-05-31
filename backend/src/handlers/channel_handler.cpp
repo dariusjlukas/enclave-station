@@ -9,7 +9,6 @@ template <bool SSL>
 void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/channels", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/channels");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string limit_str(req->getQuery("limit"));
     std::string offset_str(req->getQuery("offset"));
@@ -40,7 +39,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       auto user = db.find_user_by_id(user_id);
       bool is_server_admin = user && (user->role == "admin" || user->role == "owner");
@@ -91,9 +90,8 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/channels", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/channels");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -114,7 +112,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
         handle_create_channel(res, aborted, body, user_id);
       });
     });
@@ -123,7 +121,6 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Register /public BEFORE /:id routes to avoid route collision
   app.get("/api/channels/public", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/channels/public");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string search(req->getQuery("search"));
     std::string space_id(req->getQuery("space_id"));
@@ -147,7 +144,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       std::vector<Channel> channels;
 
@@ -197,7 +194,6 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.get("/api/channels/:id/messages", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/channels/:id/messages");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     std::string before(req->getQuery("before"));
@@ -223,7 +219,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       int limit = std::clamp(
         handler_utils::safe_parse_int(limit_str, defaults::MESSAGE_DEFAULT_LIMIT), 1, 500);
@@ -245,6 +241,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
       // Batch-load reactions for all messages
       std::vector<std::string> msg_ids;
+      msg_ids.reserve(messages.size());
       for (const auto& msg : messages) msg_ids.push_back(msg.id);
       auto reactions_map = db.get_reactions_for_messages(msg_ids);
 
@@ -296,7 +293,6 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/channels/:id/read-receipts", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("GET", "/api/channels/:id/read-receipts");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -314,7 +310,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_effective_role(channel_id, user_id);
         if (role.empty()) {
@@ -346,9 +342,8 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       });
   });
 
-  app.post("/api/channels/dm", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/dm", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/dm");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string body;
     auto aborted = std::make_shared<bool>(false);
@@ -369,15 +364,14 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
         handle_create_dm(res, aborted, body, user_id);
       });
     });
   });
 
-  app.post("/api/channels/:id/join", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/join", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/:id/join");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -395,7 +389,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         auto ch = db.find_channel_by_id(channel_id);
         if (!ch) {
@@ -447,18 +441,20 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         std::string join_role = is_space_admin ? "admin" : ch->default_role;
         db.add_channel_member(channel_id, user_id, join_role);
         loop_->defer([this, res, aborted, scope, user_id, channel_id]() {
-          ws.subscribe_user_to_channel(user_id, channel_id);
-          if (*aborted) return;
-          res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
-          scope->observe(200);
+          try {
+            ws.subscribe_user_to_channel(user_id, channel_id);
+            if (*aborted) return;
+            res->writeHeader("Content-Type", "application/json")->end(R"({"ok":true})");
+            scope->observe(200);
+          } catch (...) { /* non-fatal: deferred response write */
+          }
         });
       });
   });
 
   // Invite user to channel
-  app.post("/api/channels/:id/members", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/members", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/:id/members");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     std::string body;
@@ -491,7 +487,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_effective_role(channel_id, user_id);
         if (role != "admin") {
@@ -574,10 +570,9 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Kick user from channel
-  app.del("/api/channels/:id/members/:userId", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/channels/:id/members/:userId", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("DEL", "/api/channels/:id/members/:userId");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter(0));
     std::string target_user_id(req->getParameter(1));
@@ -601,7 +596,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         });
         return;
       }
-      auto user_id = *user_id_opt;
+      const auto& user_id = *user_id_opt;
 
       std::string role = db.get_effective_role(channel_id, user_id);
       if (role != "admin") {
@@ -647,10 +642,9 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Change member role
-  app.put("/api/channels/:id/members/:userId", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/channels/:id/members/:userId", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("PUT", "/api/channels/:id/members/:userId");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter(0));
     std::string target_user_id(req->getParameter(1));
@@ -686,7 +680,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_effective_role(channel_id, user_id);
         if (role != "admin") {
@@ -798,9 +792,8 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Update channel settings
-  app.put("/api/channels/:id", [this](auto* res, auto* req) {
+  put_csrf(app, "/api/channels/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("PUT", "/api/channels/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     std::string body;
@@ -833,7 +826,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_effective_role(channel_id, user_id);
         if (role != "admin") {
@@ -908,9 +901,8 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Leave channel
-  app.post("/api/channels/:id/leave", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/leave", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/:id/leave");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -1052,9 +1044,8 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Archive channel
-  app.post("/api/channels/:id/archive", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/archive", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/:id/archive");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -1072,7 +1063,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_effective_role(channel_id, user_id);
         auto user = db.find_user_by_id(user_id);
@@ -1111,10 +1102,9 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Unarchive channel
-  app.post("/api/channels/:id/unarchive", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/unarchive", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/:id/unarchive");
-    handler_utils::set_request_id_header(res, *scope);
     auto token = extract_session_token(req);
     std::string channel_id(req->getParameter("id"));
     auto aborted = std::make_shared<bool>(false);
@@ -1132,7 +1122,7 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        auto user_id = *user_id_opt;
+        const auto& user_id = *user_id_opt;
 
         std::string role = db.get_effective_role(channel_id, user_id);
         auto user = db.find_user_by_id(user_id);
@@ -1190,7 +1180,7 @@ std::string ChannelHandler<SSL>::get_user_id(uWS::HttpResponse<SSL>* res, uWS::H
 template <bool SSL>
 void ChannelHandler<SSL>::handle_create_channel(
   uWS::HttpResponse<SSL>* res,
-  std::shared_ptr<bool> aborted,
+  const std::shared_ptr<bool>& aborted,
   const std::string& body,
   const std::string& user_id) {
   try {
@@ -1292,7 +1282,7 @@ void ChannelHandler<SSL>::handle_create_channel(
 template <bool SSL>
 void ChannelHandler<SSL>::handle_create_dm(
   uWS::HttpResponse<SSL>* res,
-  std::shared_ptr<bool> aborted,
+  const std::shared_ptr<bool>& aborted,
   const std::string& body,
   const std::string& user_id) {
   try {
@@ -1359,15 +1349,18 @@ void ChannelHandler<SSL>::handle_create_dm(
                   user_id,
                   notify_str = std::move(notify_str),
                   resp_body = std::move(resp_body)]() {
-      // Notify all members via WebSocket and subscribe them to the channel
-      for (const auto& mid : member_ids) {
-        ws.subscribe_user_to_channel(mid, ch_id);
-        if (mid != user_id) {
-          ws.send_to_user(mid, notify_str);
+      try {
+        // Notify all members via WebSocket and subscribe them to the channel
+        for (const auto& mid : member_ids) {
+          ws.subscribe_user_to_channel(mid, ch_id);
+          if (mid != user_id) {
+            ws.send_to_user(mid, notify_str);
+          }
         }
+        if (*aborted) return;
+        res->writeHeader("Content-Type", "application/json")->end(resp_body);
+      } catch (...) { /* non-fatal: deferred response write */
       }
-      if (*aborted) return;
-      res->writeHeader("Content-Type", "application/json")->end(resp_body);
     });
   } catch (const std::exception& e) {
     auto err = json({{"error", e.what()}}).dump();

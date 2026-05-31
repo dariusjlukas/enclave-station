@@ -11,9 +11,8 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app_ = &app;
 
   // Upload file to a channel
-  app.post("/api/channels/:id/upload", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/upload", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/:id/upload");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string channel_id(req->getParameter("id"));
     std::string filename(req->getQuery("filename"));
@@ -67,7 +66,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         // Check if server is archived
         if (db.is_server_archived()) {
@@ -111,8 +110,9 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         int64_t max_size = file_access_utils::parse_max_file_size(
           db.get_setting("max_file_size"), config.max_file_size);
 
-        if (file_access_utils::exceeds_file_size_limit(
-              max_size, static_cast<int64_t>(body->size()))) {
+        if (
+          file_access_utils::exceeds_file_size_limit(
+            max_size, static_cast<int64_t>(body->size()))) {
           std::string msg = file_access_utils::file_too_large_message(max_size);
           auto err_json = json{{"error", msg}}.dump();
           loop_->defer([res, aborted, scope, err_json = std::move(err_json), origin]() {
@@ -160,7 +160,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           out.write(body->data(), body->size());
           out.close();
 
-          int64_t file_size = static_cast<int64_t>(body->size());
+          auto file_size = static_cast<int64_t>(body->size());
 
           // Create message with file attachment
           auto msg = db.create_file_message(
@@ -213,10 +213,9 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked upload to channel: init ---
-  app.post("/api/channels/:id/upload/init", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/upload/init", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/channels/:id/upload/init");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string channel_id(req->getParameter("id"));
     std::string token = extract_session_token(req);
@@ -245,7 +244,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         if (db.is_server_archived()) {
           loop_->defer([res, aborted, scope, origin]() {
@@ -361,10 +360,9 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked upload to channel: receive chunk ---
-  app.post("/api/channels/:id/upload/:uploadId/chunk", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/upload/:uploadId/chunk", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/channels/:id/upload/:uploadId/chunk");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string upload_id(req->getParameter(1));
@@ -374,7 +372,8 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     int index = -1;
     try {
       index = std::stoi(index_str);
-    } catch (...) {}
+    } catch (...) { /* non-fatal: parse failed, keep default */
+    }
 
     auto body = std::make_shared<std::string>();
     auto aborted = std::make_shared<bool>(false);
@@ -401,7 +400,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          std::string user_id = *user_id_opt;
+          const std::string& user_id = *user_id_opt;
 
           auto session = uploads.get_session(upload_id);
           if (!session || session->user_id != user_id) {
@@ -459,10 +458,9 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // --- Chunked upload to channel: complete ---
-  app.post("/api/channels/:id/upload/:uploadId/complete", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/channels/:id/upload/:uploadId/complete", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>(
       "POST", "/api/channels/:id/upload/:uploadId/complete");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string token = extract_session_token(req);
     std::string channel_id(req->getParameter(0));
@@ -490,7 +488,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           });
           return;
         }
-        std::string user_id = *user_id_opt;
+        const std::string& user_id = *user_id_opt;
 
         auto session = uploads.get_session(upload_id);
         if (!session || session->user_id != user_id) {
@@ -607,7 +605,6 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Download a file
   app.get("/api/files/:id", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("GET", "/api/files/:id");
-    handler_utils::set_request_id_header(res, *scope);
     std::string origin(req->getHeader("origin"));
     std::string file_id(req->getParameter("id"));
 
@@ -655,6 +652,41 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             ->writeHeader("Content-Type", "application/json")
             ->end(R"({"error":"File not found"})");
           scope->observe(404);
+        });
+        return;
+      }
+
+      // Authorization: the file must belong to a channel/space the user can access.
+      // For space files, mirror SpaceFileHandler::check_space_access_sync exactly
+      // (space member OR server admin/owner OR per-resource "files" perm on personal space).
+      bool authorized = false;
+      if (info->channel_id) {
+        authorized = db.is_channel_member(*info->channel_id, *user_id);
+      } else if (info->space_id) {
+        const std::string& space_id = *info->space_id;
+        if (db.is_space_member(space_id, *user_id)) {
+          authorized = true;
+        } else {
+          auto user = db.find_user_by_id(*user_id);
+          if (user && (user->role == "admin" || user->role == "owner")) {
+            authorized = true;
+          } else {
+            auto space = db.find_space_by_id(space_id);
+            if (
+              space && space->is_personal &&
+              db.has_resource_permission_in_space(space_id, *user_id, "files")) {
+              authorized = true;
+            }
+          }
+        }
+      }
+      if (!authorized) {
+        loop_->defer([res, aborted, scope, origin]() {
+          if (*aborted) return;
+          res->writeStatus("403")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Forbidden"})");
+          scope->observe(403);
         });
         return;
       }

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <ctime>
 #include <optional>
 #include <string>
@@ -6,10 +7,10 @@
 
 namespace recurrence {
 
-enum class Freq { DAILY, WEEKLY, MONTHLY, YEARLY };
+enum class Freq : std::uint8_t { DAILY, WEEKLY, MONTHLY, YEARLY };
 
 // Weekday constants matching tm_wday (0=Sun, 1=Mon, ..., 6=Sat)
-enum class Weekday { SU = 0, MO = 1, TU = 2, WE = 3, TH = 4, FR = 5, SA = 6 };
+enum class Weekday : std::uint8_t { SU = 0, MO = 1, TU = 2, WE = 3, TH = 4, FR = 5, SA = 6 };
 
 struct RRule {
   Freq freq = Freq::WEEKLY;

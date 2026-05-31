@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
+# Require bash 4+ (this script uses associative arrays / `declare -A`).
+# macOS ships bash 3.2, where `declare -A` is a silent no-op and string array
+# subscripts like RESULTS["Backend Static Analysis"] get mis-parsed as
+# arithmetic, producing a cryptic "Analysis: unbound variable" under `set -u`.
+if [ -z "${BASH_VERSINFO:-}" ] || [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+    echo "Error: run-tests.sh requires bash 4.0+ (detected: ${BASH_VERSION:-non-bash shell})." >&2
+    echo "On macOS: 'brew install bash', then run './run-tests.sh' (uses /usr/bin/env bash)" >&2
+    echo "or '\$(brew --prefix)/bin/bash run-tests.sh'. Do not invoke with 'sh' or '/bin/bash'." >&2
+    exit 1
+fi
+
 CI="${CI:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,6 +20,48 @@ FRONTEND_DIR="$SCRIPT_DIR/frontend"
 BUILD_DIR="$BACKEND_DIR/build"
 API_TESTS_DIR="$SCRIPT_DIR/tests/api"
 E2E_TESTS_DIR="$SCRIPT_DIR/tests/e2e"
+
+# Portable CPU count: Linux has `nproc`; macOS/BSD use `sysctl -n hw.ncpu`.
+NPROC="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+# Portable total-RAM in GB: macOS uses `sysctl hw.memsize` (bytes); Linux reads
+# /proc/meminfo (kB). Used to size the parallel test-worker pools below.
+if [ "$(uname)" = "Darwin" ]; then
+    RAM_GB=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1073741824 ))
+else
+    RAM_GB=$(( $(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0) / 1048576 ))
+fi
+[ "${RAM_GB:-0}" -lt 1 ] && RAM_GB=1
+
+# Homebrew's LLVM (which provides clang-tidy) is keg-only on macOS — it is not
+# symlinked onto PATH. Add its bin dir so the static-analysis check finds
+# clang-tidy. On Linux these paths don't exist, so this is a harmless no-op.
+if ! command -v clang-tidy &>/dev/null; then
+    for _llvm_bin in "$(brew --prefix llvm 2>/dev/null)/bin" /opt/homebrew/opt/llvm/bin /usr/local/opt/llvm/bin; do
+        if [ -x "$_llvm_bin/clang-tidy" ]; then
+            PATH="$_llvm_bin:$PATH"
+            break
+        fi
+    done
+fi
+
+# Several Homebrew formulae (libpq, openssl) are keg-only and not on the default
+# pkg-config search path. libpqxx.pc lists libpq as a private dependency, so a
+# fresh CMake configure (e.g. the static-analysis build dir) fails with
+# "Package 'libpq' not found" unless we add these. Harmless no-op without brew.
+if command -v brew &>/dev/null; then
+    for _pc_pkg in libpq openssl@3 openssl; do
+        _pc_dir="$(brew --prefix "$_pc_pkg" 2>/dev/null)/lib/pkgconfig"
+        [ -d "$_pc_dir" ] && PKG_CONFIG_PATH="$_pc_dir:${PKG_CONFIG_PATH:-}"
+    done
+    export PKG_CONFIG_PATH
+fi
+
+# The vendored libs/hiredis declares cmake_minimum_required(VERSION 3.0.0),
+# which CMake 4.x rejects ("Compatibility with CMake < 3.5 has been removed").
+# Restore < 3.5 policy compatibility so fresh configures succeed. This is a
+# no-op on CMake 3.x and matches the workaround already cached in build/.
+CMAKE_COMPAT="-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
 
 # Colors (disabled if not a terminal)
 if [ -t 1 ]; then
@@ -89,6 +142,88 @@ wait_check_bg() {
         FAILED=1
         printf -- "${RED}--- %s: FAILED ---${NC}\n" "$name"
     fi
+}
+
+# Build the static-analysis tree (clang-tidy) and FAIL on any clang-tidy finding.
+# CMake's clang-tidy integration only prints findings; it does not fail the build,
+# so we scan the output ourselves. clang-tidy findings end with a [check-name]
+# (e.g. [performance-...], [bugprone-...]); compiler warnings end with [-Wflag]
+# (leading dash) and are deliberately NOT counted, so third-party/system
+# -Wdeprecated noise can't fail the check. Run via run_check_bg (a subshell that
+# inherits this function), so no fragile bash -c escaping is needed.
+run_static_analysis() {
+    cd "$BACKEND_DIR" || return 1
+    # Clean first: CMake only runs clang-tidy while (re)compiling a file, so an
+    # up-to-date build-analysis would skip analysis entirely and the check would
+    # pass despite existing findings. A from-scratch build guarantees clang-tidy
+    # runs on every file, so the gate is deterministic.
+    rm -rf build-analysis
+    cmake -B build-analysis -DCMAKE_BUILD_TYPE=Debug $CMAKE_COMPAT -DSTATIC_ANALYSIS=ON || return 1
+    # clang-tidy is memory-hungry (~1.5 GB/process). Cap parallelism by RAM so a
+    # from-scratch analysis doesn't swap on low-memory hosts (it also runs
+    # alongside the main build during phase 1).
+    local sa_jobs=$NPROC
+    local sa_by_ram=$(( (RAM_GB - 2) / 2 )); [ "$sa_by_ram" -lt 1 ] && sa_by_ram=1
+    [ "$sa_jobs" -gt "$sa_by_ram" ] && sa_jobs=$sa_by_ram
+    local log
+    log=$(mktemp)
+    cmake --build build-analysis -j"$sa_jobs" 2>&1 | tee "$log"
+    local rc=${PIPESTATUS[0]}
+    if [ "$rc" -ne 0 ]; then rm -f "$log"; return "$rc"; fi
+    local n
+    n=$(grep -cE 'warning:.*\[[a-z][a-z0-9]*-[a-z0-9-]+\]$' "$log" 2>/dev/null || true)
+    rm -f "$log"
+    if [ "${n:-0}" -gt 0 ]; then
+        printf "\n%s clang-tidy finding(s) detected; treating static analysis as FAILED.\n" "$n"
+        return 1
+    fi
+    return 0
+}
+
+# Install the Playwright browsers WITHOUT relying on Playwright's bundled Node
+# extractor, which hangs during extraction on newer Node (e.g. Node 24: the
+# download reaches 100% but extract-zip then stalls indefinitely with no CPU/IO).
+# Instead we ask Playwright for the artifact list + URLs via `--dry-run` (it omits
+# the "Download url" line for already-installed artifacts), download each with
+# curl, and unpack with the OS-native unarchiver (ditto on macOS, unzip on Linux)
+# into Playwright's cache, writing its INSTALLATION_COMPLETE marker. Idempotent
+# and fast on subsequent runs. Returns non-zero if any artifact can't be installed.
+ensure_playwright_browsers() {
+    local e2e_dir="$1"
+    local plan
+    plan=$(cd "$e2e_dir" && npx playwright install chromium --dry-run 2>/dev/null) || return 1
+    # dry-run lists every artifact's install location + download URL regardless
+    # of install state, so we discover the full set here and decide skip/install
+    # per-artifact via its INSTALLATION_COMPLETE marker (a reliable idempotency
+    # signal we control).
+    local pairs
+    pairs=$(printf '%s\n' "$plan" | awk '
+        /Install location:/ { loc=$3 }
+        /Download url:/ && loc { print loc "\t" $3; loc="" }' | sort -u)
+    [ -z "$pairs" ] && return 0  # nothing to install
+
+    local failed=0 loc url tmpzip
+    while IFS=$'\t' read -r loc url; do
+        [ -z "$loc" ] && continue
+        if [ -f "$loc/INSTALLATION_COMPLETE" ]; then
+            printf "  already installed: %s\n" "$(basename "$loc")"
+            continue
+        fi
+        printf "  installing %s\n" "$(basename "$loc")"
+        tmpzip=$(mktemp)
+        if ! curl -fsSL -o "$tmpzip" "$url"; then
+            printf "  download failed: %s\n" "$url"; rm -f "$tmpzip"; failed=1; break
+        fi
+        rm -rf "$loc"; mkdir -p "$loc"
+        if [ "$(uname)" = "Darwin" ]; then
+            ditto -x -k "$tmpzip" "$loc" || { rm -f "$tmpzip"; failed=1; break; }
+        else
+            unzip -q -o "$tmpzip" -d "$loc" || { rm -f "$tmpzip"; failed=1; break; }
+        fi
+        rm -f "$tmpzip"
+        touch "$loc/INSTALLATION_COMPLETE"
+    done < <(printf '%s\n' "$pairs")
+    return "$failed"
 }
 
 print_summary() {
@@ -185,8 +320,24 @@ RUN_NGINX_HEADERS=false
 RUN_SQITCH_CHECK=false
 RUN_REDIS_MI=false
 SKIP_BUILD=false
-E2E_WORKERS=16
-API_WORKERS=64
+
+# Auto-size the parallel test-worker pools to the host. Each API worker runs its
+# own backend process; each E2E worker additionally runs a Vite dev server and a
+# Chromium instance, so E2E workers are far heavier (RAM + CPU). We bound by both
+# CPU and RAM and clamp to sane maxima. (16 cores / 128 GB lands on the previous
+# 64 / 16 defaults; a 6-core / 8 GB laptop gets a handful instead of thrashing.)
+# Override either pool explicitly with `--parallel N`.
+_usable_gb=$(( RAM_GB > 2 ? RAM_GB - 2 : 1 ))           # reserve ~2 GB for OS + PostgreSQL
+API_WORKERS=$(( 4 * NPROC ))                            # API tests are I/O-bound
+[ "$API_WORKERS" -gt "$_usable_gb" ] && API_WORKERS=$_usable_gb   # ~1 GB per backend
+[ "$API_WORKERS" -gt 64 ] && API_WORKERS=64             # cap (PostgreSQL conn limit)
+[ "$API_WORKERS" -lt 1 ] && API_WORKERS=1
+E2E_WORKERS=$NPROC                                      # E2E is CPU/RAM-heavy
+_e2e_by_ram=$(( _usable_gb / 3 ))                       # ~3 GB per backend+vite+chromium
+[ "$E2E_WORKERS" -gt "$_e2e_by_ram" ] && E2E_WORKERS=$_e2e_by_ram
+[ "$E2E_WORKERS" -gt 16 ] && E2E_WORKERS=16             # cap
+[ "$E2E_WORKERS" -lt 1 ] && E2E_WORKERS=1
+
 ANY_FLAG=false
 NEXT_IS_WORKERS=false
 
@@ -256,6 +407,10 @@ NEED_BACKEND=$( [ "$RUN_BACKEND_UNIT" = true ] || [ "$RUN_BACKEND_INTEG" = true 
 NEED_PG=$( [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] && echo true || echo false )
 
 printf "${BOLD}Chat App Test Runner${NC}\n"
+if [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ]; then
+    printf "${BLUE}Host: %s cores / %s GB RAM -> API workers=%s, E2E workers=%s (override: --parallel N)${NC}\n" \
+        "$NPROC" "$RAM_GB" "$API_WORKERS" "$E2E_WORKERS"
+fi
 
 # =====================================================================
 # Phase 1: Run frontend lint/typecheck/format AND backend build in parallel
@@ -310,15 +465,22 @@ if [ "$NEED_BACKEND" = true ] && [ "$SKIP_BUILD" = false ]; then
         SANITIZER_FLAG=""
         if [ "$RUN_BACKEND_UNIT" = true ]; then
             COVERAGE_FLAG="-DCODE_COVERAGE=ON"
-            # Enable sanitizers only if the runtime library is available
-            if gcc -fsanitize=address,undefined -x c -c /dev/null -o /dev/null &>/dev/null && \
-               [ -e "$(gcc -print-file-name=libasan.so)" ]; then
+            # Enable sanitizers only if the toolchain can actually LINK them.
+            # A compile-only (-c) check passes even when the runtime is missing,
+            # and probing for "libasan.so" is Linux-specific — Apple's clang
+            # ships the sanitizer runtimes as libclang_rt.*san_*.dylib, not a
+            # libasan.so. Linking a tiny program is the portable test: it
+            # requires libasan/libubsan on Linux and the clang_rt dylibs on macOS.
+            _santest_bin="$(mktemp)"
+            if printf 'int main(void){return 0;}\n' | \
+               gcc -fsanitize=address,undefined -x c - -o "$_santest_bin" &>/dev/null; then
                 SANITIZER_FLAG="-DSANITIZERS=ON"
             else
                 MISSING_DEPS+=("libasan + libubsan (runtime sanitizers for unit tests)")
             fi
+            rm -f "$_santest_bin"
         fi
-        run_check_bg "Backend Build" bash -c "cd '$BACKEND_DIR' && cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON $COVERAGE_FLAG $SANITIZER_FLAG && cmake --build build -j\$(nproc)"
+        run_check_bg "Backend Build" bash -c "cd '$BACKEND_DIR' && cmake -B build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON $CMAKE_COMPAT $COVERAGE_FLAG $SANITIZER_FLAG && cmake --build build -j$NPROC"
         BACKEND_BUILD_BG=true
     fi
 fi
@@ -327,7 +489,7 @@ fi
 STATIC_ANALYSIS_BG=false
 if [ "$RUN_STATIC_ANALYSIS" = true ] && [ "$SKIP_BUILD" = false ] && [ "$BUILD_OK" = true ]; then
     if command -v clang-tidy &>/dev/null; then
-        run_check_bg "Backend Static Analysis" bash -c "cd '$BACKEND_DIR' && cmake -B build-analysis -DCMAKE_BUILD_TYPE=Debug -DSTATIC_ANALYSIS=ON && cmake --build build-analysis -j\$(nproc) 2>&1"
+        run_check_bg "Backend Static Analysis" run_static_analysis
         STATIC_ANALYSIS_BG=true
     else
         RESULTS["Backend Static Analysis"]="SKIP"
@@ -405,7 +567,11 @@ if [ "$BUILD_OK" = true ] && [ "$RUN_BACKEND_UNIT" = true ]; then
         fi
     done < <(find "$BUILD_DIR" -name '*.gcno' 2>/dev/null)
 
-    run_check "Backend Unit Tests" bash -c "cd '$BUILD_DIR' && ctest --output-on-failure -L unit --timeout 30 -j\$(nproc)"
+    # PasswordTests exercises Argon2, which is deliberately CPU-heavy; on
+    # constrained machines (or when this runs as part of the full suite) it can
+    # exceed a tight per-test timeout. 120s leaves ample headroom without
+    # masking a genuine hang.
+    run_check "Backend Unit Tests" bash -c "cd '$BUILD_DIR' && ctest --output-on-failure -L unit --timeout 120 -j$NPROC"
 fi
 
 # Wait for PostgreSQL to be ready (it was started during phase 1)
@@ -422,6 +588,25 @@ if [ "$PG_CONTAINER_STARTED" = true ]; then
 
     if [ "$PG_READY" = false ]; then
         printf "${RED}Error: Test PostgreSQL container failed to start within 30s.${NC}\n"
+        FAILED=1
+    fi
+fi
+
+# Apply the canonical schema to the shared test database. The backend's
+# run_migrations() is now a deprecated no-op (schema is managed by sqitch), so
+# the integration tests and the single-worker API/E2E runs — which all connect
+# to this shared DB — need the sqitch deploy script applied here. Multi-worker
+# API/E2E runs create their own per-worker DBs and apply the schema themselves
+# (see tests/api/conftest.py and tests/e2e/fixtures.ts).
+SCHEMA_SQL="$SCRIPT_DIR/sqitch/deploy/0001-initial-schema.sql"
+if [ "$PG_READY" = true ]; then
+    printf "\n${BLUE}Applying sqitch schema to test database...${NC}\n"
+    if ! docker exec -i "$TEST_PG_CONTAINER" \
+            psql -v ON_ERROR_STOP=1 -U "$TEST_PG_USER" -d "$TEST_PG_DB" \
+            <"$SCHEMA_SQL" >/dev/null 2>&1; then
+        printf "${RED}Error: failed to apply sqitch schema to test database.${NC}\n"
+        printf "  Source: %s\n" "$SCHEMA_SQL"
+        PG_READY=false
         FAILED=1
     fi
 fi
@@ -601,7 +786,21 @@ if [ "$RUN_E2E" = true ]; then
             (cd "$E2E_TESTS_DIR" && npm install) || true
         fi
 
-        if [ "$E2E_WORKERS" -gt 1 ]; then
+        # Ensure the Playwright browser binaries are installed (native extraction;
+        # see ensure_playwright_browsers). If it can't, skip E2E rather than hang.
+        printf "\n${BLUE}Ensuring Playwright browser (chromium) is installed...${NC}\n"
+        E2E_BROWSER_OK=true
+        if ! ensure_playwright_browsers "$E2E_TESTS_DIR"; then
+            printf "${YELLOW}Could not install the Playwright browser; skipping E2E tests.${NC}\n"
+            printf "${YELLOW}  Install manually: (cd tests/e2e && npx playwright install chromium)${NC}\n"
+            RESULTS["E2E Tests"]="SKIP"
+            MISSING_DEPS+=("playwright chromium browser (E2E)")
+            E2E_BROWSER_OK=false
+        fi
+
+        if [ "$E2E_BROWSER_OK" = false ]; then
+            :  # browser unavailable — E2E already marked SKIP above
+        elif [ "$E2E_WORKERS" -gt 1 ]; then
             # Multi-worker mode: fixtures handle per-worker backend/Vite
             printf "\n${BLUE}Running E2E tests with %s parallel workers...${NC}\n" "$E2E_WORKERS"
             run_check "E2E Tests" bash -c "

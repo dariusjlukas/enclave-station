@@ -117,6 +117,60 @@ inline void send_csrf_403(uWS::HttpResponse<SSL>* res) {
     ->end(R"({"error":"CSRF token missing or mismatched"})");
 }
 
+// Route-registration wrappers that enforce the double-submit CSRF check before
+// delegating to the real handler. State-changing requests must carry an
+// X-CSRF-Token header matching the `csrf` cookie (set on login). The check uses
+// only headers/cookies, so it runs synchronously before the handler reads any
+// body. Used for authenticated POST/PUT/DELETE routes; pre-session auth
+// endpoints (login/register/etc.) intentionally keep plain app.post/put/del.
+// CSRF only matters for requests that carry a session (the forgeable case).
+// A request with no session cookie can't be a cross-site forgery of an
+// authenticated action, so we let it through to the handler, which returns 401.
+// This keeps "unauthenticated -> 401" intact while enforcing "authenticated but
+// missing/invalid CSRF -> 403".
+inline bool csrf_required_and_failed(uWS::HttpRequest* req) {
+  return !extract_session_token(req).empty() && !csrf_ok(req);
+}
+
+template <bool SSL, typename H>
+inline void post_csrf(uWS::TemplatedApp<SSL>& app, std::string pattern, H&& handler) {
+  app.post(
+    std::move(pattern),
+    [h = std::forward<H>(handler)](uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) mutable {
+      if (csrf_required_and_failed(req)) {
+        send_csrf_403(res);
+        return;
+      }
+      h(res, req);
+    });
+}
+
+template <bool SSL, typename H>
+inline void put_csrf(uWS::TemplatedApp<SSL>& app, std::string pattern, H&& handler) {
+  app.put(
+    std::move(pattern),
+    [h = std::forward<H>(handler)](uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) mutable {
+      if (csrf_required_and_failed(req)) {
+        send_csrf_403(res);
+        return;
+      }
+      h(res, req);
+    });
+}
+
+template <bool SSL, typename H>
+inline void del_csrf(uWS::TemplatedApp<SSL>& app, std::string pattern, H&& handler) {
+  app.del(
+    std::move(pattern),
+    [h = std::forward<H>(handler)](uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) mutable {
+      if (csrf_required_and_failed(req)) {
+        send_csrf_403(res);
+        return;
+      }
+      h(res, req);
+    });
+}
+
 // Generate a cryptographically random CSRF token (16 bytes -> 32 hex chars).
 // Falls back to a non-secure source if RAND_bytes fails (should be unreachable
 // in practice; avoids crashing the login flow on a transient OpenSSL hiccup).

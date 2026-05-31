@@ -25,6 +25,7 @@ import { UserPopoverCard } from '../common/UserPopoverCard';
 import { UserAvatar } from '../common/UserAvatar';
 import { SpaceAvatar } from '../common/SpaceAvatar';
 import { relativeTime } from '../../utils/time';
+import { sanitizeSnippet } from '../../utils/sanitize';
 
 type SearchTab =
   | 'messages'
@@ -517,7 +518,9 @@ export function GlobalSearch() {
               {w.snippet && (
                 <p
                   className='text-xs text-default-400 line-clamp-1'
-                  dangerouslySetInnerHTML={{ __html: w.snippet }}
+                  dangerouslySetInnerHTML={{
+                    __html: sanitizeSnippet(w.snippet),
+                  }}
                 />
               )}
               <p className='text-xs text-default-400 mt-0.5'>

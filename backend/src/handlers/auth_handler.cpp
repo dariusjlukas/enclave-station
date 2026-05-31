@@ -11,7 +11,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.post("/api/auth/register/options", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/register/options");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -27,7 +26,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/register/verify", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/register/verify");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -43,7 +41,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/login/options", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/login/options");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -59,7 +56,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/login/verify", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/login/verify");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -76,7 +72,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // PKI (browser key) routes
   app.post("/api/auth/pki/challenge", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/pki/challenge");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -92,7 +87,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/pki/register", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/pki/register");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -108,7 +102,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/pki/login", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/pki/login");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -125,7 +118,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Recovery key login
   app.post("/api/auth/recovery", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/recovery");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -142,7 +134,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Recovery token (admin-generated) login
   app.post("/api/auth/recover-account", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/recover-account");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -160,7 +151,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.post("/api/auth/request-access/options", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/request-access/options");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -176,7 +166,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/request-access", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/request-access");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -193,7 +182,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.get("/api/auth/request-status/:id", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("GET", "/api/auth/request-status/:id");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string request_id(req->getParameter(0));
     res->onAborted([aborted]() { *aborted = true; });
@@ -206,7 +194,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.post("/api/auth/password/register", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/password/register");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -222,7 +209,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/password/login", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/password/login");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -236,9 +222,8 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/auth/password/change", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/auth/password/change", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/password/change");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     auto token = extract_session_token(req);
     std::string body;
@@ -253,9 +238,8 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.post("/api/auth/password/set", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/auth/password/set", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/password/set");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     auto token = extract_session_token(req);
     std::string body;
@@ -270,9 +254,8 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     });
   });
 
-  app.del("/api/auth/password", [this](auto* res, auto* req) {
+  del_csrf(app, "/api/auth/password", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("DEL", "/api/auth/password");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     auto token = extract_session_token(req);
     res->onAborted([aborted]() { *aborted = true; });
@@ -283,7 +266,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/mfa/verify", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/mfa/verify");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -299,7 +281,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/mfa/setup", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/mfa/setup");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -316,7 +297,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   app.post("/api/auth/mfa/setup/verify", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/mfa/setup/verify");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -331,10 +311,9 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Device linking - get challenge for PKI device linking
-  app.post("/api/auth/add-device/pki/challenge", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/auth/add-device/pki/challenge", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/add-device/pki/challenge");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -380,9 +359,8 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Device linking - add browser key via device token
-  app.post("/api/auth/add-device/pki", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/auth/add-device/pki", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/add-device/pki");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -397,10 +375,9 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Device linking - passkey registration options
-  app.post("/api/auth/add-device/passkey/options", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/auth/add-device/passkey/options", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/add-device/passkey/options");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -415,10 +392,9 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   });
 
   // Device linking - passkey registration verify
-  app.post("/api/auth/add-device/passkey/verify", [this](auto* res, auto* req) {
+  post_csrf(app, "/api/auth/add-device/passkey/verify", [this](auto* res, auto* req) {
     auto scope =
       std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/add-device/passkey/verify");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -434,7 +410,6 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/logout", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/logout");
-    handler_utils::set_request_id_header(res, *scope);
     auto aborted = std::make_shared<bool>(false);
     auto token = extract_session_token(req);
     res->onAborted([aborted]() { *aborted = true; });
@@ -469,7 +444,7 @@ bool AuthHandler<SSL>::is_mfa_required_for_method(const std::string& method) {
 template <bool SSL>
 bool AuthHandler<SSL>::check_and_handle_mfa(
   uWS::HttpResponse<SSL>* res,
-  std::shared_ptr<bool> aborted,
+  const std::shared_ptr<bool>& aborted,
   const User& user,
   const std::string& auth_method) {
   bool mfa_required = is_mfa_required_for_method(auth_method);
@@ -520,7 +495,7 @@ json AuthHandler<SSL>::make_user_json(const User& user) {
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_register_options(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
       loop_->defer([res, aborted]() {
@@ -573,7 +548,7 @@ void AuthHandler<SSL>::handle_register_options(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_register_verify(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
       loop_->defer([res, aborted]() {
@@ -629,6 +604,16 @@ void AuthHandler<SSL>::handle_register_verify(
 
     db.delete_webauthn_challenge(challenge);
 
+    if (!result) {
+      loop_->defer([res, aborted]() {
+        if (*aborted) return;
+        res->writeStatus("401")
+          ->writeHeader("Content-Type", "application/json")
+          ->end(R"({"error":"WebAuthn registration verification failed"})");
+      });
+      return;
+    }
+
     std::string username = extra.at("username");
     std::string display_name = extra.at("display_name");
     std::string invite_token = extra.value("invite_token", "");
@@ -674,7 +659,7 @@ void AuthHandler<SSL>::handle_register_verify(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_login_options(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
       loop_->defer([res, aborted]() {
@@ -708,7 +693,7 @@ void AuthHandler<SSL>::handle_login_options(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_login_verify(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
       loop_->defer([res, aborted]() {
@@ -842,7 +827,7 @@ void AuthHandler<SSL>::handle_login_verify(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_pki_challenge(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
       loop_->defer([res, aborted]() {
@@ -881,7 +866,7 @@ void AuthHandler<SSL>::handle_pki_challenge(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_pki_register(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
       loop_->defer([res, aborted]() {
@@ -988,7 +973,7 @@ void AuthHandler<SSL>::handle_pki_register(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_pki_login(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
       loop_->defer([res, aborted]() {
@@ -1097,7 +1082,7 @@ void AuthHandler<SSL>::handle_pki_login(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_add_device_pki(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("pki")) {
       loop_->defer([res, aborted]() {
@@ -1195,7 +1180,7 @@ void AuthHandler<SSL>::handle_add_device_pki(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_add_device_passkey_options(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("passkey")) {
       loop_->defer([res, aborted]() {
@@ -1262,10 +1247,10 @@ void AuthHandler<SSL>::handle_add_device_passkey_options(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_add_device_passkey_verify(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
-    std::string credential_id = j.at("id");
+    (void)j.at("id");  // validate "id" is present
     auto response = j.at("response");
     std::string attestation_object = response.at("attestationObject");
     std::string client_data_json = response.at("clientDataJSON");
@@ -1377,7 +1362,7 @@ void AuthHandler<SSL>::handle_add_device_passkey_verify(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_recovery_login(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string recovery_key = j.at("recovery_key");
@@ -1449,7 +1434,7 @@ void AuthHandler<SSL>::handle_recovery_login(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_recovery_token_login(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string token = j.at("token");
@@ -1522,7 +1507,7 @@ void AuthHandler<SSL>::handle_recovery_token_login(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_request_access_options(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto mode = db.get_setting("registration_mode");
     std::string reg_mode = mode.value_or("invite");
@@ -1576,7 +1561,7 @@ void AuthHandler<SSL>::handle_request_access_options(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_request_access(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto mode = db.get_setting("registration_mode");
     std::string reg_mode = mode.value_or("invite");
@@ -1807,7 +1792,7 @@ password_auth::PasswordPolicy AuthHandler<SSL>::get_password_policy() {
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_register(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("password")) {
       loop_->defer([res, aborted]() {
@@ -1890,7 +1875,7 @@ void AuthHandler<SSL>::handle_password_register(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_login(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     if (!is_method_enabled("password")) {
       loop_->defer([res, aborted]() {
@@ -1994,7 +1979,7 @@ void AuthHandler<SSL>::handle_password_login(
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_change(
   uWS::HttpResponse<SSL>* res,
-  std::shared_ptr<bool> aborted,
+  const std::shared_ptr<bool>& aborted,
   const std::string& body,
   const std::string& session_token) {
   try {
@@ -2076,7 +2061,7 @@ void AuthHandler<SSL>::handle_password_change(
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_set(
   uWS::HttpResponse<SSL>* res,
-  std::shared_ptr<bool> aborted,
+  const std::shared_ptr<bool>& aborted,
   const std::string& body,
   const std::string& session_token) {
   try {
@@ -2148,7 +2133,9 @@ void AuthHandler<SSL>::handle_password_set(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_password_delete(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& session_token) {
+  uWS::HttpResponse<SSL>* res,
+  const std::shared_ptr<bool>& aborted,
+  const std::string& session_token) {
   try {
     auto user_id = db.validate_session(session_token);
     if (!user_id) {
@@ -2200,7 +2187,7 @@ void AuthHandler<SSL>::handle_password_delete(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_mfa_verify(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string mfa_token = j.at("mfa_token");
@@ -2311,7 +2298,7 @@ void AuthHandler<SSL>::handle_mfa_verify(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_mfa_setup(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string mfa_token = j.at("mfa_token");
@@ -2363,7 +2350,7 @@ void AuthHandler<SSL>::handle_mfa_setup(
 
 template <bool SSL>
 void AuthHandler<SSL>::handle_mfa_setup_verify(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& body) {
+  uWS::HttpResponse<SSL>* res, const std::shared_ptr<bool>& aborted, const std::string& body) {
   try {
     auto j = json::parse(body);
     std::string mfa_token = j.at("mfa_token");
@@ -2476,7 +2463,9 @@ void AuthHandler<SSL>::handle_mfa_setup_verify(
 // Poll for join request status
 template <bool SSL>
 void AuthHandler<SSL>::handle_request_status(
-  uWS::HttpResponse<SSL>* res, std::shared_ptr<bool> aborted, const std::string& request_id) {
+  uWS::HttpResponse<SSL>* res,
+  const std::shared_ptr<bool>& aborted,
+  const std::string& request_id) {
   try {
     auto request = db.get_join_request(request_id);
     if (!request) {

@@ -120,7 +120,9 @@ class TestRecoveryKeyLogin:
         r = client.post("/api/auth/recovery", json={"recovery_key": key})
         assert r.status_code == 200
         data = r.json()
-        assert data["token"]
+        # Release C: auth responses no longer include a `token` body field; the
+        # session is delivered via the Set-Cookie session cookie instead.
+        assert r.cookies.get("session")
         assert data["user"]["username"] == "recoverme"
 
     def test_recovery_key_consumed(self, client):

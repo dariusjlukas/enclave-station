@@ -19,10 +19,15 @@ import websockets
 from conftest import auth_header
 
 
-def _ws_url(base_url: str, token: str) -> str:
-    # base_url is "http://127.0.0.1:<port>"; convert to ws://...
+def _ws_connect(base_url: str, token: str):
+    """Open a WS connection authenticated via the session cookie.
+
+    Release C made the WS upgrade cookie-only; the legacy `?token=` query-param
+    fallback was removed, so the session must be sent as a Cookie header.
+    """
     host_port = base_url.replace("http://", "")
-    return f"ws://{host_port}/ws?token={token}"
+    url = f"ws://{host_port}/ws"
+    return websockets.connect(url, additional_headers={"Cookie": f"session={token}"})
 
 
 async def _drain(ws, timeout: float = 0.3):
@@ -81,10 +86,8 @@ async def test_kicked_user_does_not_receive_channel_broadcasts(
     assert r.status_code == 200
 
     # Both connect to WS
-    admin_url = _ws_url(base_url, admin_user["token"])
-    regular_url = _ws_url(base_url, regular_user["token"])
-    async with websockets.connect(admin_url) as admin_ws, websockets.connect(
-        regular_url
+    async with _ws_connect(base_url, admin_user["token"]) as admin_ws, _ws_connect(
+        base_url, regular_user["token"]
     ) as regular_ws:
         # Drain the initial state messages from both clients
         await _drain(admin_ws)
@@ -173,10 +176,8 @@ async def test_space_kick_unsubscribes_from_space_channels(
     # 200 if added, or non-200 if already a member; either is ok
     # (the assert below doesn't rely on this specific call's outcome)
 
-    admin_url = _ws_url(base_url, admin_user["token"])
-    regular_url = _ws_url(base_url, regular_user["token"])
-    async with websockets.connect(admin_url) as admin_ws, websockets.connect(
-        regular_url
+    async with _ws_connect(base_url, admin_user["token"]) as admin_ws, _ws_connect(
+        base_url, regular_user["token"]
     ) as regular_ws:
         await _drain(admin_ws)
         await _drain(regular_ws)
@@ -233,8 +234,7 @@ async def test_rate_limit_sends_error_on_burst(
     assert r.status_code == 200
     ch_id = r.json()["id"]
 
-    url = _ws_url(base_url, admin_user["token"])
-    async with websockets.connect(url) as ws:
+    async with _ws_connect(base_url, admin_user["token"]) as ws:
         await _drain(ws)
 
         # Burst more than the bucket size (20) without delay.

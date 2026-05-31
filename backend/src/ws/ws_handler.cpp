@@ -877,12 +877,8 @@ void WsHandler<SSL>::handle_delete_message(
 
       auto author = db.find_user_by_id(ownership->user_id);
       if (author) {
-        bool blocked = false;
-        if (author->role == "owner") {
-          blocked = true;
-        } else if (author->role == "admin" && user_role != "owner") {
-          blocked = true;
-        }
+        bool blocked =
+          (author->role == "owner") || (author->role == "admin" && user_role != "owner");
         if (blocked) {
           json err = {
             {"type", "error"}, {"message", "You don't have permission to delete this message"}};
@@ -1076,7 +1072,7 @@ std::vector<std::string> WsHandler<SSL>::parse_mentions(
     if (end > start) {
       std::string token = content.substr(start, end - start);
       if (token == "channel") {
-        mentioned.push_back("@channel");
+        mentioned.emplace_back("@channel");
       } else {
         for (const auto& m : members) {
           if (m.username == token) {

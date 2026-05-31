@@ -569,6 +569,7 @@ function AddReactionButton({ onAdd }: { onAdd: (emoji: string) => void }) {
 
 interface Props {
   message: Message;
+  isHighlighted?: boolean;
   onEdit?: (messageId: string, content: string) => void;
   onDelete?: (messageId: string) => void;
   onAddReaction?: (messageId: string, emoji: string) => void;
@@ -578,6 +579,7 @@ interface Props {
 
 export function MessageBubble({
   message,
+  isHighlighted,
   onEdit,
   onDelete,
   onAddReaction,
@@ -639,7 +641,7 @@ export function MessageBubble({
     return (
       <div
         id={`msg-${message.id}`}
-        className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2`}
+        className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 ${isHighlighted ? 'highlight-flash' : ''}`}
       >
         {!isOwn && (
           <div className='flex-shrink-0 mr-2 mt-1'>
@@ -687,7 +689,7 @@ export function MessageBubble({
   return (
     <div
       id={`msg-${message.id}`}
-      className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 group`}
+      className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-2 group ${isHighlighted ? 'highlight-flash' : ''}`}
     >
       {!isOwn && (
         <div className='flex-shrink-0 mr-2 mt-1'>

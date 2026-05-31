@@ -129,7 +129,7 @@ class TestCookieAuthenticatedRequests:
     def test_get_users_me_with_cookie_only(self, client, base_url):
         # Use a fresh client so we can control which auth credentials get sent.
         with httpx.Client(base_url=base_url, timeout=10.0) as fresh:
-            data = pki_register(fresh, "ckonly", "Cookie Only")
+            data = pki_register(fresh, "ckonly", "Cookie Only", clear_cookies=False)
             # The httpx client jar already has the `session` cookie from the
             # 200 response. Make a follow-up request WITHOUT an Authorization
             # header — it should succeed via the cookie alone.
@@ -142,7 +142,7 @@ class TestCookieAuthenticatedRequests:
         # the csrf cookie. Without it, even with a valid session cookie,
         # the request is rejected with 403.
         with httpx.Client(base_url=base_url, timeout=10.0) as fresh:
-            pki_register(fresh, "csrfneg", "CSRF Negative")
+            pki_register(fresh, "csrfneg", "CSRF Negative", clear_cookies=False)
             # Fresh client has both cookies in the jar but we strip the
             # X-CSRF-Token header (httpx auto-attaches the csrf cookie via
             # the Cookie header but does NOT auto-attach X-CSRF-Token).
@@ -153,7 +153,7 @@ class TestCookieAuthenticatedRequests:
 
     def test_state_changing_request_with_csrf_succeeds(self, client, base_url):
         with httpx.Client(base_url=base_url, timeout=10.0) as fresh:
-            pki_register(fresh, "csrfok", "CSRF OK")
+            pki_register(fresh, "csrfok", "CSRF OK", clear_cookies=False)
             csrf = fresh.cookies.get("csrf", "")
             assert csrf, "expected csrf cookie after register"
             r = fresh.put(
