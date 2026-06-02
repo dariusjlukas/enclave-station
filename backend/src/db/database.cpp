@@ -5686,6 +5686,57 @@ std::vector<TaskDependency> Database::get_task_dependencies(const std::string& b
   return deps;
 }
 
+// --- Task sub-resource board resolvers (authorization) ---
+
+std::optional<std::string> Database::get_label_board_id(const std::string& label_id) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  auto r = txn.exec_params("SELECT board_id FROM task_labels WHERE id = $1", label_id);
+  txn.commit();
+  if (r.empty()) return std::nullopt;
+  return r[0][0].as<std::string>();
+}
+
+std::optional<std::string> Database::get_checklist_board_id(const std::string& checklist_id) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  auto r = txn.exec_params(
+    "SELECT t.board_id FROM task_checklists cl "
+    "JOIN tasks t ON cl.task_id = t.id "
+    "WHERE cl.id = $1",
+    checklist_id);
+  txn.commit();
+  if (r.empty()) return std::nullopt;
+  return r[0][0].as<std::string>();
+}
+
+std::optional<std::string> Database::get_checklist_item_board_id(const std::string& item_id) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  auto r = txn.exec_params(
+    "SELECT t.board_id FROM task_checklist_items i "
+    "JOIN task_checklists cl ON i.checklist_id = cl.id "
+    "JOIN tasks t ON cl.task_id = t.id "
+    "WHERE i.id = $1",
+    item_id);
+  txn.commit();
+  if (r.empty()) return std::nullopt;
+  return r[0][0].as<std::string>();
+}
+
+std::optional<std::string> Database::get_dependency_board_id(const std::string& dependency_id) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  auto r = txn.exec_params(
+    "SELECT t.board_id FROM task_dependencies d "
+    "JOIN tasks t ON d.task_id = t.id "
+    "WHERE d.id = $1",
+    dependency_id);
+  txn.commit();
+  if (r.empty()) return std::nullopt;
+  return r[0][0].as<std::string>();
+}
+
 // --- Task Activity ---
 
 void Database::log_task_activity(

@@ -557,6 +557,7 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
           auto col = db.find_task_column(column_id);
           if (!col || col->board_id != board_id) {
@@ -634,6 +635,7 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
           try {
             auto j = json::parse(body);
@@ -683,6 +685,7 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (user_id.empty()) return;
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+        if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
         auto col = db.find_task_column(column_id);
         if (!col || col->board_id != board_id) {
@@ -784,6 +787,20 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           std::string start_date = j.value("start_date", "");
           int duration_days = j.value("duration_days", 0);
 
+          // The target column must belong to this board (no cross-board insert).
+          auto col = db.find_task_column(column_id);
+          if (!col || col->board_id != board_id) {
+            loop_->defer([res, aborted, scope, origin]() {
+              if (*aborted) return;
+              cors::apply(res, origin);
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Column does not belong to this board"})");
+              scope->observe(400);
+            });
+            return;
+          }
+
           if (title.empty() || title.length() > 255) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
@@ -882,6 +899,7 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       auto user_id = get_user_id(res, aborted, token, origin);
       if (user_id.empty()) return;
       if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
+      if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
       auto task = db.find_task(task_id);
       if (!task || task->board_id != board_id) {
@@ -979,6 +997,7 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
           auto existing = db.find_task(task_id);
           if (!existing || existing->board_id != board_id) {
@@ -1004,6 +1023,22 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             int position = j.value("position", existing->position);
             std::string start_date = j.value("start_date", existing->start_date);
             int duration_days = j.value("duration_days", existing->duration_days);
+
+            // A moved task must land in a column on the same board.
+            if (column_id != existing->column_id) {
+              auto col = db.find_task_column(column_id);
+              if (!col || col->board_id != board_id) {
+                loop_->defer([res, aborted, scope, origin]() {
+                  if (*aborted) return;
+                  cors::apply(res, origin);
+                  res->writeStatus("400")
+                    ->writeHeader("Content-Type", "application/json")
+                    ->end(R"({"error":"Column does not belong to this board"})");
+                  scope->observe(400);
+                });
+                return;
+              }
+            }
 
             // Log changes
             json changes = json::object();
@@ -1125,6 +1160,7 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         auto user_id = get_user_id(res, aborted, token, origin);
         if (user_id.empty()) return;
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
+        if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
         auto task = db.find_task(task_id);
         if (!task || task->board_id != board_id) {
@@ -1189,22 +1225,37 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
           try {
             auto j = json::parse(body);
             // Expects: { tasks: [{ id, column_id, position }] }
             auto items = j.at("tasks");
             std::vector<std::pair<std::string, int>> positions;
+            bool invalid = false;
             for (const auto& item : items) {
               std::string tid = item.at("id");
               int pos = item.at("position");
+
+              // Every task being reordered must belong to this board, and any
+              // new column must too — otherwise a caller with edit on this space
+              // could move/reposition tasks in another board/space.
+              auto task = db.find_task(tid);
+              if (!task || task->board_id != board_id) {
+                invalid = true;
+                break;
+              }
               positions.emplace_back(tid, pos);
 
               // Update column_id if changed
               if (item.contains("column_id")) {
-                auto task = db.find_task(tid);
-                if (task && task->column_id != item["column_id"].get<std::string>()) {
-                  std::string new_col = item["column_id"].get<std::string>();
+                std::string new_col = item["column_id"].get<std::string>();
+                if (task->column_id != new_col) {
+                  auto col = db.find_task_column(new_col);
+                  if (!col || col->board_id != board_id) {
+                    invalid = true;
+                    break;
+                  }
                   db.update_task(
                     tid,
                     new_col,
@@ -1223,6 +1274,17 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                     json({{"column", {{"from", task->column_id}, {"to", new_col}}}}).dump());
                 }
               }
+            }
+            if (invalid) {
+              loop_->defer([res, aborted, scope, origin]() {
+                if (*aborted) return;
+                cors::apply(res, origin);
+                res->writeStatus("400")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->end(R"({"error":"Task or column does not belong to this board"})");
+                scope->observe(400);
+              });
+              return;
             }
             db.reorder_tasks(positions);
 
@@ -1289,6 +1351,19 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
 
+          // The task must belong to the board+space named in the URL.
+          {
+            auto task = db.find_task(task_id);
+            if (!require_resource_in_space(
+                  res,
+                  aborted,
+                  space_id,
+                  task && task->board_id == board_id ? std::optional<std::string>(task->board_id)
+                                                     : std::nullopt,
+                  origin))
+              return;
+          }
+
           try {
             auto j = json::parse(body);
             std::string title = j.at("title");
@@ -1345,6 +1420,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (user_id.empty()) return;
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+        if (!require_resource_in_space(
+              res, aborted, space_id, db.get_checklist_board_id(checklist_id), origin))
+          return;
 
         db.delete_task_checklist(checklist_id);
         loop_->defer([res, aborted, scope, origin]() {
@@ -1395,6 +1473,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_resource_in_space(
+                res, aborted, space_id, db.get_checklist_board_id(checklist_id), origin))
+            return;
 
           try {
             auto j = json::parse(body);
@@ -1462,6 +1543,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_resource_in_space(
+                res, aborted, space_id, db.get_checklist_item_board_id(item_id), origin))
+            return;
 
           try {
             auto j = json::parse(body);
@@ -1516,6 +1600,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (user_id.empty()) return;
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+        if (!require_resource_in_space(
+              res, aborted, space_id, db.get_checklist_item_board_id(item_id), origin))
+          return;
 
         db.delete_checklist_item(item_id);
         loop_->defer([res, aborted, scope, origin]() {
@@ -1564,6 +1651,7 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (user_id.empty()) return;
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+        if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
         try {
           auto j = json::parse(body);
@@ -1627,6 +1715,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_resource_in_space(
+                res, aborted, space_id, db.get_label_board_id(label_id), origin))
+            return;
 
           try {
             auto j = json::parse(body);
@@ -1677,6 +1768,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (user_id.empty()) return;
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+        if (!require_resource_in_space(
+              res, aborted, space_id, db.get_label_board_id(label_id), origin))
+          return;
 
         db.delete_task_label(label_id);
         loop_->defer([res, aborted, scope, origin]() {
@@ -1726,12 +1820,28 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (user_id.empty()) return;
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+          if (!require_board_in_space(res, aborted, space_id, board_id, origin)) return;
 
           try {
             auto j = json::parse(body);
             std::string task_id = j.at("task_id");
             std::string depends_on_id = j.at("depends_on_id");
             std::string dep_type = j.value("dependency_type", "finish_to_start");
+
+            // Both endpoints of the dependency must be tasks on this board.
+            auto t1 = db.find_task(task_id);
+            auto t2 = db.find_task(depends_on_id);
+            if (!t1 || t1->board_id != board_id || !t2 || t2->board_id != board_id) {
+              loop_->defer([res, aborted, scope, origin]() {
+                if (*aborted) return;
+                cors::apply(res, origin);
+                res->writeStatus("400")
+                  ->writeHeader("Content-Type", "application/json")
+                  ->end(R"({"error":"Both tasks must belong to this board"})");
+                scope->observe(400);
+              });
+              return;
+            }
 
             auto dep = db.add_task_dependency(task_id, depends_on_id, dep_type);
             db.log_task_activity(
@@ -1783,6 +1893,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (user_id.empty()) return;
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
+        if (!require_resource_in_space(
+              res, aborted, space_id, db.get_dependency_board_id(dep_id), origin))
+          return;
 
         db.remove_task_dependency(dep_id);
         loop_->defer([res, aborted, scope, origin]() {
@@ -2050,6 +2163,56 @@ int TaskBoardHandler<SSL>::perm_rank(const std::string& p) {
   if (p == "owner") return 2;
   if (p == "edit") return 1;
   return 0;
+}
+
+template <bool SSL>
+bool TaskBoardHandler<SSL>::require_board_in_space(
+  uWS::HttpResponse<SSL>* res,
+  const std::shared_ptr<bool>& aborted,
+  const std::string& space_id,
+  const std::string& board_id,
+  const std::string& origin) {
+  auto board = db.find_task_board(board_id);
+  if (board && board->space_id == space_id) return true;
+
+  loop_->defer([res, aborted, origin]() {
+    try {
+      if (*aborted) return;
+      cors::apply(res, origin);
+      res->writeStatus("404")
+        ->writeHeader("Content-Type", "application/json")
+        ->end(R"({"error":"Board not found"})");
+    } catch (...) { /* non-fatal: deferred response write */
+    }
+  });
+  return false;
+}
+
+template <bool SSL>
+bool TaskBoardHandler<SSL>::require_resource_in_space(
+  uWS::HttpResponse<SSL>* res,
+  const std::shared_ptr<bool>& aborted,
+  const std::string& space_id,
+  const std::optional<std::string>& resource_board_id,
+  const std::string& origin) {
+  // The resource must exist and its owning board must belong to the space the
+  // caller was authorized for. find_task_board confirms the board->space link.
+  if (resource_board_id) {
+    auto board = db.find_task_board(*resource_board_id);
+    if (board && board->space_id == space_id) return true;
+  }
+
+  loop_->defer([res, aborted, origin]() {
+    try {
+      if (*aborted) return;
+      cors::apply(res, origin);
+      res->writeStatus("404")
+        ->writeHeader("Content-Type", "application/json")
+        ->end(R"({"error":"Resource not found"})");
+    } catch (...) { /* non-fatal: deferred response write */
+    }
+  });
+  return false;
 }
 
 template struct TaskBoardHandler<false>;

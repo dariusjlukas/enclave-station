@@ -31,6 +31,27 @@ private:
     const std::string& user_id,
     const std::string& origin);
   std::string get_access_level(const std::string& space_id, const std::string& user_id);
+  // Verify the board named in the URL belongs to the space named in the URL.
+  // Emits a 404 and returns false on mismatch. Guards against acting on another
+  // space's board (cross-space IDOR via the :boardId path parameter).
+  bool require_board_in_space(
+    uWS::HttpResponse<SSL>* res,
+    const std::shared_ptr<bool>& aborted,
+    const std::string& space_id,
+    const std::string& board_id,
+    const std::string& origin);
+  // Verify a task sub-resource (column/task/checklist/item/label/dependency),
+  // identified by its resolved owning board id, belongs to the space named in
+  // the URL (which the caller has already been authorized for). Emits a 404 and
+  // returns false when the resource does not exist (resource_board_id ==
+  // nullopt) or its board lives in a different space. This is the chain check
+  // that prevents cross-space IDOR via body/path-supplied resource IDs.
+  bool require_resource_in_space(
+    uWS::HttpResponse<SSL>* res,
+    const std::shared_ptr<bool>& aborted,
+    const std::string& space_id,
+    const std::optional<std::string>& resource_board_id,
+    const std::string& origin);
   bool require_permission(
     uWS::HttpResponse<SSL>* res,
     const std::shared_ptr<bool>& aborted,

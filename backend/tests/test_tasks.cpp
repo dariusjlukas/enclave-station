@@ -723,3 +723,87 @@ TEST_F(TaskBoardTest, DeleteTaskLabelRemovesAssignments) {
     auto task_labels = db_->get_task_labels(task.id);
     EXPECT_EQ(task_labels.size(), 0u);
 }
+
+// --- Sub-resource board resolvers (authorization / cross-board IDOR guard) ---
+//
+// These back the handler-layer ownership-chain checks that prevent a caller
+// authorized for board A from mutating sub-resources living on board B by
+// supplying board B's resource id. Each resolver must map a leaf to its owning
+// board (and nullopt when the leaf does not exist).
+
+TEST_F(TaskBoardTest, ResolverLabelBoardId) {
+    auto [user, space] = create_user_and_space();
+    auto board_a = db_->create_task_board(space.id, "A", "", user.id);
+    auto board_b = db_->create_task_board(space.id, "B", "", user.id);
+    auto label_a = db_->create_task_label(board_a.id, "Bug", "#ef4444");
+
+    auto resolved = db_->get_label_board_id(label_a.id);
+    ASSERT_TRUE(resolved.has_value());
+    EXPECT_EQ(*resolved, board_a.id);
+    EXPECT_NE(*resolved, board_b.id);  // not attributable to a sibling board
+    EXPECT_FALSE(db_->get_label_board_id("00000000-0000-0000-0000-000000000000").has_value());
+}
+
+TEST_F(TaskBoardTest, ResolverChecklistBoardId) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+    auto cl = db_->create_task_checklist(task.id, "Steps", 0);
+
+    auto resolved = db_->get_checklist_board_id(cl.id);
+    ASSERT_TRUE(resolved.has_value());
+    EXPECT_EQ(*resolved, board.id);
+    EXPECT_FALSE(db_->get_checklist_board_id("00000000-0000-0000-0000-000000000000").has_value());
+}
+
+TEST_F(TaskBoardTest, ResolverChecklistItemBoardId) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto task = db_->create_task(board.id, col.id, "Task", "", "medium", "", "", 0, user.id);
+    auto cl = db_->create_task_checklist(task.id, "Steps", 0);
+    auto item = db_->create_checklist_item(cl.id, "Step 1", 0);
+
+    auto resolved = db_->get_checklist_item_board_id(item.id);
+    ASSERT_TRUE(resolved.has_value());
+    EXPECT_EQ(*resolved, board.id);
+    EXPECT_FALSE(
+        db_->get_checklist_item_board_id("00000000-0000-0000-0000-000000000000").has_value());
+}
+
+TEST_F(TaskBoardTest, ResolverDependencyBoardId) {
+    auto [user, space] = create_user_and_space();
+    auto board = db_->create_task_board(space.id, "Board", "", user.id);
+    auto col = db_->create_task_column(board.id, "To Do", 0, 0, "");
+    auto t1 = db_->create_task(board.id, col.id, "T1", "", "medium", "", "", 0, user.id);
+    auto t2 = db_->create_task(board.id, col.id, "T2", "", "medium", "", "", 1, user.id);
+    auto dep = db_->add_task_dependency(t1.id, t2.id, "finish_to_start");
+
+    auto resolved = db_->get_dependency_board_id(dep.id);
+    ASSERT_TRUE(resolved.has_value());
+    EXPECT_EQ(*resolved, board.id);
+    EXPECT_FALSE(db_->get_dependency_board_id("00000000-0000-0000-0000-000000000000").has_value());
+}
+
+// A label created on board B must never resolve to board A. This is the exact
+// confusion the handler relies on the resolver to reject (cross-board IDOR).
+TEST_F(TaskBoardTest, ResolverDistinguishesBoardsAcrossSpaces) {
+    auto victim = create_user_and_space("victim");
+    auto attacker = create_user_and_space("attacker");
+    auto victim_board = db_->create_task_board(victim.space.id, "Victim", "", victim.user.id);
+    auto attacker_board =
+        db_->create_task_board(attacker.space.id, "Attacker", "", attacker.user.id);
+    auto victim_label = db_->create_task_label(victim_board.id, "Secret", "#000000");
+
+    auto resolved = db_->get_label_board_id(victim_label.id);
+    ASSERT_TRUE(resolved.has_value());
+    EXPECT_EQ(*resolved, victim_board.id);
+    EXPECT_NE(*resolved, attacker_board.id);
+    // The victim board belongs to the victim's space, not the attacker's — the
+    // handler's require_resource_in_space rejects on this space mismatch.
+    auto victim_b = db_->find_task_board(*resolved);
+    ASSERT_TRUE(victim_b.has_value());
+    EXPECT_EQ(victim_b->space_id, victim.space.id);
+    EXPECT_NE(victim_b->space_id, attacker.space.id);
+}

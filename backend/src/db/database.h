@@ -777,6 +777,15 @@ public:
   void remove_task_dependency(const std::string& dependency_id);
   std::vector<TaskDependency> get_task_dependencies(const std::string& board_id);
 
+  // Authorization helpers: resolve the owning board for a task sub-resource so
+  // handlers can verify it chains back to the board/space in the request URL
+  // (prevents cross-board/space IDOR via body- or path-supplied resource IDs).
+  // Return nullopt when the resource does not exist.
+  std::optional<std::string> get_label_board_id(const std::string& label_id);
+  std::optional<std::string> get_checklist_board_id(const std::string& checklist_id);
+  std::optional<std::string> get_checklist_item_board_id(const std::string& item_id);
+  std::optional<std::string> get_dependency_board_id(const std::string& dependency_id);
+
   // Task activity
   void log_task_activity(
     const std::string& task_id,

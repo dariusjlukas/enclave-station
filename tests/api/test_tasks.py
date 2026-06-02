@@ -703,3 +703,171 @@ class TestTaskPermissions:
                   "permission": "view"},
             headers=regular_user["headers"])
         assert r.status_code == 403
+
+
+class TestCrossSpaceIsolation:
+    """Regression tests: a caller who is space-admin of their OWN space (so has
+    edit there) must not be able to read or mutate task sub-resources that live
+    on another space's board by supplying that board's / resource's id
+    (cross-space IDOR).
+
+    Only server admins can create spaces, so `admin_user` (the server owner)
+    creates both spaces. The attacker (`second_regular_user`) is made a space
+    ADMIN of the attacker space only, and is a complete non-member of the victim
+    space — i.e. has edit on board A but no access to board B.
+    """
+
+    def _victim_board(self, client, admin_user):
+        """Victim space + board + task, all owned by the server admin."""
+        sp = _create_space(client, admin_user["headers"], name="Victim")
+        r = _create_board(client, sp["id"], admin_user["headers"])
+        assert r.status_code == 200
+        board = r.json()
+        col_id = board["columns"][0]["id"]
+        r = _create_task(client, sp["id"], board["id"], col_id,
+                         admin_user["headers"])
+        assert r.status_code == 200
+        return sp["id"], board, col_id, r.json()
+
+    def _attacker_board(self, client, admin_user, attacker):
+        """Attacker space (server admin creates it, makes attacker a space
+        admin) + board + task owned by the attacker."""
+        sp = _create_space(client, admin_user["headers"], name="Attacker")
+        _add_member_with_role(client, sp["id"], admin_user["headers"],
+                              attacker, "admin")
+        r = _create_board(client, sp["id"], attacker["headers"])
+        assert r.status_code == 200
+        board = r.json()
+        col_id = board["columns"][0]["id"]
+        r = _create_task(client, sp["id"], board["id"], col_id,
+                         attacker["headers"])
+        assert r.status_code == 200
+        return sp["id"], board, col_id, r.json()
+
+    def test_cannot_read_other_space_board(self, client, admin_user,
+                                           second_regular_user):
+        v_space, v_board, _, _ = self._victim_board(client, admin_user)
+        a_space, _, _, _ = self._attacker_board(
+            client, admin_user, second_regular_user)
+
+        # Attacker references the victim board id under their OWN space id.
+        r = client.get(
+            f"/api/spaces/{a_space}/tasks/boards/{v_board['id']}",
+            headers=second_regular_user["headers"])
+        assert r.status_code == 404
+        # And cannot reach it via the victim's space id either (non-member).
+        r = client.get(
+            f"/api/spaces/{v_space}/tasks/boards/{v_board['id']}",
+            headers=second_regular_user["headers"])
+        assert r.status_code == 403
+
+    def test_cannot_create_task_in_other_board_column(
+            self, client, admin_user, second_regular_user):
+        _, _, v_col, _ = self._victim_board(client, admin_user)
+        a_space, a_board, _, _ = self._attacker_board(
+            client, admin_user, second_regular_user)
+
+        # Attacker posts to their own board but targets the victim's column id.
+        r = _create_task(client, a_space, a_board["id"], v_col,
+                         second_regular_user["headers"])
+        assert r.status_code == 400
+
+    def test_cannot_move_task_into_other_board_column(
+            self, client, admin_user, second_regular_user):
+        _, _, v_col, _ = self._victim_board(client, admin_user)
+        a_space, a_board, _, a_task = self._attacker_board(
+            client, admin_user, second_regular_user)
+
+        # Try to move the attacker's own task into the victim board's column.
+        r = client.put(
+            f"/api/spaces/{a_space}/tasks/boards/{a_board['id']}"
+            f"/tasks/{a_task['id']}",
+            json={"column_id": v_col},
+            headers=second_regular_user["headers"])
+        assert r.status_code == 400
+
+    def test_cannot_delete_other_space_label(
+            self, client, admin_user, second_regular_user):
+        v_space, v_board, _, _ = self._victim_board(client, admin_user)
+        r = client.post(
+            f"/api/spaces/{v_space}/tasks/boards/{v_board['id']}/labels",
+            json={"name": "Secret", "color": "#000000"},
+            headers=admin_user["headers"])
+        assert r.status_code == 200
+        v_label = r.json()
+
+        a_space, a_board, _, _ = self._attacker_board(
+            client, admin_user, second_regular_user)
+
+        # Attacker deletes the victim's label via their own space/board path.
+        r = client.delete(
+            f"/api/spaces/{a_space}/tasks/boards/{a_board['id']}"
+            f"/labels/{v_label['id']}",
+            headers=second_regular_user["headers"])
+        assert r.status_code == 404
+
+        # The victim's label still exists.
+        r = client.get(
+            f"/api/spaces/{v_space}/tasks/boards/{v_board['id']}",
+            headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert any(lbl["id"] == v_label["id"]
+                   for lbl in r.json()["board_labels"])
+
+    def test_cannot_add_dependency_across_boards(
+            self, client, admin_user, second_regular_user):
+        _, _, _, v_task = self._victim_board(client, admin_user)
+        a_space, a_board, _, a_task = self._attacker_board(
+            client, admin_user, second_regular_user)
+
+        # Attacker tries to wire a dependency to the victim's task.
+        r = client.post(
+            f"/api/spaces/{a_space}/tasks/boards/{a_board['id']}"
+            f"/dependencies",
+            json={"task_id": a_task["id"], "depends_on_id": v_task["id"]},
+            headers=second_regular_user["headers"])
+        assert r.status_code == 400
+
+
+class TestAddMemberRankCheck:
+    """Regression tests for finding #12: a space admin must not be able to grant
+    a role above their own rank when inviting members, and the role must be a
+    valid value."""
+
+    def test_space_admin_cannot_invite_owner(
+            self, client, admin_user, regular_user, second_regular_user):
+        # Owner creates a space and promotes `regular_user` to space admin.
+        sp = _create_space(client, admin_user["headers"])
+        _add_member_with_role(client, sp["id"], admin_user["headers"],
+                              regular_user, "admin")
+
+        # The space admin tries to invite a new member as owner.
+        r = client.post(
+            f"/api/spaces/{sp['id']}/members",
+            json={"user_id": second_regular_user["user"]["id"],
+                  "role": "owner"},
+            headers=regular_user["headers"])
+        assert r.status_code == 403
+
+    def test_space_admin_can_invite_user(
+            self, client, admin_user, regular_user, second_regular_user):
+        sp = _create_space(client, admin_user["headers"])
+        _add_member_with_role(client, sp["id"], admin_user["headers"],
+                              regular_user, "admin")
+
+        # Inviting at or below the actor's own rank is allowed.
+        r = client.post(
+            f"/api/spaces/{sp['id']}/members",
+            json={"user_id": second_regular_user["user"]["id"],
+                  "role": "user"},
+            headers=regular_user["headers"])
+        assert r.status_code == 200
+
+    def test_invalid_role_rejected(
+            self, client, admin_user, regular_user):
+        sp = _create_space(client, admin_user["headers"])
+        r = client.post(
+            f"/api/spaces/{sp['id']}/members",
+            json={"user_id": regular_user["user"]["id"], "role": "superadmin"},
+            headers=admin_user["headers"])
+        assert r.status_code == 400

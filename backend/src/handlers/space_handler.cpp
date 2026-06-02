@@ -694,6 +694,39 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           auto sp = db.find_space_by_id(space_id);
           std::string member_role = j.value("role", sp ? sp->default_role : "user");
 
+          // Validate the requested role and prevent privilege escalation: an
+          // inviter cannot grant a rank above their own effective rank (mirrors
+          // the change-member-role route).
+          if (member_role != "owner" && member_role != "admin" && member_role != "user") {
+            loop_->defer([res, aborted, scope, origin]() {
+              if (*aborted) return;
+              cors::apply(res, origin);
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Invalid role"})");
+              scope->observe(400);
+            });
+            return;
+          }
+
+          int actor_space_rank = space_role_rank(role);
+          if (user && user->role == "owner") {
+            actor_space_rank = space_role_rank("owner");
+          } else if (user && user->role == "admin" && actor_space_rank < space_role_rank("admin")) {
+            actor_space_rank = space_role_rank("admin");
+          }
+          if (space_role_rank(member_role) > actor_space_rank) {
+            loop_->defer([res, aborted, scope, origin]() {
+              if (*aborted) return;
+              cors::apply(res, origin);
+              res->writeStatus("403")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Cannot invite above your own rank"})");
+              scope->observe(403);
+            });
+            return;
+          }
+
           if (db.is_space_member(space_id, target_user_id)) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;

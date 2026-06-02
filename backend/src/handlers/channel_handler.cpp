@@ -511,6 +511,30 @@ void ChannelHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             member_role = ch ? ch->default_role : "write";
           }
 
+          // Validate the role and prevent privilege escalation: cannot add a
+          // member at a rank above the inviter's own effective rank (mirrors the
+          // change-member-role route). `role` is the effective role here.
+          if (member_role != "admin" && member_role != "write" && member_role != "read") {
+            loop_->defer([res, aborted, scope]() {
+              if (*aborted) return;
+              res->writeStatus("400")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Invalid role. Must be admin, write, or read"})");
+              scope->observe(400);
+            });
+            return;
+          }
+          if (channel_role_rank(member_role) > channel_role_rank(role)) {
+            loop_->defer([res, aborted, scope]() {
+              if (*aborted) return;
+              res->writeStatus("403")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Cannot add a member above your own rank"})");
+              scope->observe(403);
+            });
+            return;
+          }
+
           db.add_channel_member(channel_id, target_user_id, member_role);
 
           // Build channel data for notification
