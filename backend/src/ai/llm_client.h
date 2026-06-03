@@ -14,6 +14,16 @@ struct LlmConfig {
   std::string system_prompt;
 };
 
+namespace llm_url {
+// SSRF guard for the configurable LLM endpoint. Returns "" if the URL is
+// acceptable, or a human-readable rejection reason. Always rejects non-http(s)
+// schemes and link-local/cloud-metadata addresses (169.254.0.0/16, fe80::/10).
+// When LLM_BLOCK_PRIVATE_NETWORKS=1, additionally rejects loopback/private
+// ranges and "localhost" (off by default — self-hosted LLMs commonly live
+// there). Exposed for unit testing.
+std::string validate(const std::string& url);
+}  // namespace llm_url
+
 struct LlmMessage {
   std::string role;  // user, assistant, system, tool
   std::string content;

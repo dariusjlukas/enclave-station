@@ -332,6 +332,22 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         return;
       }
 
+      // Don't leak a private space's roster/metadata to non-members. Public
+      // spaces are previewable; server admins/owners see everything.
+      auto user = db.find_user_by_id(user_id);
+      bool is_server_admin = user && (user->role == "admin" || user->role == "owner");
+      if (!sp->is_public && !is_server_admin && !db.is_space_member(space_id, user_id)) {
+        loop_->defer([res, aborted, scope, origin]() {
+          if (*aborted) return;
+          cors::apply(res, origin);
+          res->writeStatus("403")
+            ->writeHeader("Content-Type", "application/json")
+            ->end(R"({"error":"Not a member of this space"})");
+          scope->observe(403);
+        });
+        return;
+      }
+
       auto members = db.get_space_members_with_roles(space_id);
       json members_arr = json::array();
       for (const auto& m : members) {
@@ -344,8 +360,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
            {"role", m.role}});
       }
       std::string my_role = db.get_space_member_role(space_id, user_id);
-      auto user = db.find_user_by_id(user_id);
-      if (my_role.empty() && user && (user->role == "admin" || user->role == "owner")) {
+      if (my_role.empty() && is_server_admin) {
         my_role = "admin";
       }
 

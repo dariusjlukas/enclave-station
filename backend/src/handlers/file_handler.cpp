@@ -1,6 +1,7 @@
 #include "handlers/file_handler.h"
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 #include "handlers/cors_utils.h"
 #include "handlers/file_access_utils.h"
 #include "handlers/format_utils.h"
@@ -162,12 +163,31 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           }
           out.write(body->data(), body->size());
           out.close();
+          if (!out) {
+            std::filesystem::remove(path);
+            loop_->defer([res, aborted, scope, origin]() {
+              if (*aborted) return;
+              res->writeStatus("500")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Failed to write file"})");
+              scope->observe(500);
+            });
+            return;
+          }
 
           auto file_size = static_cast<int64_t>(body->size());
 
-          // Create message with file attachment
-          auto msg = db.create_file_message(
-            channel_id, user_id, message_text, file_id, filename, file_size, content_type);
+          // Create message with file attachment. If this throws, the file is
+          // already on disk — remove it so a failed upload doesn't orphan a blob.
+          Message msg;
+          try {
+            msg = db.create_file_message(
+              channel_id, user_id, message_text, file_id, filename, file_size, content_type);
+          } catch (...) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            throw;
+          }
 
           // Broadcast via WebSocket
           json broadcast = {
@@ -506,6 +526,59 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
               ->writeHeader("Content-Type", "application/json")
               ->end(R"({"error":"Upload session not found"})");
             scope->observe(404);
+          });
+          return;
+        }
+
+        // Bind completion to the channel the upload was initialized for; a
+        // mismatched URL channel_id is rejected rather than trusted.
+        std::string init_channel_id = session->metadata.value("channel_id", "");
+        if (!init_channel_id.empty() && init_channel_id != channel_id) {
+          loop_->defer([res, aborted, scope, origin]() {
+            if (*aborted) return;
+            cors::apply(res, origin);
+            res->writeStatus("400")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Channel mismatch for upload session"})");
+            scope->observe(400);
+          });
+          return;
+        }
+
+        // Re-check authorization at completion time: write access can be revoked
+        // and the server/channel can be archived between init and complete.
+        if (db.is_server_archived()) {
+          loop_->defer([res, aborted, scope, origin]() {
+            if (*aborted) return;
+            cors::apply(res, origin);
+            res->writeStatus("403")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"Server is archived. No new content can be created."})");
+            scope->observe(403);
+          });
+          return;
+        }
+        auto ch = db.find_channel_by_id(channel_id);
+        if (ch && ch->is_archived) {
+          loop_->defer([res, aborted, scope, origin]() {
+            if (*aborted) return;
+            cors::apply(res, origin);
+            res->writeStatus("403")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"This channel is archived"})");
+            scope->observe(403);
+          });
+          return;
+        }
+        std::string role = db.get_effective_role(channel_id, user_id);
+        if (role.empty() || role == "read") {
+          loop_->defer([res, aborted, scope, origin]() {
+            if (*aborted) return;
+            cors::apply(res, origin);
+            res->writeStatus("403")
+              ->writeHeader("Content-Type", "application/json")
+              ->end(R"({"error":"No write access to this channel"})");
+            scope->observe(403);
           });
           return;
         }

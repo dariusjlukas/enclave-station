@@ -34,4 +34,12 @@ const std::vector<std::string>& allowed_origins() {
   return g_allowed_origins;
 }
 
+bool is_allowed_origin(std::string_view origin) {
+  if (origin.empty()) return false;
+  for (const auto& o : g_allowed_origins) {
+    if (o == origin) return true;
+  }
+  return false;
+}
+
 }  // namespace cors

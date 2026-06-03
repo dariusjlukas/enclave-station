@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstring>
 #include <sstream>
+#include <stdexcept>
 
 namespace password_auth {
 
@@ -16,7 +17,9 @@ static constexpr uint32_t SALT_LEN = 16;
 
 std::string hash_password(const std::string& password) {
   unsigned char salt[SALT_LEN];
-  RAND_bytes(salt, SALT_LEN);
+  if (RAND_bytes(salt, SALT_LEN) != 1) {
+    throw std::runtime_error("RAND_bytes failed generating password salt");
+  }
 
   // Calculate encoded length
   size_t encoded_len =

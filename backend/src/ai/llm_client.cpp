@@ -1,7 +1,10 @@
 #include "ai/llm_client.h"
 
+#include <arpa/inet.h>
 #include <httplib.h>
 
+#include <cstdlib>
+#include <cstring>
 #include <map>
 #include <regex>
 #include <sstream>
@@ -9,6 +12,94 @@
 #include "logging/logger.h"
 
 LlmClient::LlmClient(const LlmConfig& config) : config_(config) {}
+
+namespace {
+
+// Extract the host (no scheme, no port, no brackets) from a URL's authority.
+// Returns "" if no host is present. Handles "[::1]:8080" IPv6 bracket form.
+std::string extract_host(const std::string& url) {
+  auto scheme_end = url.find("://");
+  std::string rest = (scheme_end == std::string::npos) ? url : url.substr(scheme_end + 3);
+  // authority ends at the first '/', '?' or '#'
+  auto auth_end = rest.find_first_of("/?#");
+  std::string authority = (auth_end == std::string::npos) ? rest : rest.substr(0, auth_end);
+  // strip userinfo
+  auto at = authority.rfind('@');
+  if (at != std::string::npos) authority = authority.substr(at + 1);
+  if (!authority.empty() && authority.front() == '[') {
+    // [IPv6]:port
+    auto close = authority.find(']');
+    if (close != std::string::npos) return authority.substr(1, close - 1);
+    return authority.substr(1);
+  }
+  auto colon = authority.find(':');
+  return (colon == std::string::npos) ? authority : authority.substr(0, colon);
+}
+
+// True if `host` is a literal IP in a link-local / cloud-metadata range that is
+// never a legitimate LLM endpoint (e.g. 169.254.169.254, fe80::/10). These are
+// always rejected, regardless of the private-network policy.
+bool is_link_local_ip(const std::string& host) {
+  in_addr v4{};
+  if (inet_pton(AF_INET, host.c_str(), &v4) == 1) {
+    uint32_t a = ntohl(v4.s_addr);
+    return (a & 0xFFFF0000u) == 0xA9FE0000u;  // 169.254.0.0/16
+  }
+  in6_addr v6{};
+  if (inet_pton(AF_INET6, host.c_str(), &v6) == 1) {
+    return v6.s6_addr[0] == 0xFE && (v6.s6_addr[1] & 0xC0) == 0x80;  // fe80::/10
+  }
+  return false;
+}
+
+// True if `host` is a literal loopback / private-range IP, or "localhost".
+// Self-hosted LLMs frequently live here (Ollama on localhost, a sidecar on the
+// docker network), so this is only enforced when LLM_BLOCK_PRIVATE_NETWORKS=1.
+bool is_private_or_loopback(const std::string& host) {
+  if (host == "localhost") return true;
+  in_addr v4{};
+  if (inet_pton(AF_INET, host.c_str(), &v4) == 1) {
+    uint32_t a = ntohl(v4.s_addr);
+    if ((a & 0xFF000000u) == 0x7F000000u) return true;  // 127.0.0.0/8
+    if ((a & 0xFF000000u) == 0x0A000000u) return true;  // 10.0.0.0/8
+    if ((a & 0xFFF00000u) == 0xAC100000u) return true;  // 172.16.0.0/12
+    if ((a & 0xFFFF0000u) == 0xC0A80000u) return true;  // 192.168.0.0/16
+    if (a == 0x00000000u) return true;                  // 0.0.0.0
+    return false;
+  }
+  in6_addr v6{};
+  if (inet_pton(AF_INET6, host.c_str(), &v6) == 1) {
+    static const unsigned char loop[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    if (std::memcmp(v6.s6_addr, loop, 16) == 0) return true;  // ::1
+    if ((v6.s6_addr[0] & 0xFE) == 0xFC) return true;          // fc00::/7 (ULA)
+    return false;
+  }
+  return false;
+}
+
+}  // namespace
+
+namespace llm_url {
+std::string validate(const std::string& url) {
+  if (url.rfind("http://", 0) != 0 && url.rfind("https://", 0) != 0) {
+    return "LLM endpoint must use http:// or https://";
+  }
+  std::string host = extract_host(url);
+  if (host.empty()) {
+    return "LLM endpoint has no host";
+  }
+  if (is_link_local_ip(host)) {
+    return "LLM endpoint resolves to a link-local/metadata address, which is not allowed";
+  }
+  const char* block = std::getenv("LLM_BLOCK_PRIVATE_NETWORKS");
+  if (block && (std::strcmp(block, "1") == 0 || std::strcmp(block, "true") == 0)) {
+    if (is_private_or_loopback(host)) {
+      return "LLM endpoint resolves to a private/loopback address, which is blocked by policy";
+    }
+  }
+  return "";
+}
+}  // namespace llm_url
 
 json LlmClient::build_request_body(
   const std::vector<LlmMessage>& messages, const json& tools) const {
@@ -88,6 +179,11 @@ static void parse_url(const std::string& url, std::string& base_url, std::string
 
 void LlmClient::chat_completion(
   const std::vector<LlmMessage>& messages, const json& tools, const LlmStreamCallback& cb) {
+  if (auto err = llm_url::validate(config_.api_url); !err.empty()) {
+    if (cb.on_error) cb.on_error(err);
+    return;
+  }
+
   std::string base_url, path_prefix;
   parse_url(config_.api_url, base_url, path_prefix);
 
@@ -298,6 +394,11 @@ void LlmClient::chat_completion(
 }
 
 std::string LlmClient::simple_completion(const std::vector<LlmMessage>& messages, int max_tokens) {
+  if (auto err = llm_url::validate(config_.api_url); !err.empty()) {
+    LOG_ERROR_N("ai", nullptr, "simple_completion rejected URL: " + err);
+    return "";
+  }
+
   std::string base_url, path_prefix;
   parse_url(config_.api_url, base_url, path_prefix);
 

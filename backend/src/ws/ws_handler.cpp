@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "handlers/cors_utils.h"
 #include "handlers/handler_utils.h"
 #include "logging/logger.h"
 #include "metrics/metrics.h"
@@ -103,6 +104,19 @@ void WsHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
          // Extract all request data synchronously (req invalid after return).
          // P1.4 Release C: cookie-only. The legacy `?token=...` query param
          // fallback was removed; clients must send the `session` cookie.
+
+         // Cross-Site WebSocket Hijacking guard: the session cookie is sent
+         // automatically by the browser, so a cross-origin page could open an
+         // authenticated socket. Browsers always send Origin on a WS handshake,
+         // so reject any non-empty Origin that isn't allowlisted. Empty Origin
+         // (non-browser/native clients, not subject to ambient-cookie attacks)
+         // is allowed.
+         std::string origin(req->getHeader("origin"));
+         if (!origin.empty() && !cors::is_allowed_origin(origin)) {
+           res->writeStatus("403")->end("Forbidden origin");
+           return;
+         }
+
          std::string token = extract_session_token(req);
          auto key = std::string(req->getHeader("sec-websocket-key"));
          auto protocol = std::string(req->getHeader("sec-websocket-protocol"));

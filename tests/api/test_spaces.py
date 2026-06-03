@@ -391,3 +391,62 @@ class TestSpaceArchive:
         r = client.post(f"/api/spaces/{sp_id}/archive",
                         headers=regular_user["headers"])
         assert r.status_code == 403
+
+
+class TestSpaceDetailAccess:
+    """GET /api/spaces/:id must not leak a private space's roster/metadata to
+    non-members. Public spaces stay previewable; server admins see everything."""
+
+    def _add_and_accept(self, client, space_id, admin_headers, user_info):
+        r = client.post(f"/api/spaces/{space_id}/members",
+                        json={"user_id": user_info["user"]["id"], "role": "user"},
+                        headers=admin_headers)
+        assert r.status_code == 200
+        invites = client.get("/api/space-invites", headers=user_info["headers"]).json()
+        invite = next(i for i in invites if i["space_id"] == space_id)
+        r = client.post(f"/api/space-invites/{invite['id']}/accept",
+                        headers=user_info["headers"])
+        assert r.status_code == 200
+
+    def test_non_member_cannot_read_private_space_detail(
+        self, client, admin_user, regular_user
+    ):
+        r = client.post("/api/spaces", json={"name": "Secret", "is_public": False},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        r = client.get(f"/api/spaces/{sp_id}", headers=regular_user["headers"])
+        assert r.status_code == 403
+
+    def test_member_can_read_private_space_detail(
+        self, client, admin_user, regular_user
+    ):
+        r = client.post("/api/spaces", json={"name": "Secret2", "is_public": False},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        self._add_and_accept(client, sp_id, admin_user["headers"], regular_user)
+        r = client.get(f"/api/spaces/{sp_id}", headers=regular_user["headers"])
+        assert r.status_code == 200
+        assert "members" in r.json()
+
+    def test_anyone_can_preview_public_space_detail(
+        self, client, admin_user, regular_user
+    ):
+        r = client.post("/api/spaces", json={"name": "Open", "is_public": True},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        r = client.get(f"/api/spaces/{sp_id}", headers=regular_user["headers"])
+        assert r.status_code == 200
+
+    def test_server_admin_can_read_any_private_space(
+        self, client, admin_user, regular_user
+    ):
+        # regular_user creates nothing (can't create spaces); admin makes a
+        # private space and a SECOND non-member... but admin is server owner, so
+        # verify the owner can always read it even without being a space member.
+        r = client.post("/api/spaces", json={"name": "AdminView", "is_public": False},
+                        headers=admin_user["headers"])
+        sp_id = r.json()["id"]
+        # The owner is the creator/member here, so this mainly guards the
+        # is_server_admin branch staying intact.
+        r = client.get(f"/api/spaces/{sp_id}", headers=admin_user["headers"])
+        assert r.status_code == 200

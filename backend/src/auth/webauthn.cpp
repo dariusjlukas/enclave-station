@@ -84,7 +84,9 @@ std::string base64url_encode(const std::vector<unsigned char>& data) {
 
 std::string generate_challenge() {
   unsigned char buf[32];
-  RAND_bytes(buf, sizeof(buf));
+  if (RAND_bytes(buf, sizeof(buf)) != 1) {
+    throw std::runtime_error("RAND_bytes failed generating WebAuthn challenge");
+  }
   return base64url_encode(buf, sizeof(buf));
 }
 
@@ -654,17 +656,29 @@ std::string hash_recovery_key(const std::string& key) {
 
 std::pair<std::vector<std::string>, std::vector<std::string>> generate_recovery_keys() {
   static const char ALPHANUM[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  constexpr int kAlphabet = 36;
+  // Largest multiple of the alphabet size that fits in a byte; bytes at or above
+  // this are rejected so the modulo is unbiased (256 % 36 != 0).
+  constexpr unsigned kRejectAbove = (256 / kAlphabet) * kAlphabet;  // 252
   std::vector<std::string> plaintext, hashes;
 
-  for (int i = 0; i < 8; i++) {
-    unsigned char buf[20];
-    RAND_bytes(buf, sizeof(buf));
+  // Draw one unbiased symbol via rejection sampling.
+  auto next_symbol = []() -> char {
+    unsigned char b;
+    do {
+      if (RAND_bytes(&b, 1) != 1) {
+        throw std::runtime_error("RAND_bytes failed generating recovery key");
+      }
+    } while (b >= kRejectAbove);
+    return ALPHANUM[b % kAlphabet];
+  };
 
+  for (int i = 0; i < 8; i++) {
     // Format: XXXX-XXXX-XXXX-XXXX-XXXX (20 chars + 4 dashes)
     std::string key;
     for (int j = 0; j < 20; j++) {
       if (j > 0 && j % 4 == 0) key += '-';
-      key += ALPHANUM[buf[j] % 36];
+      key += next_symbol();
     }
 
     plaintext.push_back(key);

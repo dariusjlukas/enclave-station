@@ -49,8 +49,9 @@ pqxx::connection* PooledConnection::operator->() {
 
 // --- ConnectionPool ---
 
-ConnectionPool::ConnectionPool(const std::string& conn_string, int pool_size)
-  : conn_string_(conn_string), pool_size_(pool_size) {
+ConnectionPool::ConnectionPool(
+  const std::string& conn_string, int pool_size, int acquire_timeout_ms)
+  : conn_string_(conn_string), pool_size_(pool_size), acquire_timeout_ms_(acquire_timeout_ms) {
   for (int i = 0; i < pool_size_; ++i) {
     connections_.push(create_connection());
   }
@@ -60,7 +61,17 @@ ConnectionPool::ConnectionPool(const std::string& conn_string, int pool_size)
 
 PooledConnection ConnectionPool::acquire() {
   std::unique_lock<std::mutex> lock(mutex_);
-  cv_.wait(lock, [this] { return !connections_.empty(); });
+  if (acquire_timeout_ms_ > 0) {
+    // Bounded wait: a stalled/exhausted pool surfaces as a typed error mapped
+    // to 503, rather than hanging the request (and a worker thread) forever.
+    if (!cv_.wait_for(lock, std::chrono::milliseconds(acquire_timeout_ms_), [this] {
+          return !connections_.empty();
+        })) {
+      throw ConnectionPoolTimeout();
+    }
+  } else {
+    cv_.wait(lock, [this] { return !connections_.empty(); });
+  }
 
   auto conn = std::move(connections_.front());
   connections_.pop();

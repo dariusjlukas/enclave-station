@@ -51,7 +51,10 @@ json build_settings_response(const Snapshot& snapshot) {
     {"llm_enabled", parse_bool_setting_or(snapshot.llm_enabled, false)},
     {"llm_api_url", snapshot.llm_api_url.value_or("")},
     {"llm_model", snapshot.llm_model.value_or("gpt-oss:120b")},
-    {"llm_api_key", snapshot.llm_api_key.value_or("")},
+    // Never return the real key; expose only whether one is set (masked).
+    {"llm_api_key",
+     (snapshot.llm_api_key && !snapshot.llm_api_key->empty()) ? std::string(kMaskedSecret)
+                                                              : std::string("")},
     {"llm_max_tokens", parse_int_setting_or(snapshot.llm_max_tokens, 4096)},
     {"llm_system_prompt", snapshot.llm_system_prompt.value_or("")}};
 }
@@ -197,7 +200,12 @@ std::map<std::string, std::string> collect_settings_updates(const json& settings
     updates["llm_model"] = settings.at("llm_model").get<std::string>();
   }
   if (settings.contains("llm_api_key")) {
-    updates["llm_api_key"] = settings.at("llm_api_key").get<std::string>();
+    auto key = settings.at("llm_api_key").get<std::string>();
+    // The masked sentinel means "unchanged" — don't overwrite the stored key
+    // with the placeholder the GET response handed back.
+    if (key != kMaskedSecret) {
+      updates["llm_api_key"] = key;
+    }
   }
   if (settings.contains("llm_max_tokens")) {
     int value = settings.at("llm_max_tokens").get<int>();

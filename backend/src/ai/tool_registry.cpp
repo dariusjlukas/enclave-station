@@ -509,9 +509,17 @@ void register_all_tools(ToolRegistry& registry) {
       {
         {"board_id", "string", "The ID of the task board", true, {}},
       },
-      [](Database& db, const std::string& /*user_id*/, const json& args) -> ToolResult {
+      [](Database& db, const std::string& user_id, const json& args) -> ToolResult {
         try {
           auto board_id = args.at("board_id").get<std::string>();
+
+          auto board = db.find_task_board(board_id);
+          if (!board) {
+            return ToolResult{false, {}, "Task board not found"};
+          }
+          if (!db.is_space_member(board->space_id, user_id)) {
+            return ToolResult{false, {}, "You are not a member of this space"};
+          }
 
           auto columns = db.list_task_columns(board_id);
 
@@ -620,9 +628,17 @@ void register_all_tools(ToolRegistry& registry) {
       {
         {"board_id", "string", "The ID of the task board", true, {}},
       },
-      [](Database& db, const std::string& /*user_id*/, const json& args) -> ToolResult {
+      [](Database& db, const std::string& user_id, const json& args) -> ToolResult {
         try {
           auto board_id = args.at("board_id").get<std::string>();
+
+          auto board = db.find_task_board(board_id);
+          if (!board) {
+            return ToolResult{false, {}, "Task board not found"};
+          }
+          if (!db.is_space_member(board->space_id, user_id)) {
+            return ToolResult{false, {}, "You are not a member of this space"};
+          }
 
           auto tasks = db.list_tasks(board_id);
 
@@ -662,6 +678,17 @@ void register_all_tools(ToolRegistry& registry) {
       [](Database& db, const std::string& user_id, const json& args) -> ToolResult {
         try {
           auto board_id = args.at("board_id").get<std::string>();
+
+          // Authorize before touching the board's contents (resolving a column
+          // by name would otherwise leak column existence to non-members).
+          auto board = db.find_task_board(board_id);
+          if (!board) {
+            return ToolResult{false, {}, "Task board not found"};
+          }
+          if (!db.is_space_member(board->space_id, user_id)) {
+            return ToolResult{false, {}, "You are not a member of this space"};
+          }
+
           std::string column_id;
           if (
             args.contains("column_id") && !args["column_id"].is_null() &&
@@ -700,15 +727,6 @@ void register_all_tools(ToolRegistry& registry) {
           std::string due_date;
           if (args.contains("due_date") && !args["due_date"].is_null()) {
             due_date = args["due_date"].get<std::string>();
-          }
-
-          auto board = db.find_task_board(board_id);
-          if (!board) {
-            return ToolResult{false, {}, "Task board not found"};
-          }
-
-          if (!db.is_space_member(board->space_id, user_id)) {
-            return ToolResult{false, {}, "You are not a member of this space"};
           }
 
           auto task = db.create_task(

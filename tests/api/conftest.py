@@ -378,6 +378,9 @@ def server_process(worker_db, worker_port):
             # itself with a unique X-Real-IP header and a tight per-test budget.
             "AUTH_RATE_LIMIT_MAX_ATTEMPTS": "30",
             "AUTH_RATE_LIMIT_WINDOW_SECONDS": "60",
+            # CORS / WS-origin allowlist. The WS upgrade rejects a non-empty
+            # Origin that isn't on this list (cross-site WS hijacking guard).
+            "ALLOWED_ORIGINS": "http://localhost:5173,https://app.example.com",
         }
         proc = subprocess.Popen(
             [binary],

@@ -8,6 +8,12 @@
 
 namespace admin_settings {
 
+// Placeholder returned in place of the stored LLM API key so the secret is
+// never serialized back to clients. On update, a submitted value equal to this
+// sentinel means "leave the stored key unchanged" (the UI shows the mask and
+// only sends a real value when the operator actually edits the field).
+inline constexpr char kMaskedSecret[] = "__ENCLAVE_SECRET_UNCHANGED__";
+
 struct Snapshot {
   int64_t config_max_file_size = 0;
   int config_session_expiry_hours = 0;

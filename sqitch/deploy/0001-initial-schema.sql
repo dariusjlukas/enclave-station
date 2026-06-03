@@ -120,7 +120,7 @@ CREATE TABLE "public"."calendar_events" (
     "end_time" timestamp with time zone NOT NULL,
     "all_day" boolean DEFAULT false,
     "rrule" "text" DEFAULT ''::"text",
-    "created_by" "uuid" NOT NULL,
+    "created_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"()
 );
@@ -135,7 +135,7 @@ CREATE TABLE "public"."calendar_permissions" (
     "space_id" "uuid" NOT NULL,
     "user_id" "uuid" NOT NULL,
     "permission" character varying(20) NOT NULL,
-    "granted_by" "uuid" NOT NULL,
+    "granted_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -222,7 +222,7 @@ CREATE TABLE "public"."invite_tokens" (
 CREATE TABLE "public"."invite_uses" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "invite_id" "uuid" NOT NULL,
-    "used_by" "uuid" NOT NULL,
+    "used_by" "uuid",
     "used_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -422,7 +422,7 @@ CREATE TABLE "public"."space_file_permissions" (
     "file_id" "uuid" NOT NULL,
     "user_id" "uuid",
     "permission" character varying(20) NOT NULL,
-    "granted_by" "uuid" NOT NULL,
+    "granted_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -438,7 +438,7 @@ CREATE TABLE "public"."space_file_versions" (
     "disk_file_id" "text" NOT NULL,
     "file_size" bigint NOT NULL,
     "mime_type" "text",
-    "uploaded_by" "uuid" NOT NULL,
+    "uploaded_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -456,7 +456,7 @@ CREATE TABLE "public"."space_files" (
     "disk_file_id" "text",
     "file_size" bigint DEFAULT 0,
     "mime_type" "text",
-    "created_by" "uuid" NOT NULL,
+    "created_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "is_deleted" boolean DEFAULT false,
@@ -533,7 +533,7 @@ CREATE TABLE "public"."spaces" (
 CREATE TABLE "public"."task_activity" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "task_id" "uuid" NOT NULL,
-    "user_id" "uuid" NOT NULL,
+    "user_id" "uuid",
     "action" character varying(50) NOT NULL,
     "details" "text" DEFAULT '{}'::"text",
     "created_at" timestamp with time zone DEFAULT "now"()
@@ -559,7 +559,7 @@ CREATE TABLE "public"."task_board_permissions" (
     "space_id" "uuid" NOT NULL,
     "user_id" "uuid" NOT NULL,
     "permission" character varying(20) NOT NULL,
-    "granted_by" "uuid" NOT NULL,
+    "granted_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -573,7 +573,7 @@ CREATE TABLE "public"."task_boards" (
     "space_id" "uuid" NOT NULL,
     "name" character varying(255) NOT NULL,
     "description" "text" DEFAULT ''::"text",
-    "created_by" "uuid" NOT NULL,
+    "created_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"()
 );
@@ -669,7 +669,7 @@ CREATE TABLE "public"."tasks" (
     "due_date" timestamp with time zone,
     "color" character varying(50) DEFAULT ''::character varying,
     "position" integer DEFAULT 0 NOT NULL,
-    "created_by" "uuid" NOT NULL,
+    "created_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "start_date" timestamp with time zone,
@@ -775,7 +775,7 @@ CREATE TABLE "public"."wiki_page_permissions" (
     "page_id" "uuid" NOT NULL,
     "user_id" "uuid",
     "permission" character varying(20) NOT NULL,
-    "granted_by" "uuid" NOT NULL,
+    "granted_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -792,7 +792,7 @@ CREATE TABLE "public"."wiki_page_versions" (
     "content" "text" DEFAULT ''::"text" NOT NULL,
     "content_text" "text" DEFAULT ''::"text",
     "is_major" boolean DEFAULT false,
-    "edited_by" "uuid" NOT NULL,
+    "edited_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -815,7 +815,7 @@ CREATE TABLE "public"."wiki_pages" (
     "cover_image_file_id" "text" DEFAULT ''::"text",
     "position" integer DEFAULT 0,
     "is_deleted" boolean DEFAULT false,
-    "created_by" "uuid" NOT NULL,
+    "created_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"(),
     "updated_at" timestamp with time zone DEFAULT "now"(),
     "last_edited_by" "uuid"
@@ -831,7 +831,7 @@ CREATE TABLE "public"."wiki_permissions" (
     "space_id" "uuid" NOT NULL,
     "user_id" "uuid",
     "permission" character varying(20) NOT NULL,
-    "granted_by" "uuid" NOT NULL,
+    "granted_by" "uuid",
     "created_at" timestamp with time zone DEFAULT "now"()
 );
 
@@ -1801,7 +1801,7 @@ ALTER TABLE ONLY "public"."calendar_event_rsvps"
 --
 
 ALTER TABLE ONLY "public"."calendar_events"
-    ADD CONSTRAINT "calendar_events_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "calendar_events_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -1817,7 +1817,7 @@ ALTER TABLE ONLY "public"."calendar_events"
 --
 
 ALTER TABLE ONLY "public"."calendar_permissions"
-    ADD CONSTRAINT "calendar_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "calendar_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -1873,7 +1873,7 @@ ALTER TABLE ONLY "public"."channel_read_state"
 --
 
 ALTER TABLE ONLY "public"."channels"
-    ADD CONSTRAINT "channels_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "channels_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -1897,7 +1897,7 @@ ALTER TABLE ONLY "public"."device_tokens"
 --
 
 ALTER TABLE ONLY "public"."invite_tokens"
-    ADD CONSTRAINT "invite_tokens_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "invite_tokens_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -1905,7 +1905,7 @@ ALTER TABLE ONLY "public"."invite_tokens"
 --
 
 ALTER TABLE ONLY "public"."invite_tokens"
-    ADD CONSTRAINT "invite_tokens_used_by_fkey" FOREIGN KEY ("used_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "invite_tokens_used_by_fkey" FOREIGN KEY ("used_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -1921,7 +1921,7 @@ ALTER TABLE ONLY "public"."invite_uses"
 --
 
 ALTER TABLE ONLY "public"."invite_uses"
-    ADD CONSTRAINT "invite_uses_used_by_fkey" FOREIGN KEY ("used_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "invite_uses_used_by_fkey" FOREIGN KEY ("used_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -1929,7 +1929,7 @@ ALTER TABLE ONLY "public"."invite_uses"
 --
 
 ALTER TABLE ONLY "public"."join_requests"
-    ADD CONSTRAINT "join_requests_reviewed_by_fkey" FOREIGN KEY ("reviewed_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "join_requests_reviewed_by_fkey" FOREIGN KEY ("reviewed_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2057,7 +2057,7 @@ ALTER TABLE ONLY "public"."recovery_keys"
 --
 
 ALTER TABLE ONLY "public"."recovery_tokens"
-    ADD CONSTRAINT "recovery_tokens_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "recovery_tokens_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2065,7 +2065,7 @@ ALTER TABLE ONLY "public"."recovery_tokens"
 --
 
 ALTER TABLE ONLY "public"."recovery_tokens"
-    ADD CONSTRAINT "recovery_tokens_for_user_id_fkey" FOREIGN KEY ("for_user_id") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "recovery_tokens_for_user_id_fkey" FOREIGN KEY ("for_user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
 
 
 --
@@ -2089,7 +2089,7 @@ ALTER TABLE ONLY "public"."space_file_permissions"
 --
 
 ALTER TABLE ONLY "public"."space_file_permissions"
-    ADD CONSTRAINT "space_file_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "space_file_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2113,7 +2113,7 @@ ALTER TABLE ONLY "public"."space_file_versions"
 --
 
 ALTER TABLE ONLY "public"."space_file_versions"
-    ADD CONSTRAINT "space_file_versions_uploaded_by_fkey" FOREIGN KEY ("uploaded_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "space_file_versions_uploaded_by_fkey" FOREIGN KEY ("uploaded_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2121,7 +2121,7 @@ ALTER TABLE ONLY "public"."space_file_versions"
 --
 
 ALTER TABLE ONLY "public"."space_files"
-    ADD CONSTRAINT "space_files_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "space_files_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2185,7 +2185,7 @@ ALTER TABLE ONLY "public"."space_members"
 --
 
 ALTER TABLE ONLY "public"."space_tools"
-    ADD CONSTRAINT "space_tools_enabled_by_fkey" FOREIGN KEY ("enabled_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "space_tools_enabled_by_fkey" FOREIGN KEY ("enabled_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2201,7 +2201,7 @@ ALTER TABLE ONLY "public"."space_tools"
 --
 
 ALTER TABLE ONLY "public"."spaces"
-    ADD CONSTRAINT "spaces_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "spaces_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2225,7 +2225,7 @@ ALTER TABLE ONLY "public"."task_activity"
 --
 
 ALTER TABLE ONLY "public"."task_activity"
-    ADD CONSTRAINT "task_activity_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "task_activity_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2249,7 +2249,7 @@ ALTER TABLE ONLY "public"."task_assignees"
 --
 
 ALTER TABLE ONLY "public"."task_board_permissions"
-    ADD CONSTRAINT "task_board_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "task_board_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2273,7 +2273,7 @@ ALTER TABLE ONLY "public"."task_board_permissions"
 --
 
 ALTER TABLE ONLY "public"."task_boards"
-    ADD CONSTRAINT "task_boards_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "task_boards_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2369,7 +2369,7 @@ ALTER TABLE ONLY "public"."tasks"
 --
 
 ALTER TABLE ONLY "public"."tasks"
-    ADD CONSTRAINT "tasks_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "tasks_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2401,7 +2401,7 @@ ALTER TABLE ONLY "public"."user_settings"
 --
 
 ALTER TABLE ONLY "public"."users"
-    ADD CONSTRAINT "users_banned_by_fkey" FOREIGN KEY ("banned_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "users_banned_by_fkey" FOREIGN KEY ("banned_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2417,7 +2417,7 @@ ALTER TABLE ONLY "public"."webauthn_credentials"
 --
 
 ALTER TABLE ONLY "public"."wiki_page_permissions"
-    ADD CONSTRAINT "wiki_page_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "wiki_page_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2441,7 +2441,7 @@ ALTER TABLE ONLY "public"."wiki_page_permissions"
 --
 
 ALTER TABLE ONLY "public"."wiki_page_versions"
-    ADD CONSTRAINT "wiki_page_versions_edited_by_fkey" FOREIGN KEY ("edited_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "wiki_page_versions_edited_by_fkey" FOREIGN KEY ("edited_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2457,7 +2457,7 @@ ALTER TABLE ONLY "public"."wiki_page_versions"
 --
 
 ALTER TABLE ONLY "public"."wiki_pages"
-    ADD CONSTRAINT "wiki_pages_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "wiki_pages_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2465,7 +2465,7 @@ ALTER TABLE ONLY "public"."wiki_pages"
 --
 
 ALTER TABLE ONLY "public"."wiki_pages"
-    ADD CONSTRAINT "wiki_pages_last_edited_by_fkey" FOREIGN KEY ("last_edited_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "wiki_pages_last_edited_by_fkey" FOREIGN KEY ("last_edited_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --
@@ -2489,7 +2489,7 @@ ALTER TABLE ONLY "public"."wiki_pages"
 --
 
 ALTER TABLE ONLY "public"."wiki_permissions"
-    ADD CONSTRAINT "wiki_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id");
+    ADD CONSTRAINT "wiki_permissions_granted_by_fkey" FOREIGN KEY ("granted_by") REFERENCES "public"."users"("id") ON DELETE SET NULL;
 
 
 --

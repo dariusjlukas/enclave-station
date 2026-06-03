@@ -279,9 +279,14 @@ void Database::unban_user(const std::string& user_id) {
 void Database::delete_user(const std::string& user_id) {
   auto conn = pool_.acquire();
   pqxx::work txn(conn.get());
-  // Messages don't cascade on user delete, so delete explicitly
+  // messages.user_id is intentionally ON DELETE NO ACTION (we don't want a
+  // ghost author), so the user's own messages are removed explicitly.
   txn.exec_params("DELETE FROM messages WHERE user_id = $1", user_id);
-  // The rest (sessions, user_keys, device_tokens, channel_members) cascade
+  // Everything else referencing users.id now either CASCADEs (membership,
+  // credentials, sessions, personal space, reactions, …) or SET NULLs the
+  // authorship/audit columns (created_by, granted_by, uploaded_by, …) so that
+  // shared content (spaces, channels, wiki pages, tasks, files) survives the
+  // author's deletion instead of blocking it. See sqitch/deploy schema.
   txn.exec_params("DELETE FROM users WHERE id = $1", user_id);
   txn.commit();
 }
@@ -3663,7 +3668,7 @@ std::vector<SpaceFile> Database::list_space_files(
     f.disk_file_id = row[5].is_null() ? "" : row[5].as<std::string>();
     f.file_size = row[6].as<int64_t>();
     f.mime_type = row[7].is_null() ? "" : row[7].as<std::string>();
-    f.created_by = row[8].as<std::string>();
+    f.created_by = row[8].as<std::string>("");
     f.created_by_username = row[9].is_null() ? "" : row[9].as<std::string>();
     f.created_at = row[10].as<std::string>();
     f.updated_at = row[11].as<std::string>();
@@ -3731,7 +3736,7 @@ std::optional<SpaceFile> Database::find_space_file(const std::string& file_id) {
   f.disk_file_id = r[0][5].is_null() ? "" : r[0][5].as<std::string>();
   f.file_size = r[0][6].as<int64_t>();
   f.mime_type = r[0][7].is_null() ? "" : r[0][7].as<std::string>();
-  f.created_by = r[0][8].as<std::string>();
+  f.created_by = r[0][8].as<std::string>("");
   f.created_by_username = r[0][9].is_null() ? "" : r[0][9].as<std::string>();
   f.created_at = r[0][10].as<std::string>();
   f.updated_at = r[0][11].as<std::string>();
@@ -4007,7 +4012,7 @@ std::vector<SpaceFilePermission> Database::get_file_permissions(const std::strin
     p.username = row[3].as<std::string>();
     p.display_name = row[4].as<std::string>();
     p.permission = row[5].as<std::string>();
-    p.granted_by = row[6].as<std::string>();
+    p.granted_by = row[6].as<std::string>("");
     p.granted_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
     p.created_at = row[8].as<std::string>();
     perms.push_back(p);
@@ -4065,7 +4070,7 @@ std::vector<SpaceFileVersion> Database::list_file_versions(const std::string& fi
     v.disk_file_id = row[3].as<std::string>();
     v.file_size = row[4].as<int64_t>();
     v.mime_type = row[5].is_null() ? "" : row[5].as<std::string>();
-    v.uploaded_by = row[6].as<std::string>();
+    v.uploaded_by = row[6].as<std::string>("");
     v.uploaded_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
     v.created_at = row[8].as<std::string>();
     versions.push_back(v);
@@ -4135,7 +4140,7 @@ std::optional<SpaceFileVersion> Database::get_file_version(const std::string& ve
   v.disk_file_id = r[0][3].as<std::string>();
   v.file_size = r[0][4].as<int64_t>();
   v.mime_type = r[0][5].is_null() ? "" : r[0][5].as<std::string>();
-  v.uploaded_by = r[0][6].as<std::string>();
+  v.uploaded_by = r[0][6].as<std::string>("");
   v.uploaded_by_username = r[0][7].is_null() ? "" : r[0][7].as<std::string>();
   v.created_at = r[0][8].as<std::string>();
   return v;
@@ -4586,7 +4591,7 @@ CalendarEvent Database::update_calendar_event(
   e.end_time = end_time;
   e.all_day = all_day;
   e.rrule = rrule;
-  e.created_by = r[0][1].as<std::string>();
+  e.created_by = r[0][1].as<std::string>("");
   e.created_at = r[0][2].as<std::string>();
   e.updated_at = r[0][3].as<std::string>();
   return e;
@@ -4623,7 +4628,7 @@ std::optional<CalendarEvent> Database::find_calendar_event(const std::string& ev
   e.end_time = r[0][7].as<std::string>();
   e.all_day = r[0][8].as<bool>();
   e.rrule = r[0][9].is_null() ? "" : r[0][9].as<std::string>();
-  e.created_by = r[0][10].as<std::string>();
+  e.created_by = r[0][10].as<std::string>("");
   e.created_by_username = r[0][11].is_null() ? "" : r[0][11].as<std::string>();
   e.created_at = r[0][12].as<std::string>();
   e.updated_at = r[0][13].as<std::string>();
@@ -4664,7 +4669,7 @@ std::vector<CalendarEvent> Database::list_calendar_events(
     e.end_time = row[7].as<std::string>();
     e.all_day = row[8].as<bool>();
     e.rrule = row[9].is_null() ? "" : row[9].as<std::string>();
-    e.created_by = row[10].as<std::string>();
+    e.created_by = row[10].as<std::string>("");
     e.created_by_username = row[11].is_null() ? "" : row[11].as<std::string>();
     e.created_at = row[12].as<std::string>();
     e.updated_at = row[13].as<std::string>();
@@ -4880,7 +4885,7 @@ std::vector<CalendarPermission> Database::get_calendar_permissions(const std::st
     p.username = row[3].as<std::string>();
     p.display_name = row[4].as<std::string>();
     p.permission = row[5].as<std::string>();
-    p.granted_by = row[6].as<std::string>();
+    p.granted_by = row[6].as<std::string>("");
     p.granted_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
     p.created_at = row[8].as<std::string>();
     perms.push_back(p);
@@ -4948,7 +4953,7 @@ std::vector<TaskBoard> Database::list_task_boards(const std::string& space_id) {
     b.space_id = row[1].as<std::string>();
     b.name = row[2].as<std::string>();
     b.description = row[3].as<std::string>("");
-    b.created_by = row[4].as<std::string>();
+    b.created_by = row[4].as<std::string>("");
     b.created_by_username = row[5].as<std::string>("");
     b.created_at = row[6].as<std::string>();
     b.updated_at = row[7].as<std::string>();
@@ -4973,7 +4978,7 @@ std::optional<TaskBoard> Database::find_task_board(const std::string& board_id) 
   b.space_id = r[0][1].as<std::string>();
   b.name = r[0][2].as<std::string>();
   b.description = r[0][3].as<std::string>("");
-  b.created_by = r[0][4].as<std::string>();
+  b.created_by = r[0][4].as<std::string>("");
   b.created_by_username = r[0][5].as<std::string>("");
   b.created_at = r[0][6].as<std::string>();
   b.updated_at = r[0][7].as<std::string>();
@@ -4997,7 +5002,7 @@ TaskBoard Database::update_task_board(
   b.name = name;
   b.description = description;
   b.space_id = r[0][0].as<std::string>();
-  b.created_by = r[0][1].as<std::string>();
+  b.created_by = r[0][1].as<std::string>("");
   b.created_at = r[0][2].as<std::string>();
   b.updated_at = r[0][3].as<std::string>();
   return b;
@@ -5206,7 +5211,7 @@ std::vector<Task> Database::list_tasks(const std::string& board_id) {
     t.duration_days = row[8].as<int>(0);
     t.color = row[9].as<std::string>("");
     t.position = row[10].as<int>();
-    t.created_by = row[11].as<std::string>();
+    t.created_by = row[11].as<std::string>("");
     t.created_by_username = row[12].as<std::string>("");
     t.created_at = row[13].as<std::string>();
     t.updated_at = row[14].as<std::string>();
@@ -5241,7 +5246,7 @@ std::vector<Task> Database::list_column_tasks(const std::string& column_id) {
     t.duration_days = row[8].as<int>(0);
     t.color = row[9].as<std::string>("");
     t.position = row[10].as<int>();
-    t.created_by = row[11].as<std::string>();
+    t.created_by = row[11].as<std::string>("");
     t.created_by_username = row[12].as<std::string>("");
     t.created_at = row[13].as<std::string>();
     t.updated_at = row[14].as<std::string>();
@@ -5275,7 +5280,7 @@ std::optional<Task> Database::find_task(const std::string& task_id) {
   t.duration_days = r[0][8].as<int>(0);
   t.color = r[0][9].as<std::string>("");
   t.position = r[0][10].as<int>();
-  t.created_by = r[0][11].as<std::string>();
+  t.created_by = r[0][11].as<std::string>("");
   t.created_by_username = r[0][12].as<std::string>("");
   t.created_at = r[0][13].as<std::string>();
   t.updated_at = r[0][14].as<std::string>();
@@ -5324,7 +5329,7 @@ Task Database::update_task(
   t.color = color;
   t.position = position;
   t.board_id = r[0][0].as<std::string>();
-  t.created_by = r[0][1].as<std::string>();
+  t.created_by = r[0][1].as<std::string>("");
   t.created_at = r[0][2].as<std::string>();
   t.updated_at = r[0][3].as<std::string>();
   return t;
@@ -5831,7 +5836,7 @@ std::vector<TaskBoardPermission> Database::get_task_permissions(const std::strin
     p.username = row[3].as<std::string>();
     p.display_name = row[4].as<std::string>();
     p.permission = row[5].as<std::string>();
-    p.granted_by = row[6].as<std::string>();
+    p.granted_by = row[6].as<std::string>("");
     p.granted_by_username = row[7].as<std::string>("");
     p.created_at = row[8].as<std::string>();
     perms.push_back(p);
@@ -5946,7 +5951,7 @@ std::vector<WikiPage> Database::list_wiki_pages(
     p.icon = row[8].is_null() ? "" : row[8].as<std::string>();
     p.cover_image_file_id = row[9].is_null() ? "" : row[9].as<std::string>();
     p.position = row[10].as<int>();
-    p.created_by = row[11].as<std::string>();
+    p.created_by = row[11].as<std::string>("");
     p.created_by_username = row[12].is_null() ? "" : row[12].as<std::string>();
     p.created_at = row[13].as<std::string>();
     p.updated_at = row[14].as<std::string>();
@@ -5985,7 +5990,7 @@ std::optional<WikiPage> Database::find_wiki_page(const std::string& page_id) {
   p.cover_image_file_id = r[0][9].is_null() ? "" : r[0][9].as<std::string>();
   p.position = r[0][10].as<int>();
   p.is_deleted = r[0][11].as<bool>();
-  p.created_by = r[0][12].as<std::string>();
+  p.created_by = r[0][12].as<std::string>("");
   p.created_by_username = r[0][13].is_null() ? "" : r[0][13].as<std::string>();
   p.created_at = r[0][14].as<std::string>();
   p.updated_at = r[0][15].as<std::string>();
@@ -6039,7 +6044,7 @@ WikiPage Database::update_wiki_page(
   p.cover_image_file_id = r[0][9].is_null() ? "" : r[0][9].as<std::string>();
   p.position = r[0][10].as<int>();
   p.is_deleted = r[0][11].as<bool>();
-  p.created_by = r[0][12].as<std::string>();
+  p.created_by = r[0][12].as<std::string>("");
   p.created_at = r[0][13].as<std::string>();
   p.updated_at = r[0][14].as<std::string>();
   p.last_edited_by = r[0][15].is_null() ? "" : r[0][15].as<std::string>();
@@ -6306,7 +6311,7 @@ std::vector<WikiPagePermission> Database::get_wiki_page_permissions(const std::s
     p.username = row[3].as<std::string>();
     p.display_name = row[4].as<std::string>();
     p.permission = row[5].as<std::string>();
-    p.granted_by = row[6].as<std::string>();
+    p.granted_by = row[6].as<std::string>("");
     p.granted_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
     p.created_at = row[8].as<std::string>();
     perms.push_back(p);
@@ -6390,7 +6395,7 @@ std::vector<WikiPermission> Database::get_wiki_permissions(const std::string& sp
     p.username = row[3].as<std::string>();
     p.display_name = row[4].as<std::string>();
     p.permission = row[5].as<std::string>();
-    p.granted_by = row[6].as<std::string>();
+    p.granted_by = row[6].as<std::string>("");
     p.granted_by_username = row[7].is_null() ? "" : row[7].as<std::string>();
     p.created_at = row[8].as<std::string>();
     perms.push_back(p);

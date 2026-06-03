@@ -24,14 +24,22 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         return;
       }
 
+      // Only server admins/owners may see other users' server role; to everyone
+      // else this directory reports a neutral "user" so admins can't be
+      // enumerated for targeting (recon). Callers still get their own real role
+      // via /api/users/me.
+      auto me = db.find_user_by_id(*user_id);
+      bool is_admin = me && (me->role == "admin" || me->role == "owner");
+
       auto users = db.list_users();
       json arr = json::array();
       for (const auto& u : users) {
+        std::string visible_role = (is_admin || u.id == *user_id) ? u.role : "user";
         arr.push_back(
           {{"id", u.id},
            {"username", u.username},
            {"display_name", u.display_name},
-           {"role", u.role},
+           {"role", visible_role},
            {"is_online", u.is_online},
            {"last_seen", u.last_seen},
            {"bio", u.bio},

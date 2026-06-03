@@ -112,6 +112,32 @@ TEST_F(DatabaseTest, DeleteUser) {
   EXPECT_FALSE(db_->find_user_by_id(user.id).has_value());
 }
 
+// A user who has authored shared content (spaces, channels, task boards) must
+// still be deletable: authorship/audit FKs SET NULL rather than block the
+// delete, and the shared content survives. Guards against the FK-violation
+// regression where delete_user threw for any active user.
+TEST_F(DatabaseTest, DeleteUserWhoAuthoredContentSucceeds) {
+  auto author = db_->create_user("author", "Author", "KEY_AUTH");
+  auto other = db_->create_user("other", "Other", "KEY_OTHER");
+
+  auto space = db_->create_space("Team", "desc", true, author.id, "user");
+  auto channel = db_->create_channel(
+    "general", "", false, author.id, std::vector<std::string>{}, true, "write", space.id);
+  auto board = db_->create_task_board(space.id, "Sprint", "", author.id);
+
+  // Deleting the author must not throw despite all the authored rows.
+  ASSERT_NO_THROW(db_->delete_user(author.id));
+  EXPECT_FALSE(db_->find_user_by_id(author.id).has_value());
+
+  // Shared content survives (created_by is now NULL, not deleted).
+  EXPECT_TRUE(db_->find_space_by_id(space.id).has_value());
+  EXPECT_TRUE(db_->find_channel_by_id(channel.id).has_value());
+  EXPECT_TRUE(db_->find_task_board(board.id).has_value());
+
+  // The other user is unaffected.
+  EXPECT_TRUE(db_->find_user_by_id(other.id).has_value());
+}
+
 // --- Sessions ---
 
 TEST_F(DatabaseTest, CreateAndValidateSession) {

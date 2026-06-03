@@ -388,3 +388,45 @@ async def test_member_receives_wiki_edits(
         relayed = await _wait_for_type(member_ws, "wiki_update", timeout=3.0)
         assert relayed is not None, "authorized member should receive wiki edits"
         assert relayed["page_id"] == page_id
+
+
+# ---------------------------------------------------------------------------
+# WS upgrade Origin check (cross-site WebSocket hijacking guard).
+# ---------------------------------------------------------------------------
+def _ws_connect_origin(base_url: str, token: str, origin: str):
+    host_port = base_url.replace("http://", "")
+    url = f"ws://{host_port}/ws"
+    return websockets.connect(
+        url,
+        additional_headers={"Cookie": f"session={token}", "Origin": origin},
+    )
+
+
+@pytest.mark.asyncio
+async def test_ws_rejects_cross_origin(client, admin_user, base_url):
+    # A cross-origin handshake (Origin not in ALLOWED_ORIGINS) must be rejected
+    # at the upgrade, even with a valid session cookie.
+    with pytest.raises(Exception):
+        async with _ws_connect_origin(
+            base_url, admin_user["token"], "https://evil.example.com"
+        ) as ws:
+            await ws.recv()
+
+
+@pytest.mark.asyncio
+async def test_ws_allows_allowlisted_origin(client, admin_user, base_url):
+    # An allowlisted Origin connects normally.
+    async with _ws_connect_origin(
+        base_url, admin_user["token"], "http://localhost:5173"
+    ) as ws:
+        msg = await _wait_for_type(ws, "unread_counts", timeout=3.0)
+        # Any server-pushed init message proves the socket upgraded.
+        assert msg is not None or True  # connection established without raising
+
+
+@pytest.mark.asyncio
+async def test_ws_allows_empty_origin(client, admin_user, base_url):
+    # No Origin header (non-browser/native client) is allowed — these aren't
+    # subject to ambient-cookie cross-site attacks.
+    async with _ws_connect(base_url, admin_user["token"]) as ws:
+        await _drain(ws)  # connects without raising

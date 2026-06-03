@@ -14,6 +14,10 @@ void init_from_env(const char* env_value);
 // Returns the currently-configured allowlist (read-only view).
 const std::vector<std::string>& allowed_origins();
 
+// True if `origin` exactly matches a configured allowlisted origin. Used as a
+// boolean gate (e.g. the WebSocket upgrade) without emitting CORS headers.
+bool is_allowed_origin(std::string_view origin);
+
 // Apply Allow-Origin / Vary / Allow-Credentials headers to a response if
 // the request's Origin matches the allowlist. Returns true if a header was
 // emitted.

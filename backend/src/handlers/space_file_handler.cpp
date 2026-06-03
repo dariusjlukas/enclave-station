@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <fstream>
 #include <pqxx/pqxx>
+#include <system_error>
 #include "handlers/cors_utils.h"
 #include "handlers/file_access_utils.h"
 #include "handlers/format_utils.h"
@@ -448,11 +449,33 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           }
           out.write(body->data(), body->size());
           out.close();
+          if (!out) {
+            std::error_code wec;
+            std::filesystem::remove(path, wec);
+            loop_->defer([res, aborted, scope, origin]() {
+              if (*aborted) return;
+              cors::apply(res, origin);
+              res->writeStatus("500")
+                ->writeHeader("Content-Type", "application/json")
+                ->end(R"({"error":"Failed to write file"})");
+              scope->observe(500);
+            });
+            return;
+          }
 
           auto file_size = static_cast<int64_t>(body->size());
 
-          auto file = db.create_space_file(
-            space_id, parent_id, filename, disk_file_id, file_size, content_type, user_id);
+          // If the DB insert fails (e.g. duplicate name), the blob is already on
+          // disk — remove it so a rejected upload doesn't leak storage.
+          SpaceFile file;
+          try {
+            file = db.create_space_file(
+              space_id, parent_id, filename, disk_file_id, file_size, content_type, user_id);
+          } catch (...) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+            throw;
+          }
           auto creator = db.find_user_by_id(user_id);
           json resp = space_file_to_json(file, creator ? creator->username : "");
           std::string resp_str = resp.dump();

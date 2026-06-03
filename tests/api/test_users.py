@@ -29,6 +29,27 @@ class TestUserProfile:
         assert "admin" in usernames
         assert "regular" in usernames
 
+    def test_admin_sees_real_roles_in_directory(self, client, admin_user, regular_user):
+        r = client.get("/api/users", headers=admin_user["headers"])
+        assert r.status_code == 200
+        by_name = {u["username"]: u for u in r.json()}
+        # An admin/owner caller sees real server roles.
+        assert by_name["admin"]["role"] == "owner"
+
+    def test_non_admin_cannot_enumerate_admin_roles(self, client, admin_user, regular_user):
+        # A non-admin must NOT be able to discover who the server owner/admins
+        # are: every other user's role is reported as a neutral "user".
+        r = client.get("/api/users", headers=regular_user["headers"])
+        assert r.status_code == 200
+        by_name = {u["username"]: u for u in r.json()}
+        # The owner is masked to "user" for the non-admin caller.
+        assert by_name["admin"]["role"] == "user"
+        # The caller still sees their own (real) role.
+        assert by_name["regular"]["role"] == "user"
+        # Directory fields are still present.
+        assert "display_name" in by_name["admin"]
+        assert "avatar_file_id" in by_name["admin"]
+
     def test_delete_account(self, client, admin_user):
         # Create a throwaway user to delete
         data = pki_register(client, "deleteme", "Delete Me")

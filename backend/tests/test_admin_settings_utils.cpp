@@ -367,3 +367,39 @@ TEST(AdminSettingsUtils, BuildSettingsResponseMfaDefaults) {
     EXPECT_FALSE(result.at("mfa_required_pki").get<bool>());
     EXPECT_FALSE(result.at("mfa_required_passkey").get<bool>());
 }
+
+// The stored LLM API key must never be serialized back to clients: an unset key
+// yields "", a set key yields the masked sentinel (not the real value).
+TEST(AdminSettingsUtils, LlmApiKeyIsNeverReturnedPlaintext) {
+    admin_settings::Snapshot empty;
+    empty.config_max_file_size = 1;
+    empty.config_session_expiry_hours = 1;
+    EXPECT_EQ(admin_settings::build_settings_response(empty).at("llm_api_key"), "");
+
+    admin_settings::Snapshot withkey;
+    withkey.config_max_file_size = 1;
+    withkey.config_session_expiry_hours = 1;
+    withkey.llm_api_key = "sk-supersecret-realkey";
+    json result = admin_settings::build_settings_response(withkey);
+    EXPECT_EQ(result.at("llm_api_key"), admin_settings::kMaskedSecret);
+    EXPECT_NE(result.at("llm_api_key"), "sk-supersecret-realkey");
+}
+
+// On update, the masked sentinel means "leave the stored key unchanged" (no
+// entry in the updates map), while a real value is persisted.
+TEST(AdminSettingsUtils, LlmApiKeyMaskedSentinelIsNotPersisted) {
+    auto unchanged = admin_settings::collect_settings_updates(
+        json{{"llm_api_key", admin_settings::kMaskedSecret}}, false);
+    EXPECT_EQ(unchanged.count("llm_api_key"), 0u);
+
+    auto changed = admin_settings::collect_settings_updates(
+        json{{"llm_api_key", "sk-new-real-key"}}, false);
+    ASSERT_EQ(changed.count("llm_api_key"), 1u);
+    EXPECT_EQ(changed.at("llm_api_key"), "sk-new-real-key");
+
+    // An empty string is a real value (clears the key), so it IS persisted.
+    auto cleared = admin_settings::collect_settings_updates(
+        json{{"llm_api_key", ""}}, false);
+    ASSERT_EQ(cleared.count("llm_api_key"), 1u);
+    EXPECT_EQ(cleared.at("llm_api_key"), "");
+}

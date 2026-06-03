@@ -65,7 +65,9 @@ password_auth::PasswordPolicy build_password_policy(
 
 std::string generate_user_handle() {
   unsigned char buf[16];
-  RAND_bytes(buf, sizeof(buf));
+  if (RAND_bytes(buf, sizeof(buf)) != 1) {
+    throw std::runtime_error("RAND_bytes failed generating user handle");
+  }
   return webauthn::base64url_encode(buf, sizeof(buf));
 }
 

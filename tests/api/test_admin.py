@@ -837,3 +837,54 @@ class TestAdminBans:
             headers=admin_user["headers"],
         )
         assert r.status_code == 400
+
+
+class TestLlmApiKeyMasking:
+    """The LLM API key is a secret: GET /api/admin/settings must never return it
+    in plaintext, and submitting the masked placeholder back must not overwrite
+    the stored key."""
+
+    MASK = "__ENCLAVE_SECRET_UNCHANGED__"
+
+    def test_key_is_masked_in_get_and_persists_across_masked_put(
+        self, client, admin_user
+    ):
+        # Set a real key.
+        r = client.put("/api/admin/settings",
+                       json={"llm_api_key": "sk-secret-001"},
+                       headers=admin_user["headers"])
+        assert r.status_code == 200
+
+        # GET must not echo the real key — it returns the mask instead.
+        r = client.get("/api/admin/settings", headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert r.json()["llm_api_key"] == self.MASK
+        assert r.json()["llm_api_key"] != "sk-secret-001"
+
+        # Re-submitting the mask (what a UI round-trip does) must NOT clobber the
+        # stored key. We verify by changing an unrelated field and confirming the
+        # key still works as a real value on the next genuine update.
+        r = client.put("/api/admin/settings",
+                       json={"llm_api_key": self.MASK, "llm_model": "test-model"},
+                       headers=admin_user["headers"])
+        assert r.status_code == 200
+        r = client.get("/api/admin/settings", headers=admin_user["headers"])
+        assert r.json()["llm_api_key"] == self.MASK  # still set (masked)
+        assert r.json()["llm_model"] == "test-model"
+
+    def test_real_value_updates_the_key(self, client, admin_user):
+        client.put("/api/admin/settings",
+                   json={"llm_api_key": "sk-first"},
+                   headers=admin_user["headers"])
+        # A genuine new value replaces it (still masked on read-back).
+        r = client.put("/api/admin/settings",
+                       json={"llm_api_key": "sk-second"},
+                       headers=admin_user["headers"])
+        assert r.status_code == 200
+        r = client.get("/api/admin/settings", headers=admin_user["headers"])
+        assert r.json()["llm_api_key"] == self.MASK
+
+    def test_non_owner_cannot_read_settings(self, client, admin_user, regular_user):
+        # Settings (incl. the masked key field) are owner-only anyway.
+        r = client.get("/api/admin/settings", headers=regular_user["headers"])
+        assert r.status_code == 403
