@@ -39,7 +39,10 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                  content_type,
                  message_text,
                  origin](std::string_view data, bool last) mutable {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_->submit([this,
@@ -290,7 +293,8 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           int chunk_count = j.value("chunk_count", 0);
           int64_t chunk_size = j.value("chunk_size", int64_t(0));
 
-          if (chunk_count <= 0 || chunk_size <= 0) {
+          if (
+            chunk_count <= 0 || chunk_size <= 0 || chunk_size > defaults::MAX_UPLOAD_CHUNK_BYTES) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
               res->writeStatus("400")
@@ -382,7 +386,10 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, upload_id, index, expected_hash, origin](
                   std::string_view data, bool last) {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_->submit(

@@ -528,3 +528,38 @@ class TestSpaceFileFolderZipDownload:
         r = client.get(f"/api/spaces/{sp['id']}/files/{folder_id}/download-zip",
                        headers=regular_user["headers"])
         assert r.status_code == 403
+
+
+class TestUploadLimits:
+    """Upload-size guards: a chunked upload may not declare an absurd chunk_size
+    (each chunk is buffered in memory), and the per-file/total size is bounded."""
+
+    def test_oversize_chunk_size_rejected(self, client, admin_user):
+        sp = _create_space(client, admin_user["headers"])
+        # 128 MiB chunk — over the 64 MiB MAX_UPLOAD_CHUNK_BYTES cap.
+        r = client.post(
+            f"/api/spaces/{sp['id']}/files/upload/init",
+            json={"filename": "big.bin", "total_size": 100,
+                  "chunk_count": 1, "chunk_size": 128 * 1024 * 1024},
+            headers=admin_user["headers"])
+        assert r.status_code == 400
+
+    def test_negative_chunk_size_rejected(self, client, admin_user):
+        sp = _create_space(client, admin_user["headers"])
+        r = client.post(
+            f"/api/spaces/{sp['id']}/files/upload/init",
+            json={"filename": "x.bin", "total_size": 100,
+                  "chunk_count": 1, "chunk_size": -1},
+            headers=admin_user["headers"])
+        assert r.status_code == 400
+
+    def test_reasonable_chunk_size_accepted(self, client, admin_user):
+        sp = _create_space(client, admin_user["headers"])
+        # 4 MiB chunk is well within bounds — init should succeed.
+        r = client.post(
+            f"/api/spaces/{sp['id']}/files/upload/init",
+            json={"filename": "ok.bin", "total_size": 1000,
+                  "chunk_count": 1, "chunk_size": 4 * 1024 * 1024},
+            headers=admin_user["headers"])
+        assert r.status_code == 200
+        assert "upload_id" in r.json()

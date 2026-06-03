@@ -50,7 +50,10 @@ TEST_F(ConfigTest, DefaultValues) {
     EXPECT_EQ(c.session_expiry_hours, 168);
     EXPECT_EQ(c.public_url, "");
     EXPECT_EQ(c.upload_dir, "/data/uploads");
-    EXPECT_EQ(c.max_file_size, 0);
+    EXPECT_EQ(c.max_file_size, 1073741824);          // 1 GiB default
+    EXPECT_EQ(c.max_request_body_size, 1207959552);  // 1.125 GiB default
+    EXPECT_EQ(c.auth_rate_limit_max_attempts, 10);
+    EXPECT_EQ(c.auth_rate_limit_window_seconds, 60);
 }
 
 TEST_F(ConfigTest, EnvironmentOverrides) {

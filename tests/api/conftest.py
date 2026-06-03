@@ -372,6 +372,12 @@ def server_process(worker_db, worker_port):
             # applies the deploy script in _create_worker_db; the backend
             # asserts the schema is initialized at boot.
             "ENABLE_SQITCH_ONLY": "1",
+            # Auth brute-force limiter is per client IP. Set generously so the
+            # ordinary auth tests (which all originate from 127.0.0.1 and share
+            # one bucket) never trip it; the dedicated rate-limit test isolates
+            # itself with a unique X-Real-IP header and a tight per-test budget.
+            "AUTH_RATE_LIMIT_MAX_ATTEMPTS": "30",
+            "AUTH_RATE_LIMIT_WINDOW_SECONDS": "60",
         }
         proc = subprocess.Popen(
             [binary],

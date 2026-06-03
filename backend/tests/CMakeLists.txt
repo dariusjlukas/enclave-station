@@ -16,6 +16,10 @@ add_executable(test_config test_config.cpp)
 target_link_libraries(test_config PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME ConfigTests COMMAND test_config)
 
+add_executable(test_rate_limit test_rate_limit.cpp)
+target_link_libraries(test_rate_limit PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME RateLimitTests COMMAND test_rate_limit)
+
 add_executable(test_totp test_totp.cpp)
 target_link_libraries(test_totp PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME TotpTests COMMAND test_totp)
@@ -122,10 +126,10 @@ target_link_libraries(test_auth_credentials PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME AuthCredentialTests COMMAND test_auth_credentials)
 
 # Labels for selective test running
-set_tests_properties(PkiTests ConfigTests TotpTests PasswordTests WebAuthnTests HandlerUtilsTests
-    AuthUtilsTests AuthPayloadUtilsTests AdminSettingsUtilsTests FileAccessUtilsTests
-    AdminApprovalUtilsTests SearchHandlerTests FileHandlerTests RecurrenceTests ZipBuilderTests
-    UploadManagerTests LoggerTests MetricsTests RedisEnvelopeTests RedisPubSubTests
+set_tests_properties(PkiTests ConfigTests RateLimitTests TotpTests PasswordTests WebAuthnTests
+    HandlerUtilsTests AuthUtilsTests AuthPayloadUtilsTests AdminSettingsUtilsTests
+    FileAccessUtilsTests AdminApprovalUtilsTests SearchHandlerTests FileHandlerTests RecurrenceTests
+    ZipBuilderTests UploadManagerTests LoggerTests MetricsTests RedisEnvelopeTests RedisPubSubTests
     PROPERTIES LABELS "unit")
 # PasswordTests runs many argon2 hash operations; with sanitizers this needs extra time
 set_tests_properties(PasswordTests PROPERTIES TIMEOUT 120)

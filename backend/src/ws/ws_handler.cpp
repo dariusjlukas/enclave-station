@@ -541,9 +541,9 @@ void WsHandler<SSL>::handle_message(
     else if (type == "typing") {
       handle_typing(ws, data, j);
     } else if (type == "wiki_join") {
-      std::string page_id = j.at("page_id");
-      std::lock_guard<std::mutex> lock(mutex_);
-      local_subscribe(ws, "wiki:" + page_id);
+      // Authorization happens on the DB thread pool before subscribing — a
+      // client cannot join an arbitrary page's live session by guessing its id.
+      handle_wiki_join(ws, data, j);
     } else if (type == "wiki_leave") {
       std::string page_id = j.at("page_id");
       std::lock_guard<std::mutex> lock(mutex_);
@@ -551,28 +551,7 @@ void WsHandler<SSL>::handle_message(
     } else if (
       type == "wiki_update" || type == "wiki_awareness" || type == "wiki_sync_step1" ||
       type == "wiki_sync_step2") {
-      std::string page_id = j.at("page_id");
-      std::string topic = "wiki:" + page_id;
-      json relay = j;
-      relay["user_id"] = data->user_id;
-      relay["username"] = data->username;
-      std::string msg_str = relay.dump();
-      // Wiki relay used to be ws->publish(topic, ...) which excluded the
-      // sender. Preserve that behavior: do local fan-out manually so we
-      // can skip ws, then optionally publish to Redis for cross-instance.
-      {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = topic_subscribers_.find(topic);
-        if (it != topic_subscribers_.end()) {
-          for (auto* s : it->second) {
-            if (s == ws) continue;  // sender exclusion (uWS publish semantics)
-            s->send(msg_str, uWS::OpCode::TEXT);
-          }
-        }
-      }
-      if (redis_pubsub_ && redis_pubsub_->is_enabled()) {
-        redis_pubsub_->publish(topic, msg_str);
-      }
+      handle_wiki_relay(ws, data, j, type);
     } else if (type == "ping") {
       json pong = {{"type", "pong"}};
       ws->send(pong.dump(), uWS::OpCode::TEXT);
@@ -580,6 +559,94 @@ void WsHandler<SSL>::handle_message(
   } catch (const std::exception& e) {
     json err = {{"type", "error"}, {"message", e.what()}};
     ws->send(err.dump(), uWS::OpCode::TEXT);
+  }
+}
+
+template <bool SSL>
+bool WsHandler<SSL>::can_access_wiki_page(const std::string& page_id, const std::string& user_id) {
+  auto page = db.find_wiki_page(page_id);
+  if (!page || page->is_deleted) return false;
+  // Mirror WikiHandler::check_space_access (the REST "view" gate).
+  if (db.is_space_member(page->space_id, user_id)) return true;
+  auto user = db.find_user_by_id(user_id);
+  if (user && (user->role == "admin" || user->role == "owner")) return true;
+  auto space = db.find_space_by_id(page->space_id);
+  if (
+    space && space->is_personal &&
+    db.has_resource_permission_in_space(page->space_id, user_id, "wiki")) {
+    return true;
+  }
+  return false;
+}
+
+template <bool SSL>
+void WsHandler<SSL>::handle_wiki_join(
+  uWS::WebSocket<SSL, true, WsUserData>* ws, WsUserData* data, const json& j) {
+  (void)ws;  // ws may be gone after the async hop; re-resolve via user_sockets_
+  std::string page_id = j.at("page_id");
+  std::string user_id = data->user_id;
+  pool_.submit([this, user_id, page_id = std::move(page_id)]() {
+    bool allowed = can_access_wiki_page(page_id, user_id);
+    std::string topic = "wiki:" + page_id;
+    loop_->defer([this, user_id, topic = std::move(topic), page_id, allowed]() {
+      if (!allowed) {
+        json err = {
+          {"type", "error"},
+          {"context", "wiki_join"},
+          {"page_id", page_id},
+          {"message", "Not authorized to access this wiki page"}};
+        send_to_user(user_id, err.dump());
+        return;
+      }
+      // Subscribe every live socket for this user (the page belongs to a space
+      // they can view). Re-resolve sockets — the original ws may have closed.
+      std::lock_guard<std::mutex> lock(mutex_);
+      auto it = user_sockets_.find(user_id);
+      if (it == user_sockets_.end()) return;
+      for (auto* s : it->second) {
+        local_subscribe(s, topic);
+      }
+    });
+  });
+}
+
+template <bool SSL>
+void WsHandler<SSL>::handle_wiki_relay(
+  uWS::WebSocket<SSL, true, WsUserData>* ws,
+  WsUserData* data,
+  const json& j,
+  const std::string& type) {
+  (void)type;
+  std::string page_id = j.at("page_id");
+  std::string topic = "wiki:" + page_id;
+
+  json relay = j;
+  relay["user_id"] = data->user_id;
+  relay["username"] = data->username;
+  std::string msg_str = relay.dump();
+
+  // Only relay for a page this socket has actually joined. wiki_join performs
+  // the authorization + subscription, so a subscribed socket is by definition
+  // authorized; an unauthorized client that skipped wiki_join can neither read
+  // nor inject edits.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (data->subscribed_topics.find(topic) == data->subscribed_topics.end()) {
+      return;
+    }
+    // Wiki relay used to be ws->publish(topic, ...) which excluded the sender.
+    // Preserve that behavior: local fan-out skipping ws.
+    auto it = topic_subscribers_.find(topic);
+    if (it != topic_subscribers_.end()) {
+      for (auto* s : it->second) {
+        if (s == ws) continue;  // sender exclusion (uWS publish semantics)
+        s->send(msg_str, uWS::OpCode::TEXT);
+      }
+    }
+  }
+  // Cross-instance fan-out (outside the lock — Redis I/O must not block peers).
+  if (redis_pubsub_ && redis_pubsub_->is_enabled()) {
+    redis_pubsub_->publish(topic, msg_str);
   }
 }
 

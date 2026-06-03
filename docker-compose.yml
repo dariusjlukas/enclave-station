@@ -56,7 +56,7 @@ services:
       SESSION_EXPIRY_HOURS: ${SESSION_EXPIRY_HOURS:-168}
       PUBLIC_URL: ${PUBLIC_URL:-}
       UPLOAD_DIR: /data/uploads
-      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-0}
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-1073741824}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
       # P2.1: optional Redis pub/sub for horizontal WS scaling.
       #   REDIS_URL=""              -> single-instance mode (default; no Redis).

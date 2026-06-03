@@ -20,6 +20,12 @@ struct Config {
   std::string public_url;
   std::string upload_dir;
   int64_t max_file_size;
+  // Hard ceiling on a single raw upload request body held in memory, in bytes.
+  // Independent of max_file_size (which is the logical per-file policy enforced
+  // after accumulation); this exists purely to bound memory and is checked
+  // mid-stream so an oversized body is rejected early. Default 1.125 GiB
+  // (the 1 GiB file default plus headroom).
+  int64_t max_request_body_size;
   std::string ssl_cert_path;
   std::string ssl_key_path;
   std::string webauthn_rp_id;
@@ -35,6 +41,12 @@ struct Config {
   // when the local broadcast loops back through Redis. Defaults to a random
   // UUID v4 generated at boot.
   std::string instance_id;
+  // Brute-force protection on authentication endpoints (token bucket, per
+  // client IP). auth_rate_limit_max_attempts is the burst capacity; the bucket
+  // refills over auth_rate_limit_window_seconds (refill = max/window per sec).
+  // Set max <= 0 to disable auth rate limiting entirely.
+  int auth_rate_limit_max_attempts;
+  int auth_rate_limit_window_seconds;
 
   bool has_ssl() const {
     return !ssl_cert_path.empty() && !ssl_key_path.empty();
@@ -51,7 +63,11 @@ struct Config {
     c.session_expiry_hours = parse_int_env("SESSION_EXPIRY_HOURS", "168");
     c.public_url = env("PUBLIC_URL", "");
     c.upload_dir = env("UPLOAD_DIR", "/data/uploads");
-    c.max_file_size = parse_i64_env("MAX_FILE_SIZE", "0");
+    // Default 1 GiB per file (matches docs/guides/local-deployment.md). Set 0
+    // to disable the per-file limit. A non-zero default ensures uploads are
+    // bounded out of the box rather than unlimited.
+    c.max_file_size = parse_i64_env("MAX_FILE_SIZE", "1073741824");
+    c.max_request_body_size = parse_i64_env("MAX_REQUEST_BODY_SIZE", "1207959552");  // 1.125 GiB
     c.ssl_cert_path = env("SSL_CERT_PATH", "");
     c.ssl_key_path = env("SSL_KEY_PATH", "");
     c.db_pool_size = parse_int_env("DB_POOL_SIZE", "10");
@@ -61,6 +77,8 @@ struct Config {
       c.enable_sqitch_only = (v == "1" || v == "true");
     }
     c.redis_url = env("REDIS_URL", "");
+    c.auth_rate_limit_max_attempts = parse_int_env("AUTH_RATE_LIMIT_MAX_ATTEMPTS", "10");
+    c.auth_rate_limit_window_seconds = parse_int_env("AUTH_RATE_LIMIT_WINDOW_SECONDS", "60");
     {
       const char* iid = std::getenv("INSTANCE_ID");
       if (iid && *iid) {

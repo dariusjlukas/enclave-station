@@ -5,8 +5,41 @@
 
 using json = nlohmann::json;
 
+// Read the real client IP from the nginx-set X-Real-IP header (uWS header
+// lookups are lowercase). Falls back to the socket peer address for direct /
+// dev access. Used as the rate-limit key; must be called while `req` is valid.
+template <bool SSL>
+static std::string auth_client_ip(uWS::HttpResponse<SSL>* res, uWS::HttpRequest* req) {
+  std::string ip(req->getHeader("x-real-ip"));
+  if (ip.empty()) ip = std::string(res->getRemoteAddressAsText());
+  return ip;
+}
+
+template <bool SSL>
+bool AuthHandler<SSL>::auth_rate_limited(
+  uWS::HttpResponse<SSL>* res, const std::string& client_ip) {
+  if (!auth_limiter_ || client_ip.empty()) return false;
+  int retry_ms = 0;
+  if (auth_limiter_->allow(client_ip, retry_ms)) return false;
+  int retry_after_s = (retry_ms + 999) / 1000;
+  auto body =
+    json({{"error", "Too many attempts. Try again later."}, {"retry_after", retry_after_s}}).dump();
+  res->writeStatus("429 Too Many Requests")
+    ->writeHeader("Content-Type", "application/json")
+    ->writeHeader("Retry-After", std::to_string(retry_after_s))
+    ->end(body);
+  return true;
+}
+
 template <bool SSL>
 void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
+  // Brute-force limiter for credential-verifying auth endpoints (per client IP).
+  if (config.auth_rate_limit_max_attempts > 0 && config.auth_rate_limit_window_seconds > 0) {
+    double burst = config.auth_rate_limit_max_attempts;
+    double refill = burst / config.auth_rate_limit_window_seconds;
+    auth_limiter_ = std::make_unique<RateLimiter>(burst, refill);
+  }
+
   // WebAuthn (passkey) routes
   app.post("/api/auth/register/options", [this](auto* res, auto* req) {
     auto scope =
@@ -118,6 +151,10 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Recovery key login
   app.post("/api/auth/recovery", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/recovery");
+    if (auth_rate_limited(res, auth_client_ip<SSL>(res, req))) {
+      scope->observe(429);
+      return;
+    }
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -134,6 +171,10 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
   // Recovery token (admin-generated) login
   app.post("/api/auth/recover-account", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/recover-account");
+    if (auth_rate_limited(res, auth_client_ip<SSL>(res, req))) {
+      scope->observe(429);
+      return;
+    }
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -209,6 +250,10 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/password/login", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/password/login");
+    if (auth_rate_limited(res, auth_client_ip<SSL>(res, req))) {
+      scope->observe(429);
+      return;
+    }
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });
@@ -266,6 +311,10 @@ void AuthHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
   app.post("/api/auth/mfa/verify", [this](auto* res, auto* req) {
     auto scope = std::make_shared<handler_utils::RequestScope>("POST", "/api/auth/mfa/verify");
+    if (auth_rate_limited(res, auth_client_ip<SSL>(res, req))) {
+      scope->observe(429);
+      return;
+    }
     auto aborted = std::make_shared<bool>(false);
     std::string body;
     res->onAborted([aborted]() { *aborted = true; });

@@ -91,6 +91,15 @@ private:
 
   void handle_message(WebSocket* ws, std::string_view raw);
   void handle_send_message(WebSocket* ws, WsUserData* data, const json& j);
+  // Wiki collaborative-editing authorization. Mirrors the REST wiki "view"
+  // gate (check_space_access on the page's owning space): a wiki page may only
+  // be joined/edited in real time by a member of its space, a server
+  // admin/owner, or — for personal spaces — a user with a wiki resource grant.
+  // Synchronous DB calls; must be invoked from the DB thread pool, never the
+  // event loop. Returns false if the page does not exist or is deleted.
+  bool can_access_wiki_page(const std::string& page_id, const std::string& user_id);
+  void handle_wiki_join(WebSocket* ws, WsUserData* data, const json& j);
+  void handle_wiki_relay(WebSocket* ws, WsUserData* data, const json& j, const std::string& type);
   void handle_edit_message(WebSocket* ws, WsUserData* data, const json& j);
   void handle_delete_message(WebSocket* ws, WsUserData* data, const json& j);
   void handle_typing(WebSocket* ws, WsUserData* data, const json& j);

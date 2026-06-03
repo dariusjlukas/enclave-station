@@ -236,6 +236,61 @@ class TestPasswordRegistration:
         })
         assert r.status_code == 401
 
+
+class TestAuthRateLimiting:
+    """Brute-force protection on credential endpoints. The limiter is keyed by
+    client IP (X-Real-IP, set by nginx in prod). Each test uses a distinct
+    X-Real-IP so it gets its own token bucket, isolated from the rest of the
+    suite. The server is configured (conftest) with a burst of 30 per 60s.
+
+    These tests drive the MFA-verify endpoint: it shares the exact same
+    `auth_rate_limited` gate as password/recovery login but verifies a bogus
+    token cheaply, so the bucket can actually be exhausted deterministically.
+    (Password login goes through Argon2, which in a debug/sanitizer build is
+    slow enough that the bucket refills faster than a tight loop drains it —
+    making a 429 assertion against it timing-dependent.)"""
+
+    def _hammer_mfa(self, client, ip_value, n=45):
+        ip = {"X-Real-IP": ip_value}
+        for _ in range(n):
+            r = client.post("/api/auth/mfa/verify",
+                            json={"mfa_token": "bogus", "code": "000000"},
+                            headers=ip)
+            if r.status_code == 429:
+                return True, r
+        return False, r
+
+    def test_mfa_verify_rate_limited(self, client):
+        saw_429, r = self._hammer_mfa(client, "203.0.113.30")
+        assert saw_429, "expected a 429 after exceeding the MFA verify rate limit"
+        # The throttle response carries a Retry-After hint.
+        assert r.headers.get("Retry-After") is not None
+
+    def test_rate_limit_is_per_ip(self, client):
+        # Exhaust one IP's bucket.
+        got_429, _ = self._hammer_mfa(client, "203.0.113.20")
+        assert got_429
+
+        # A different IP still has a full bucket: its first attempt is the normal
+        # auth-failure response (a bogus mfa_token yields 400), not a 429.
+        r = client.post("/api/auth/mfa/verify",
+                        json={"mfa_token": "bogus", "code": "000000"},
+                        headers={"X-Real-IP": "203.0.113.21"})
+        assert r.status_code != 429
+        assert r.status_code == 400
+
+    def test_password_login_uses_same_limiter(self, client, admin_user):
+        # Smoke check that the password endpoint is wired to the limiter too:
+        # a fresh IP's first attempt is a normal auth failure (401), never 429.
+        client.put("/api/admin/settings", json={
+            "auth_methods": ["passkey", "pki", "password"],
+        }, headers=admin_user["headers"])
+        password_register(client, "rluser", "RL User", password="Correct123")
+        r = client.post("/api/auth/password/login",
+                        json={"username": "rluser", "password": "Wrong!!1"},
+                        headers={"X-Real-IP": "203.0.113.40"})
+        assert r.status_code == 401
+
     def test_password_too_short_rejected(self, client, admin_user):
         client.put("/api/admin/settings", json={
             "auth_methods": ["passkey", "pki", "password"],

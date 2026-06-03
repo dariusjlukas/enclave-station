@@ -274,3 +274,117 @@ async def test_rate_limit_sends_error_on_burst(
         for e in rate_limit_errors:
             assert isinstance(e.get("retry_after_ms"), int)
             assert e["retry_after_ms"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# Wiki collaborative-editing authorization: wiki_join / wiki_update topics must
+# be gated by the page's owning-space membership, not trusted from client input.
+# ---------------------------------------------------------------------------
+def _create_space_with_wiki(client, headers, name="ws-wiki"):
+    r = client.post("/api/spaces", json={"name": name}, headers=headers)
+    assert r.status_code == 200
+    space_id = r.json()["id"]
+    r = client.put(f"/api/spaces/{space_id}/tools",
+                   json={"tool": "wiki", "enabled": True}, headers=headers)
+    assert r.status_code == 200
+    return space_id
+
+
+def _create_wiki_page(client, space_id, headers, title="Secret"):
+    r = client.post(f"/api/spaces/{space_id}/wiki/pages",
+                    json={"title": title, "content": "{}"}, headers=headers)
+    assert r.status_code == 200
+    return r.json()["id"]
+
+
+def _add_space_member(client, space_id, admin_headers, user_info, role="user"):
+    """Invite a user to a space and accept the invite (membership is not active
+    until accepted, so a bare POST /members is insufficient)."""
+    r = client.post(f"/api/spaces/{space_id}/members",
+                    json={"user_id": user_info["user"]["id"], "role": role},
+                    headers=admin_headers)
+    assert r.status_code == 200
+    r = client.get("/api/space-invites", headers=user_info["headers"])
+    assert r.status_code == 200
+    invite = next(i for i in r.json() if i["space_id"] == space_id)
+    r = client.post(f"/api/space-invites/{invite['id']}/accept",
+                    headers=user_info["headers"])
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_non_member_cannot_join_private_wiki_page(
+    client, admin_user, regular_user, base_url
+):
+    # admin owns a private space with a wiki page; regular_user is NOT a member.
+    space_id = _create_space_with_wiki(client, admin_user["headers"])
+    page_id = _create_wiki_page(client, space_id, admin_user["headers"])
+
+    async with _ws_connect(base_url, regular_user["token"]) as attacker_ws:
+        await _drain(attacker_ws)
+        await attacker_ws.send(json.dumps({"type": "wiki_join", "page_id": page_id}))
+        # The join must be rejected with an authorization error.
+        err = await _wait_for_type(attacker_ws, "error", timeout=3.0)
+        assert err is not None, "non-member wiki_join should return an error"
+        assert err.get("context") == "wiki_join"
+
+
+@pytest.mark.asyncio
+async def test_non_member_does_not_receive_wiki_edits(
+    client, admin_user, regular_user, base_url
+):
+    space_id = _create_space_with_wiki(client, admin_user["headers"])
+    page_id = _create_wiki_page(client, space_id, admin_user["headers"])
+
+    async with _ws_connect(base_url, admin_user["token"]) as owner_ws, _ws_connect(
+        base_url, regular_user["token"]
+    ) as attacker_ws:
+        await _drain(owner_ws)
+        await _drain(attacker_ws)
+
+        # Owner legitimately joins; attacker (non-member) attempts to join too.
+        await owner_ws.send(json.dumps({"type": "wiki_join", "page_id": page_id}))
+        await attacker_ws.send(json.dumps({"type": "wiki_join", "page_id": page_id}))
+        await _drain(owner_ws)
+        await _drain(attacker_ws)
+
+        # Owner sends a live edit.
+        await owner_ws.send(json.dumps({
+            "type": "wiki_update", "page_id": page_id, "data": "AQID"
+        }))
+
+        # The non-member must NOT receive the relayed edit (they were never
+        # subscribed because the join was denied).
+        leaked = await _wait_for_type(attacker_ws, "wiki_update", timeout=1.5)
+        assert leaked is None, f"non-member received wiki edit: {leaked!r}"
+
+
+@pytest.mark.asyncio
+async def test_member_receives_wiki_edits(
+    client, admin_user, regular_user, base_url
+):
+    # regular_user IS a space member this time — they should get live edits.
+    space_id = _create_space_with_wiki(client, admin_user["headers"])
+    _add_space_member(client, space_id, admin_user["headers"], regular_user)
+    page_id = _create_wiki_page(client, space_id, admin_user["headers"])
+
+    async with _ws_connect(base_url, admin_user["token"]) as owner_ws, _ws_connect(
+        base_url, regular_user["token"]
+    ) as member_ws:
+        await _drain(owner_ws)
+        await _drain(member_ws)
+
+        await owner_ws.send(json.dumps({"type": "wiki_join", "page_id": page_id}))
+        await member_ws.send(json.dumps({"type": "wiki_join", "page_id": page_id}))
+        # Allow the async authorization + subscribe to complete.
+        await asyncio.sleep(0.5)
+        await _drain(owner_ws)
+        await _drain(member_ws)
+
+        await owner_ws.send(json.dumps({
+            "type": "wiki_update", "page_id": page_id, "data": "AQID"
+        }))
+
+        relayed = await _wait_for_type(member_ws, "wiki_update", timeout=3.0)
+        assert relayed is not None, "authorized member should receive wiki edits"
+        assert relayed["page_id"] == page_id

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <ctime>
 #include <iomanip>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <sstream>
@@ -42,7 +43,65 @@ constexpr int RECOVERY_TOKEN_EXPIRY_HOURS = 24;
 constexpr int SEARCH_MAX_RESULTS = 50;
 constexpr int MESSAGE_DEFAULT_LIMIT = 50;
 constexpr int WEBAUTHN_TIMEOUT_MS = 60000;
+// Hard ceiling on any JSON request body. Request bodies are accumulated fully
+// in memory before parsing, so an uncapped body is a memory-exhaustion vector.
+// JSON payloads (messages, settings, etc.) are small; 8 MiB is generous.
+constexpr int64_t MAX_JSON_BODY_BYTES = 8LL * 1024 * 1024;
+// Upper bound on a single client-declared chunk in a chunked upload. Each chunk
+// is buffered fully in memory before being written to disk, so an absurd
+// chunk_size (e.g. 50 GiB) declared at init is a memory-exhaustion vector even
+// though the per-file total is bounded. 64 MiB matches nginx client_max_body_size.
+constexpr int64_t MAX_UPLOAD_CHUNK_BYTES = 64LL * 1024 * 1024;
 }  // namespace defaults
+
+namespace handler_utils {
+// Append a streamed chunk to `body`, enforcing a hard byte cap. Returns true if
+// the cap was exceeded: the caller must `return` immediately without further
+// processing. When the cap is first exceeded this sends a 413, closes the
+// connection (so the client stops streaming), and sets `*aborted` so that (a)
+// any later onData callback short-circuits and (b) the downstream pool task —
+// which already begins with `if (*aborted) return;` — never runs. `aborted` is
+// the same shared flag the handler's onAborted sets; treating an over-limit
+// request like an abort is correct since the response is already finalized.
+//
+// Designed to need no extra lambda captures beyond the ones every upload
+// onData already has (res, body, aborted) plus the cap value.
+//
+// Usage inside res->onData([...](std::string_view data, bool last) {
+//   if (handler_utils::append_capped(res, body, data, aborted, cap)) return;
+//   if (!last) return;
+//   ... existing pool submit ...
+// });
+template <bool SSL>
+inline bool append_capped(
+  uWS::HttpResponse<SSL>* res,
+  std::string& body,
+  std::string_view data,
+  const std::shared_ptr<bool>& aborted,
+  int64_t cap) {
+  if (*aborted) return true;  // already aborted/rejected; ignore trailing data
+  if (cap > 0 && static_cast<int64_t>(body.size()) + static_cast<int64_t>(data.size()) > cap) {
+    res->writeStatus("413 Payload Too Large")
+      ->writeHeader("Content-Type", "application/json")
+      ->end(R"({"error":"Request body too large"})", /*closeConnection=*/true);
+    *aborted = true;
+    return true;
+  }
+  body.append(data);
+  return false;
+}
+
+// Overload for handlers that hold the body in a shared_ptr<std::string>.
+template <bool SSL>
+inline bool append_capped(
+  uWS::HttpResponse<SSL>* res,
+  const std::shared_ptr<std::string>& body,
+  std::string_view data,
+  const std::shared_ptr<bool>& aborted,
+  int64_t cap) {
+  return append_capped<SSL>(res, *body, data, aborted, cap);
+}
+}  // namespace handler_utils
 
 // Extract the session token from the request's `session` cookie.
 // Returns empty string if the cookie is missing.

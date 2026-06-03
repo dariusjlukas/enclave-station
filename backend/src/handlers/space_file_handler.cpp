@@ -125,7 +125,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, space_id, origin](
                   std::string_view data, bool last) {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, defaults::MAX_JSON_BODY_BYTES)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit([this, res, body, aborted, scope, token, space_id, origin]() {
@@ -276,7 +279,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                  filename,
                  content_type,
                  origin](std::string_view data, bool last) mutable {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit([this,
@@ -494,7 +500,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, space_id, origin](
                   std::string_view data, bool last) {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, defaults::MAX_JSON_BODY_BYTES)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit([this, res, body, aborted, scope, token, space_id, origin]() {
@@ -522,7 +531,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           int64_t chunk_size = j.value("chunk_size", int64_t(0));
           std::string parent_id = j.value("parent_id", "");
 
-          if (chunk_count <= 0 || chunk_size <= 0) {
+          if (
+            chunk_count <= 0 || chunk_size <= 0 || chunk_size > defaults::MAX_UPLOAD_CHUNK_BYTES) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
               cors::apply(res, origin);
@@ -699,7 +709,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, upload_id, index, expected_hash, origin](
                   std::string_view data, bool last) {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit(
@@ -938,7 +951,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, space_id, file_id, origin](
                   std::string_view data, bool last) {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit([this, res, body, aborted, scope, token, space_id, file_id, origin]() {
@@ -963,7 +979,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           int chunk_count = j.value("chunk_count", 0);
           int64_t chunk_size = j.value("chunk_size", int64_t(0));
 
-          if (chunk_count <= 0 || chunk_size <= 0) {
+          if (
+            chunk_count <= 0 || chunk_size <= 0 || chunk_size > defaults::MAX_UPLOAD_CHUNK_BYTES) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
               cors::apply(res, origin);
@@ -1125,7 +1142,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
       res->onData([this, res, body, aborted, scope, token, upload_id, index, expected_hash, origin](
                     std::string_view data, bool last) {
-        body->append(data);
+        if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+          scope->observe(413);
+          return;
+        }
         if (!last) return;
 
         pool_.submit(
@@ -1541,7 +1561,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, space_id, file_id, origin](
                   std::string_view data, bool last) mutable {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit([this, res, body, aborted, scope, token, space_id, file_id, origin]() {
@@ -1972,7 +1995,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, space_id, file_id, origin](
                   std::string_view data, bool last) mutable {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit([this, res, body, aborted, scope, token, space_id, file_id, origin]() {
@@ -2254,7 +2280,10 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
     res->onData([this, res, body, aborted, scope, token, space_id, file_id, origin](
                   std::string_view data, bool last) mutable {
-      body->append(data);
+      if (handler_utils::append_capped(res, body, data, aborted, config.max_request_body_size)) {
+        scope->observe(413);
+        return;
+      }
       if (!last) return;
 
       pool_.submit([this, res, body, aborted, scope, token, space_id, file_id, origin]() {

@@ -1,6 +1,7 @@
 #pragma once
 #include <App.h>
 #include <openssl/rand.h>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include "auth/password.h"
 #include "auth/totp.h"
@@ -9,6 +10,7 @@
 #include "db/database.h"
 #include "db/db_thread_pool.h"
 #include "handlers/handler_utils.h"
+#include "rate_limit.h"
 #include "ws/ws_handler.h"
 
 using json = nlohmann::json;
@@ -21,9 +23,21 @@ struct AuthHandler {
   uWS::Loop* loop_;
   DbThreadPool& pool_;
 
+  // Explicit constructor: a private data member (auth_limiter_) makes this a
+  // non-aggregate, so the brace-init in main.cpp needs a real constructor.
+  AuthHandler(
+    Database& db, const Config& config, WsHandler<SSL>& ws, uWS::Loop* loop, DbThreadPool& pool)
+    : db(db), config(config), ws(ws), loop_(loop), pool_(pool) {}
+
   void register_routes(uWS::TemplatedApp<SSL>& app);
 
 private:
+  // Per-IP brute-force limiter for credential-verifying endpoints. Lazily
+  // built from config in register_routes.
+  std::unique_ptr<RateLimiter> auth_limiter_;
+  // Returns true and writes a 429 if the request from `client_ip` exceeds the
+  // auth rate limit. `client_ip` empty or limiter disabled => never limited.
+  bool auth_rate_limited(uWS::HttpResponse<SSL>* res, const std::string& client_ip);
   bool is_method_enabled(const std::string& method);
   int get_session_expiry();
   bool is_mfa_required_for_method(const std::string& method);
