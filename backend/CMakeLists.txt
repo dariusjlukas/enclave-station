@@ -60,7 +60,9 @@ option(ENCLAVE_ENABLE_REDIS "Enable Redis pub/sub for horizontal WS scaling" ON)
 if(ENCLAVE_ENABLE_REDIS)
     set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
     set(DISABLE_TESTS ON CACHE BOOL "" FORCE)
-    set(ENABLE_SSL OFF CACHE BOOL "" FORCE)
+    # TLS support (rediss://) for connecting to a password/TLS-protected shared
+    # Redis. Uses OpenSSL, which is already a dependency.
+    set(ENABLE_SSL ON CACHE BOOL "" FORCE)
     set(ENABLE_SSL_TESTS OFF CACHE BOOL "" FORCE)
     set(ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(ENABLE_ASYNC_TESTS OFF CACHE BOOL "" FORCE)
@@ -108,6 +110,7 @@ set(LIB_SOURCES
     src/ai/llm_client.cpp
     src/ai/tool_registry.cpp
     src/handlers/ai_handler.cpp
+    src/redis/redis_connect.cpp
     src/redis/redis_envelope.cpp
     src/redis/redis_publisher.cpp
     src/redis/redis_subscriber.cpp
@@ -146,8 +149,8 @@ if(APPLE)
 endif()
 
 if(ENCLAVE_ENABLE_REDIS)
-    target_link_libraries(chat-lib PUBLIC hiredis::hiredis)
-    target_compile_definitions(chat-lib PUBLIC BACKEND_HAS_REDIS=1)
+    target_link_libraries(chat-lib PUBLIC hiredis::hiredis hiredis::hiredis_ssl)
+    target_compile_definitions(chat-lib PUBLIC BACKEND_HAS_REDIS=1 BACKEND_HAS_REDIS_SSL=1)
 endif()
 
 # Compiler warnings for project code

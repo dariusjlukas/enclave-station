@@ -295,6 +295,29 @@ CREATE TABLE "public"."mfa_pending_tokens" (
 
 
 --
+-- Name: upload_sessions; Type: TABLE; Schema: public; Owner: -
+--
+-- Chunked-upload session metadata, stored in the shared DB (not in-process) so
+-- a chunked upload's init / chunk / complete requests can be served by
+-- different backend instances. `received_chunks` tracks part receipt;
+-- `storage_state` holds backend-specific staging state (e.g. the S3 multipart
+-- upload id + per-part ETags). `metadata` carries handler context (filename,
+-- content_type, owning channel/space, etc.).
+
+CREATE TABLE "public"."upload_sessions" (
+    "upload_id" character varying(64) NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "total_size" bigint NOT NULL,
+    "chunk_count" integer NOT NULL,
+    "chunk_size" bigint NOT NULL,
+    "received_chunks" integer[] DEFAULT '{}' NOT NULL,
+    "metadata" "jsonb" DEFAULT '{}' NOT NULL,
+    "storage_state" "jsonb" DEFAULT '{}' NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+--
 -- Name: notifications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1005,6 +1028,14 @@ ALTER TABLE ONLY "public"."mfa_pending_tokens"
 
 
 --
+-- Name: upload_sessions upload_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY "public"."upload_sessions"
+    ADD CONSTRAINT "upload_sessions_pkey" PRIMARY KEY ("upload_id");
+
+
+--
 -- Name: notifications notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1481,6 +1512,13 @@ CREATE INDEX "idx_messages_fts" ON "public"."messages" USING "gin" ("content_tsv
 --
 
 CREATE INDEX "idx_mfa_pending_user" ON "public"."mfa_pending_tokens" USING "btree" ("user_id");
+
+
+--
+-- Name: idx_upload_sessions_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "idx_upload_sessions_created_at" ON "public"."upload_sessions" USING "btree" ("created_at");
 
 
 --
@@ -1978,6 +2016,14 @@ ALTER TABLE ONLY "public"."messages"
 
 ALTER TABLE ONLY "public"."mfa_pending_tokens"
     ADD CONSTRAINT "mfa_pending_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
+
+
+--
+-- Name: upload_sessions upload_sessions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY "public"."upload_sessions"
+    ADD CONSTRAINT "upload_sessions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE CASCADE;
 
 
 --

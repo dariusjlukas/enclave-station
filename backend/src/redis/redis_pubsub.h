@@ -31,6 +31,12 @@ public:
   // Synchronous PUBLISH. No-op (returns false) if disabled.
   bool publish(const std::string& topic, const std::string& payload);
 
+  // Shared fixed-window counter for cross-instance rate limiting. See
+  // RedisPublisher::incr_fixed_window.
+  bool incr_fixed_window(const std::string& key, int window_seconds, long long& count_out) {
+    return publisher_.incr_fixed_window(key, window_seconds, count_out);
+  }
+
   bool is_enabled() const {
     return publisher_.is_enabled();
   }

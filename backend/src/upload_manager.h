@@ -1,33 +1,31 @@
 #pragma once
 
-#include <chrono>
 #include <cstdint>
-#include <map>
-#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <string>
+#include "db/database.h"
 #include "storage/storage_backend.h"
 
-// Coordinates chunked uploads: owns the per-upload session metadata (filename,
-// content-type, owning channel/space, declared sizes) and delegates the actual
-// byte staging + assembly to a StorageBackend (local FS or S3). The session
-// metadata map is still in-process here; moving it to a shared store (DB) is
-// what makes chunked uploads span instances and is handled alongside the S3
-// backend.
+// Coordinates chunked uploads. Session metadata + the backend's multipart state
+// (handle + per-part tokens) live in the shared DB (upload_sessions table), and
+// byte staging is delegated to a StorageBackend. Because all state is shared,
+// a chunked upload's init / chunk / complete requests can be served by
+// different backend instances — no load-balancer session affinity required
+// (with S3 storage; local-fs additionally needs a shared filesystem for the
+// staging temp file).
 struct UploadSession {
   std::string upload_id;
   std::string user_id;
   int64_t total_size = 0;
   int chunk_count = 0;
-  int64_t chunk_size = 0;  // bytes per chunk (last chunk may be smaller)
-  std::chrono::steady_clock::time_point created_at;
+  int64_t chunk_size = 0;
   nlohmann::json metadata;
 };
 
 class UploadManager {
 public:
-  explicit UploadManager(storage::StorageBackend& storage);
+  UploadManager(Database& db, storage::StorageBackend& storage);
 
   // Create a new upload session, returns upload_id (empty string on failure).
   std::string create_session(
@@ -37,7 +35,7 @@ public:
     int64_t chunk_size,
     const nlohmann::json& metadata);
 
-  // Snapshot copy of a session by ID, or nullopt if not found.
+  // Look up a session (metadata only) by id.
   std::optional<UploadSession> get_session(const std::string& upload_id);
 
   // Stage chunk `index`. expected_hash (optional) is verified against the bytes.
@@ -64,11 +62,14 @@ public:
   // Discard the session and its staged bytes.
   void remove_session(const std::string& upload_id);
 
-  // Clean up sessions older than max_age_seconds.
+  // Clean up sessions older than max_age_seconds (and their backend staging).
   void cleanup_stale(int max_age_seconds = 3600);
 
 private:
+  // Load the storage MultipartState for `upload_id` from the DB row's
+  // storage_state JSON. Returns nullopt if the session is missing.
+  std::optional<storage::StorageBackend::MultipartState> load_state(const std::string& upload_id);
+
+  Database& db_;
   storage::StorageBackend& storage_;
-  mutable std::mutex mutex_;
-  std::map<std::string, UploadSession> sessions_;
 };

@@ -4505,6 +4505,105 @@ void Database::cleanup_expired_mfa_tokens() {
   txn.commit();
 }
 
+// --- Upload sessions (chunked uploads, shared across instances) ---
+
+void Database::create_upload_session(
+  const std::string& upload_id,
+  const std::string& user_id,
+  int64_t total_size,
+  int chunk_count,
+  int64_t chunk_size,
+  const std::string& metadata_json,
+  const std::string& storage_state_json) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  txn.exec_params(
+    "INSERT INTO upload_sessions "
+    "(upload_id, user_id, total_size, chunk_count, chunk_size, metadata, storage_state) "
+    "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)",
+    upload_id,
+    user_id,
+    total_size,
+    chunk_count,
+    chunk_size,
+    metadata_json,
+    storage_state_json);
+  txn.commit();
+}
+
+std::optional<Database::UploadSessionRow> Database::get_upload_session(
+  const std::string& upload_id) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  auto r = txn.exec_params(
+    "SELECT upload_id, user_id::text, total_size, chunk_count, chunk_size, "
+    "array_length(received_chunks, 1), metadata::text, storage_state::text "
+    "FROM upload_sessions WHERE upload_id = $1",
+    upload_id);
+  txn.commit();
+  if (r.empty()) return std::nullopt;
+  UploadSessionRow row;
+  row.upload_id = r[0][0].as<std::string>();
+  row.user_id = r[0][1].as<std::string>();
+  row.total_size = r[0][2].as<int64_t>();
+  row.chunk_count = r[0][3].as<int>();
+  row.chunk_size = r[0][4].as<int64_t>();
+  row.received_count = r[0][5].is_null() ? 0 : r[0][5].as<int>();
+  row.metadata = r[0][6].as<std::string>();
+  row.storage_state = r[0][7].as<std::string>();
+  return row;
+}
+
+int Database::record_upload_chunk(
+  const std::string& upload_id, int index, const std::string& part_token) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  // Append the index only if not already present (idempotent), and merge JUST
+  // this part's token into storage_state.part_tokens[index] via jsonb_set
+  // (create_missing=true). Merging the single key — rather than overwriting the
+  // whole storage_state with a caller-side read-modify-write — means concurrent
+  // chunk writes from different instances don't clobber each other's tokens.
+  // Done in one UPDATE under the row lock so the writes serialize.
+  auto r = txn.exec_params(
+    "UPDATE upload_sessions SET "
+    "received_chunks = CASE WHEN $2 = ANY(received_chunks) THEN received_chunks "
+    "ELSE array_append(received_chunks, $2) END, "
+    "storage_state = jsonb_set(storage_state, ARRAY['part_tokens', $2::text], "
+    "to_jsonb($3::text), true) "
+    "WHERE upload_id = $1 "
+    "RETURNING array_length(received_chunks, 1)",
+    upload_id,
+    index,
+    part_token);
+  txn.commit();
+  if (r.empty()) return -1;
+  return r[0][0].is_null() ? 0 : r[0][0].as<int>();
+}
+
+void Database::delete_upload_session(const std::string& upload_id) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  txn.exec_params("DELETE FROM upload_sessions WHERE upload_id = $1", upload_id);
+  txn.commit();
+}
+
+std::vector<std::pair<std::string, std::string>> Database::reap_stale_upload_sessions(
+  int max_age_seconds) {
+  auto conn = pool_.acquire();
+  pqxx::work txn(conn.get());
+  auto r = txn.exec_params(
+    "DELETE FROM upload_sessions "
+    "WHERE created_at < NOW() - ($1 || ' seconds')::interval "
+    "RETURNING upload_id, storage_state::text",
+    max_age_seconds);
+  txn.commit();
+  std::vector<std::pair<std::string, std::string>> out;
+  for (const auto& row : r) {
+    out.emplace_back(row[0].as<std::string>(), row[1].as<std::string>());
+  }
+  return out;
+}
+
 // --- Calendar Events ---
 
 CalendarEvent Database::create_calendar_event(

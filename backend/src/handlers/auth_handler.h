@@ -11,6 +11,7 @@
 #include "db/db_thread_pool.h"
 #include "handlers/handler_utils.h"
 #include "rate_limit.h"
+#include "redis/redis_pubsub.h"
 #include "ws/ws_handler.h"
 
 using json = nlohmann::json;
@@ -29,12 +30,20 @@ struct AuthHandler {
     Database& db, const Config& config, WsHandler<SSL>& ws, uWS::Loop* loop, DbThreadPool& pool)
     : db(db), config(config), ws(ws), loop_(loop), pool_(pool) {}
 
+  // Optional shared Redis counter so the per-IP auth limit is global across
+  // instances (not just per-process). Set in run_server when Redis is enabled.
+  void set_redis(enclave_redis::RedisPubSub* redis) {
+    redis_ = redis;
+  }
+
   void register_routes(uWS::TemplatedApp<SSL>& app);
 
 private:
   // Per-IP brute-force limiter for credential-verifying endpoints. Lazily
-  // built from config in register_routes.
+  // built from config in register_routes. This is the per-instance fast path;
+  // when redis_ is set, a shared fixed-window counter makes the limit global.
   std::unique_ptr<RateLimiter> auth_limiter_;
+  enclave_redis::RedisPubSub* redis_ = nullptr;
   // Returns true and writes a 429 if the request from `client_ip` exceeds the
   // auth rate limit. `client_ip` empty or limiter disabled => never limited.
   bool auth_rate_limited(uWS::HttpResponse<SSL>* res, const std::string& client_ip);

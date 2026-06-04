@@ -6,46 +6,13 @@
 
 #if BACKEND_HAS_REDIS
 #include <hiredis.h>
+#include "redis/redis_connect.h"
 #endif
 
 #include <cstdlib>
 #include <string>
 
 namespace enclave_redis {
-
-#if BACKEND_HAS_REDIS
-namespace {
-
-// Parses a "redis://host[:port][/db]" URL into host/port. Returns false on
-// malformed input. Defaults: port=6379. The optional path/db part is
-// ignored at this stage — we only PUBLISH on a fixed channel.
-bool parse_redis_url(const std::string& url, std::string& host, int& port) {
-  static const std::string kScheme = "redis://";
-  if (url.compare(0, kScheme.size(), kScheme) != 0) return false;
-  std::string rest = url.substr(kScheme.size());
-  // Strip trailing path/db, e.g. "host:6379/0" -> "host:6379"
-  auto slash = rest.find('/');
-  if (slash != std::string::npos) rest = rest.substr(0, slash);
-  if (rest.empty()) return false;
-  auto colon = rest.find(':');
-  if (colon == std::string::npos) {
-    host = rest;
-    port = 6379;
-    return true;
-  }
-  host = rest.substr(0, colon);
-  if (host.empty()) return false;
-  std::string port_str = rest.substr(colon + 1);
-  if (port_str.empty()) return false;
-  char* end = nullptr;
-  long p = std::strtol(port_str.c_str(), &end, 10);
-  if (end == port_str.c_str() || *end != '\0' || p <= 0 || p > 65535) return false;
-  port = static_cast<int>(p);
-  return true;
-}
-
-}  // namespace
-#endif  // BACKEND_HAS_REDIS
 
 RedisPublisher::RedisPublisher(const std::string& url, const std::string& instance_id)
   : url_(url), instance_id_(instance_id), enabled_(!url.empty()) {
@@ -75,22 +42,10 @@ bool RedisPublisher::ensure_connected_locked() {
     redisFree(ctx_);
     ctx_ = nullptr;
   }
-  std::string host;
-  int port = 0;
-  if (!parse_redis_url(url_, host, port)) {
-    LOG_ERROR_N("redis", nullptr, "RedisPublisher: malformed REDIS_URL: " + url_);
-    metrics::redis_health_check_failures_total().inc();
-    return false;
-  }
-  struct timeval tv = {2, 0};  // 2s connect timeout
-  ctx_ = redisConnectWithTimeout(host.c_str(), port, tv);
-  if (!ctx_ || ctx_->err) {
-    std::string err = ctx_ ? ctx_->errstr : "alloc failed";
+  std::string err;
+  ctx_ = redis_connect(url_, /*connect_timeout_s=*/2, err);
+  if (!ctx_) {
     LOG_WARN_N("redis", nullptr, "RedisPublisher: connect failed: " + err);
-    if (ctx_) {
-      redisFree(ctx_);
-      ctx_ = nullptr;
-    }
     metrics::redis_health_check_failures_total().inc();
     metrics::redis_ok().set(0);
     return false;
@@ -133,6 +88,48 @@ bool RedisPublisher::publish(const std::string& topic, const std::string& payloa
 #else
   (void)topic;
   (void)payload;
+  return false;
+#endif
+}
+
+bool RedisPublisher::incr_fixed_window(
+  const std::string& key, int window_seconds, long long& count_out) {
+  if (!enabled_) return false;
+#if BACKEND_HAS_REDIS
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!ensure_connected_locked()) return false;
+
+  // INCR returns the new value; on the first increment (value == 1) set the
+  // window TTL. Pipeline both commands to halve the round-trips.
+  redisAppendCommand(ctx_, "INCR %s", key.c_str());
+  redisAppendCommand(ctx_, "EXPIRE %s %d NX", key.c_str(), window_seconds);
+
+  redisReply* incr_reply = nullptr;
+  if (redisGetReply(ctx_, reinterpret_cast<void**>(&incr_reply)) != REDIS_OK || !incr_reply) {
+    close_locked();
+    metrics::redis_health_check_failures_total().inc();
+    return false;
+  }
+  bool ok = incr_reply->type == REDIS_REPLY_INTEGER;
+  if (ok) count_out = incr_reply->integer;
+  freeReplyObject(incr_reply);
+
+  // Drain the EXPIRE reply (best-effort; not fatal if it fails).
+  redisReply* exp_reply = nullptr;
+  if (redisGetReply(ctx_, reinterpret_cast<void**>(&exp_reply)) == REDIS_OK && exp_reply) {
+    freeReplyObject(exp_reply);
+  }
+
+  if (!ok) {
+    close_locked();
+    metrics::redis_health_check_failures_total().inc();
+    return false;
+  }
+  return true;
+#else
+  (void)key;
+  (void)window_seconds;
+  (void)count_out;
   return false;
 #endif
 }

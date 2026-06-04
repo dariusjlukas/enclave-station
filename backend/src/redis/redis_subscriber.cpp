@@ -6,6 +6,7 @@
 
 #if BACKEND_HAS_REDIS
 #include <hiredis.h>
+#include "redis/redis_connect.h"
 #endif
 
 #include <cerrno>
@@ -16,38 +17,6 @@
 #include <thread>
 
 namespace enclave_redis {
-
-#if BACKEND_HAS_REDIS
-namespace {
-
-// Mirror of redis_publisher.cpp's parser. Kept local to avoid tempting
-// callers to share state across the two classes.
-bool parse_redis_url(const std::string& url, std::string& host, int& port) {
-  static const std::string kScheme = "redis://";
-  if (url.compare(0, kScheme.size(), kScheme) != 0) return false;
-  std::string rest = url.substr(kScheme.size());
-  auto slash = rest.find('/');
-  if (slash != std::string::npos) rest = rest.substr(0, slash);
-  if (rest.empty()) return false;
-  auto colon = rest.find(':');
-  if (colon == std::string::npos) {
-    host = rest;
-    port = 6379;
-    return true;
-  }
-  host = rest.substr(0, colon);
-  if (host.empty()) return false;
-  std::string port_str = rest.substr(colon + 1);
-  if (port_str.empty()) return false;
-  char* end = nullptr;
-  long p = std::strtol(port_str.c_str(), &end, 10);
-  if (end == port_str.c_str() || *end != '\0' || p <= 0 || p > 65535) return false;
-  port = static_cast<int>(p);
-  return true;
-}
-
-}  // namespace
-#endif  // BACKEND_HAS_REDIS
 
 RedisSubscriber::RedisSubscriber(
   const std::string& url, const std::string& instance_id, DispatchFn dispatch)
@@ -81,24 +50,11 @@ void RedisSubscriber::run() {
   size_t backoff_idx = 0;
 
   while (!stop_requested_.load()) {
-    std::string host;
-    int port = 0;
-    if (!parse_redis_url(url_, host, port)) {
-      LOG_ERROR_N("redis", nullptr, "RedisSubscriber: malformed REDIS_URL: " + url_);
-      metrics::redis_health_check_failures_total().inc();
-      metrics::redis_ok().set(0);
-      // Permanent config error — sleep at the cap and retry (operator may
-      // fix the env in place; we don't want to spin).
-      std::this_thread::sleep_for(std::chrono::seconds(30));
-      continue;
-    }
-
-    struct timeval tv = {2, 0};
-    redisContext* ctx = redisConnectWithTimeout(host.c_str(), port, tv);
-    if (!ctx || ctx->err) {
-      std::string err = ctx ? ctx->errstr : "alloc failed";
+    std::string err;
+    // redis_connect handles parse + TLS (rediss://) + AUTH (user:pass@).
+    redisContext* ctx = redis_connect(url_, /*connect_timeout_s=*/2, err);
+    if (!ctx) {
       LOG_WARN_N("redis", nullptr, "RedisSubscriber: connect failed: " + err);
-      if (ctx) redisFree(ctx);
       metrics::redis_health_check_failures_total().inc();
       metrics::redis_ok().set(0);
       int sleep_s = kBackoffSchedule[backoff_idx];

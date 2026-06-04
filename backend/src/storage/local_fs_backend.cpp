@@ -75,46 +75,32 @@ void LocalFsBackend::remove(const std::string& key) {
   fs::remove(path_for(key), ec);
 }
 
-bool LocalFsBackend::create_multipart(
-  const std::string& upload_id, int64_t total_size, int chunk_count, int64_t chunk_size) {
-  cleanup_stale_multipart(3600);
-  std::lock_guard<std::mutex> lock(mutex_);
-  std::string tmp_path = tmp_dir_ + "/" + upload_id + ".dat";
+std::string LocalFsBackend::tmp_path_for(const std::string& upload_id) const {
+  return tmp_dir_ + "/" + upload_id + ".dat";
+}
+
+bool LocalFsBackend::create_multipart(const std::string& upload_id, MultipartState& st) {
+  // Pre-allocate the sparse temp file. The path is derived from upload_id, so no
+  // in-process state is kept; another instance sharing the filesystem can write
+  // chunks for the same upload.
+  std::string tmp_path = tmp_path_for(upload_id);
   int fd = open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
   if (fd < 0) return false;
   close(fd);
-
-  Part p;
-  p.tmp_path = tmp_path;
-  p.total_size = total_size;
-  p.chunk_count = chunk_count;
-  p.chunk_size = chunk_size;
-  p.created_at = std::chrono::steady_clock::now();
-  parts_[upload_id] = std::move(p);
+  st.handle = "";  // local fs needs no handle
   return true;
 }
 
 std::string LocalFsBackend::put_part(
   const std::string& upload_id,
+  const MultipartState& st,
   int index,
   std::string_view bytes,
-  const std::string& expected_sha256_hex) {
-  // Phase 1: validate under lock, copy what we need; don't hold the lock for I/O.
-  std::string tmp_path;
-  int64_t chunk_size = 0;
-  int chunk_count = 0;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = parts_.find(upload_id);
-    if (it == parts_.end()) return "session_not_found";
-    tmp_path = it->second.tmp_path;
-    chunk_size = it->second.chunk_size;
-    chunk_count = it->second.chunk_count;
-  }
-
-  if (index < 0 || index >= chunk_count) return "invalid_index";
+  const std::string& expected_sha256_hex,
+  std::string& token_out) {
+  if (index < 0 || index >= st.chunk_count) return "invalid_index";
   int64_t offset = 0;
-  if (__builtin_mul_overflow(static_cast<int64_t>(index), chunk_size, &offset)) {
+  if (__builtin_mul_overflow(static_cast<int64_t>(index), st.chunk_size, &offset)) {
     return "invalid_index";
   }
   if (offset < 0) return "invalid_index";
@@ -123,72 +109,29 @@ std::string LocalFsBackend::put_part(
     if (sha256_hex(bytes) != expected_sha256_hex) return "hash_mismatch";
   }
 
-  // Phase 2: pwrite with no lock held.
-  FdGuard guard(open(tmp_path.c_str(), O_WRONLY));
+  FdGuard guard(open(tmp_path_for(upload_id).c_str(), O_WRONLY));
   if (guard.fd < 0) return "open_failed";
   ssize_t written = pwrite(guard.fd, bytes.data(), bytes.size(), offset);
   if (written < 0) return "io_error";
   if (static_cast<size_t>(written) < bytes.size()) return "short_write";
-
-  // Phase 3: record receipt under lock.
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = parts_.find(upload_id);
-    if (it == parts_.end()) return "session_gone";
-    it->second.received.insert(index);
-  }
+  token_out = "";  // local fs has no per-part token
   return "";
 }
 
-int LocalFsBackend::multipart_received(const std::string& upload_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = parts_.find(upload_id);
-  if (it == parts_.end()) return -1;
-  return static_cast<int>(it->second.received.size());
-}
-
 int64_t LocalFsBackend::complete_multipart(
-  const std::string& upload_id, const std::string& final_key) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = parts_.find(upload_id);
-  if (it == parts_.end()) return -1;
-
+  const std::string& upload_id, const MultipartState& st, const std::string& final_key) {
+  std::string tmp_path = tmp_path_for(upload_id);
   std::error_code ec;
-  auto actual = static_cast<int64_t>(fs::file_size(it->second.tmp_path, ec));
-  if (ec || actual != it->second.total_size) return -1;
-
-  fs::rename(it->second.tmp_path, path_for(final_key), ec);
+  auto actual = static_cast<int64_t>(fs::file_size(tmp_path, ec));
+  if (ec || actual != st.total_size) return -1;
+  fs::rename(tmp_path, path_for(final_key), ec);
   if (ec) return -1;
-  int64_t size = it->second.total_size;
-  // The temp file has been renamed away; drop the session.
-  parts_.erase(it);
-  return size;
+  return st.total_size;
 }
 
-void LocalFsBackend::abort_multipart(const std::string& upload_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = parts_.find(upload_id);
-  if (it != parts_.end()) {
-    std::error_code ec;
-    fs::remove(it->second.tmp_path, ec);
-    parts_.erase(it);
-  }
-}
-
-void LocalFsBackend::cleanup_stale_multipart(int max_age_seconds) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto now = std::chrono::steady_clock::now();
-  for (auto it = parts_.begin(); it != parts_.end();) {
-    auto age =
-      std::chrono::duration_cast<std::chrono::seconds>(now - it->second.created_at).count();
-    if (age > max_age_seconds) {
-      std::error_code ec;
-      fs::remove(it->second.tmp_path, ec);
-      it = parts_.erase(it);
-    } else {
-      ++it;
-    }
-  }
+void LocalFsBackend::abort_multipart(const std::string& upload_id, const MultipartState& /*st*/) {
+  std::error_code ec;
+  fs::remove(tmp_path_for(upload_id), ec);
 }
 
 }  // namespace storage

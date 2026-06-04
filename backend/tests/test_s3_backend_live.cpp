@@ -76,27 +76,32 @@ TEST_F(S3BackendLiveTest, BinarySafe) {
 }
 
 TEST_F(S3BackendLiveTest, MultipartRoundTrip) {
+  using MultipartState = storage::StorageBackend::MultipartState;
   auto b = make_backend();
   const std::string upload_id = "test_mp_0001";
-  // 3 parts; S3 requires each non-final part >= 5 MiB. Use 5 MiB parts.
+  // 2 parts; S3 requires each non-final part >= 5 MiB. Use 5 MiB parts.
   const int64_t part = 5 * 1024 * 1024;
-  const int chunk_count = 2;
-  const int64_t total = part + 7;  // last part is 7 bytes
-  ASSERT_TRUE(b.create_multipart(upload_id, total, chunk_count, part));
+  MultipartState st;
+  st.total_size = part + 7;  // last part is 7 bytes
+  st.chunk_count = 2;
+  st.chunk_size = part;
+  ASSERT_TRUE(b.create_multipart(upload_id, st));
 
   std::string p0(static_cast<size_t>(part), 'A');
   std::string p1 = "LASTBIT";
-  EXPECT_EQ(b.put_part(upload_id, 0, p0, ""), "");
-  EXPECT_EQ(b.put_part(upload_id, 1, p1, ""), "");
-  EXPECT_EQ(b.multipart_received(upload_id), 2);
+  std::string tok;
+  EXPECT_EQ(b.put_part(upload_id, st, 0, p0, "", tok), "");
+  st.part_tokens[0] = tok;
+  EXPECT_EQ(b.put_part(upload_id, st, 1, p1, "", tok), "");
+  st.part_tokens[1] = tok;
 
   const std::string final_key = "test_mp_final_0001";
-  int64_t size = b.complete_multipart(upload_id, final_key);
-  EXPECT_EQ(size, total);
+  int64_t size = b.complete_multipart(upload_id, st, final_key);
+  EXPECT_EQ(size, st.total_size);
 
   auto r = b.get(final_key);
   ASSERT_TRUE(r.ok);
-  ASSERT_EQ(static_cast<int64_t>(r.data.size()), total);
+  ASSERT_EQ(static_cast<int64_t>(r.data.size()), st.total_size);
   EXPECT_EQ(r.data.substr(0, 4), "AAAA");
   EXPECT_EQ(r.data.substr(static_cast<size_t>(part)), "LASTBIT");
 
@@ -104,9 +109,14 @@ TEST_F(S3BackendLiveTest, MultipartRoundTrip) {
 }
 
 TEST_F(S3BackendLiveTest, AbortMultipart) {
+  using MultipartState = storage::StorageBackend::MultipartState;
   auto b = make_backend();
   const std::string upload_id = "test_abort_0001";
-  ASSERT_TRUE(b.create_multipart(upload_id, 5 * 1024 * 1024, 1, 5 * 1024 * 1024));
-  b.abort_multipart(upload_id);
-  EXPECT_EQ(b.multipart_received(upload_id), -1);
+  MultipartState st;
+  st.total_size = 5 * 1024 * 1024;
+  st.chunk_count = 1;
+  st.chunk_size = 5 * 1024 * 1024;
+  ASSERT_TRUE(b.create_multipart(upload_id, st));
+  // Should not throw; the staged S3 multipart upload is aborted.
+  b.abort_multipart(upload_id, st);
 }

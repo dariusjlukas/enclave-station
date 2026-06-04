@@ -405,6 +405,38 @@ public:
   void delete_mfa_pending_token(const std::string& token);
   void cleanup_expired_mfa_tokens();
 
+  // Chunked-upload sessions (shared across instances). metadata and
+  // storage_state are JSON strings.
+  struct UploadSessionRow {
+    std::string upload_id;
+    std::string user_id;
+    int64_t total_size = 0;
+    int chunk_count = 0;
+    int64_t chunk_size = 0;
+    int received_count = 0;
+    std::string metadata;       // JSON
+    std::string storage_state;  // JSON (backend handle + part tokens)
+  };
+  void create_upload_session(
+    const std::string& upload_id,
+    const std::string& user_id,
+    int64_t total_size,
+    int chunk_count,
+    int64_t chunk_size,
+    const std::string& metadata_json,
+    const std::string& storage_state_json);
+  std::optional<UploadSessionRow> get_upload_session(const std::string& upload_id);
+  // Atomically record receipt of `index` (idempotent) and merge part_token into
+  // storage_state.part_tokens[index]. Only the single token is merged (not the
+  // whole storage_state), so concurrent chunk writes from different instances do
+  // not clobber each other's part tokens. Returns the new received count, or -1
+  // if the session is gone.
+  int record_upload_chunk(const std::string& upload_id, int index, const std::string& part_token);
+  void delete_upload_session(const std::string& upload_id);
+  // Remove sessions older than max_age_seconds; returns their (upload_id,
+  // storage_state) so the caller can abort the backend staging.
+  std::vector<std::pair<std::string, std::string>> reap_stale_upload_sessions(int max_age_seconds);
+
   // Search
   struct MessageSearchResult {
     std::string id, channel_id, channel_name, space_name;

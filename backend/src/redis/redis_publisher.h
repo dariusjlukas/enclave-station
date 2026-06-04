@@ -29,6 +29,14 @@ public:
   // success, false on error or when the publisher is disabled.
   bool publish(const std::string& topic, const std::string& payload);
 
+  // Shared fixed-window rate-limit counter, so a per-IP auth limit is global
+  // across all instances rather than per-instance. Atomically INCRs `key` and
+  // (on first hit) sets a `window_seconds` TTL. Sets `count_out` to the
+  // post-increment count. Returns true if the operation succeeded (Redis
+  // reachable); returns false on any Redis error so the caller can fall back to
+  // the local limiter rather than fail open or closed unexpectedly.
+  bool incr_fixed_window(const std::string& key, int window_seconds, long long& count_out);
+
   bool is_enabled() const {
     return enabled_;
   }

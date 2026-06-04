@@ -28,6 +28,15 @@ add_executable(test_aws_sigv4 test_aws_sigv4.cpp)
 target_link_libraries(test_aws_sigv4 PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME AwsSigv4Tests COMMAND test_aws_sigv4)
 
+add_executable(test_redis_url test_redis_url.cpp)
+target_link_libraries(test_redis_url PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME RedisUrlTests COMMAND test_redis_url)
+
+# Live Redis connect (AUTH/TLS); self-skips unless REDIS_TEST_URL is set.
+add_executable(test_redis_connect_live test_redis_connect_live.cpp)
+target_link_libraries(test_redis_connect_live PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME RedisConnectLiveTests COMMAND test_redis_connect_live)
+
 # Live S3 round-trip; self-skips unless S3_TEST_* env is set. Labeled separately
 # so it isn't part of the default unit run.
 add_executable(test_s3_backend_live test_s3_backend_live.cpp)
@@ -149,13 +158,14 @@ add_test(NAME ConnectionPoolTests COMMAND test_connection_pool)
 
 # Labels for selective test running
 set_tests_properties(PkiTests ConfigTests RateLimitTests LlmUrlTests LocalFsBackendTests
-    AwsSigv4Tests TotpTests PasswordTests WebAuthnTests
+    AwsSigv4Tests RedisUrlTests TotpTests PasswordTests WebAuthnTests
     HandlerUtilsTests AuthUtilsTests AuthPayloadUtilsTests AdminSettingsUtilsTests
     FileAccessUtilsTests AdminApprovalUtilsTests SearchHandlerTests FileHandlerTests RecurrenceTests
-    ZipBuilderTests UploadManagerTests LoggerTests MetricsTests RedisEnvelopeTests RedisPubSubTests
+    ZipBuilderTests LoggerTests MetricsTests RedisEnvelopeTests RedisPubSubTests
     PROPERTIES LABELS "unit")
 # PasswordTests runs many argon2 hash operations; with sanitizers this needs extra time
 set_tests_properties(PasswordTests PROPERTIES TIMEOUT 120)
+# UploadManagerTests is now DB-backed (upload_sessions table), so it's an integration test.
 set_tests_properties(DatabaseTests SpaceFileTests CalendarTests TaskBoardTests PersonalSpacesTests
-    WikiTests NotificationTests AuthCredentialTests ConnectionPoolTests
+    WikiTests NotificationTests AuthCredentialTests ConnectionPoolTests UploadManagerTests
     PROPERTIES LABELS "integration")

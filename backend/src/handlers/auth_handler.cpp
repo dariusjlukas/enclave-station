@@ -19,9 +19,33 @@ template <bool SSL>
 bool AuthHandler<SSL>::auth_rate_limited(
   uWS::HttpResponse<SSL>* res, const std::string& client_ip) {
   if (!auth_limiter_ || client_ip.empty()) return false;
+
+  int retry_after_s = config.auth_rate_limit_window_seconds;
+  bool limited = false;
+
+  // Per-instance fast path (always on): cheap, in-memory, and a defense even
+  // when Redis is unavailable.
   int retry_ms = 0;
-  if (auth_limiter_->allow(client_ip, retry_ms)) return false;
-  int retry_after_s = (retry_ms + 999) / 1000;
+  if (!auth_limiter_->allow(client_ip, retry_ms)) {
+    limited = true;
+    retry_after_s = (retry_ms + 999) / 1000;
+  }
+
+  // Shared cross-instance limit (when Redis is enabled): a fixed-window counter
+  // keyed by IP so the budget is global, not per-replica. If Redis is
+  // unreachable the call returns false and we fall back to the local result.
+  if (!limited && redis_ && redis_->is_enabled()) {
+    long long count = 0;
+    std::string key = "ratelimit:auth:" + client_ip;
+    if (redis_->incr_fixed_window(key, config.auth_rate_limit_window_seconds, count)) {
+      if (count > config.auth_rate_limit_max_attempts) {
+        limited = true;
+      }
+    }
+  }
+
+  if (!limited) return false;
+
   auto body =
     json({{"error", "Too many attempts. Try again later."}, {"retry_after", retry_after_s}}).dump();
   res->writeStatus("429 Too Many Requests")

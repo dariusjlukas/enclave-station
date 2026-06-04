@@ -10,7 +10,13 @@ fans out to its locally-connected sockets.
 
 ## Configuration
 
-- `REDIS_URL` — `redis://host[:port][/db]`. Empty disables Redis.
+- `REDIS_URL` — `redis://[user:password@]host[:port][/db]` or
+  `rediss://...` for TLS. Empty disables Redis.
+  - **AUTH:** include `user:password@` (Redis 6 ACL user) or `:password@`
+    (legacy `requirepass`) to authenticate. Required for a shared,
+    password-protected broker.
+  - **TLS:** use the `rediss://` scheme to connect over TLS (verified against
+    the system trust store). Compiled in via hiredis + OpenSSL.
 - `INSTANCE_ID` — stable identifier; defaults to a random UUID v4 at boot.
   Used to filter self-echoes. For Kubernetes deployments, set to the pod
   name.

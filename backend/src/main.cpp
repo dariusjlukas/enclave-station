@@ -107,6 +107,7 @@ void run_server(
   ws_handler.set_storage(&storage);
   redis_pubsub.start();
   AuthHandler<SSL> auth_handler{db, config, ws_handler, loop, pool};
+  auth_handler.set_redis(&redis_pubsub);
   ChannelHandler<SSL> channel_handler{db, ws_handler, loop, pool};
   SpaceHandler<SSL> space_handler{db, ws_handler, config, storage, loop, pool};
   UserHandler<SSL> user_handler{db, ws_handler, config, storage, loop, pool};
@@ -343,7 +344,7 @@ int main() {
     storage::StorageBackend& storage_backend = *storage_backend_ptr;
 
     // Upload manager for chunked uploads (delegates byte staging to storage).
-    UploadManager upload_manager(storage_backend);
+    UploadManager upload_manager(db, storage_backend);
 
     // Thread pool for async DB operations
     DbThreadPool pool(config.db_thread_pool_size);

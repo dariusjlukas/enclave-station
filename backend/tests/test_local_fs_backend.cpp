@@ -61,43 +61,58 @@ TEST_F(LocalFsBackendTest, EmptyBlob) {
   EXPECT_TRUE(r.data.empty());
 }
 
+using MultipartState = storage::StorageBackend::MultipartState;
+
+static MultipartState mkstate(int64_t total, int count, int64_t csize) {
+  MultipartState st;
+  st.total_size = total;
+  st.chunk_count = count;
+  st.chunk_size = csize;
+  return st;
+}
+
 TEST_F(LocalFsBackendTest, MultipartRoundTrip) {
   const std::string upload_id = "up0001";
-  const int64_t chunk_size = 4;
-  const int chunk_count = 3;
-  const int64_t total = 10;  // last chunk is 2 bytes
-  ASSERT_TRUE(backend_->create_multipart(upload_id, total, chunk_count, chunk_size));
+  auto st = mkstate(/*total=*/10, /*count=*/3, /*csize=*/4);  // last chunk 2 bytes
+  ASSERT_TRUE(backend_->create_multipart(upload_id, st));
 
-  EXPECT_EQ(backend_->put_part(upload_id, 0, "AAAA", ""), "");
-  EXPECT_EQ(backend_->put_part(upload_id, 1, "BBBB", ""), "");
-  EXPECT_EQ(backend_->put_part(upload_id, 2, "CC", ""), "");
-  EXPECT_EQ(backend_->multipart_received(upload_id), 3);
+  std::string tok;
+  EXPECT_EQ(backend_->put_part(upload_id, st, 0, "AAAA", "", tok), "");
+  st.part_tokens[0] = tok;
+  EXPECT_EQ(backend_->put_part(upload_id, st, 1, "BBBB", "", tok), "");
+  st.part_tokens[1] = tok;
+  EXPECT_EQ(backend_->put_part(upload_id, st, 2, "CC", "", tok), "");
+  st.part_tokens[2] = tok;
 
-  int64_t size = backend_->complete_multipart(upload_id, "finalkey");
-  EXPECT_EQ(size, total);
+  int64_t size = backend_->complete_multipart(upload_id, st, "finalkey");
+  EXPECT_EQ(size, 10);
   auto r = backend_->get("finalkey");
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.data, "AAAABBBBCC");
-  // The staging session is gone after completion.
-  EXPECT_EQ(backend_->multipart_received(upload_id), -1);
 }
 
 TEST_F(LocalFsBackendTest, MultipartHashMismatch) {
-  ASSERT_TRUE(backend_->create_multipart("u", 4, 1, 4));
-  // Wrong hash for "AAAA".
-  EXPECT_EQ(backend_->put_part("u", 0, "AAAA", "deadbeef"), "hash_mismatch");
+  auto st = mkstate(4, 1, 4);
+  ASSERT_TRUE(backend_->create_multipart("u", st));
+  std::string tok;
+  EXPECT_EQ(backend_->put_part("u", st, 0, "AAAA", "deadbeef", tok), "hash_mismatch");
 }
 
 TEST_F(LocalFsBackendTest, MultipartSizeMismatchFailsComplete) {
   // Declare total 8 but only write 4 bytes; complete must fail (-1).
-  ASSERT_TRUE(backend_->create_multipart("u", 8, 2, 4));
-  EXPECT_EQ(backend_->put_part("u", 0, "AAAA", ""), "");
-  // part 1 never written -> file is 4 bytes, total declared 8.
-  EXPECT_EQ(backend_->complete_multipart("u", "k"), -1);
+  auto st = mkstate(8, 2, 4);
+  ASSERT_TRUE(backend_->create_multipart("u", st));
+  std::string tok;
+  EXPECT_EQ(backend_->put_part("u", st, 0, "AAAA", "", tok), "");
+  st.part_tokens[0] = tok;
+  EXPECT_EQ(backend_->complete_multipart("u", st, "k"), -1);
 }
 
-TEST_F(LocalFsBackendTest, AbortMultipartDropsSession) {
-  ASSERT_TRUE(backend_->create_multipart("u", 4, 1, 4));
-  backend_->abort_multipart("u");
-  EXPECT_EQ(backend_->multipart_received("u"), -1);
+TEST_F(LocalFsBackendTest, AbortMultipartRemovesStaging) {
+  auto st = mkstate(4, 1, 4);
+  ASSERT_TRUE(backend_->create_multipart("u", st));
+  backend_->abort_multipart("u", st);
+  // After abort, a chunk write fails because the staging temp file is gone.
+  std::string tok;
+  EXPECT_NE(backend_->put_part("u", st, 0, "AAAA", "", tok), "");
 }

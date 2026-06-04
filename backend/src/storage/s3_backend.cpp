@@ -153,11 +153,18 @@ bool S3Backend::health_check() {
   return r.status == 200 || r.status == 403 || r.status == 404;
 }
 
-bool S3Backend::create_multipart(
-  const std::string& upload_id, int64_t total_size, int chunk_count, int64_t chunk_size) {
-  // We stage parts in S3 under a temporary key, then CompleteMultipartUpload to
-  // the final key. The S3 multipart upload is created against the staging key.
-  std::string staging_key = "multipart/" + upload_id;
+namespace {
+// The staging object key for a multipart upload is derived from upload_id, so
+// no in-process state is needed to locate it across instances.
+std::string staging_key_for(const std::string& upload_id) {
+  return "multipart/" + upload_id;
+}
+}  // namespace
+
+bool S3Backend::create_multipart(const std::string& upload_id, MultipartState& st) {
+  // Stage parts under a temporary key, then CompleteMultipartUpload assembles
+  // them there, and complete_multipart copies to the final key.
+  std::string staging_key = staging_key_for(upload_id);
   auto r = signed_request("POST", uri_for_key(staging_key), "uploads=", "");
   if (r.status != 200) {
     LOG_WARN_N(
@@ -166,34 +173,18 @@ bool S3Backend::create_multipart(
   }
   std::string s3_upload_id = xml_tag(r.body, "UploadId");
   if (s3_upload_id.empty()) return false;
-
-  std::lock_guard<std::mutex> lock(mutex_);
-  Multipart mp;
-  mp.s3_upload_id = s3_upload_id;
-  mp.final_key_hint = staging_key;
-  mp.total_size = total_size;
-  mp.chunk_count = chunk_count;
-  mp.chunk_size = chunk_size;
-  multipart_[upload_id] = std::move(mp);
+  st.handle = s3_upload_id;  // persisted by the caller (DB) and passed back
   return true;
 }
 
 std::string S3Backend::put_part(
   const std::string& upload_id,
+  const MultipartState& st,
   int index,
   std::string_view bytes,
-  const std::string& expected_sha256_hex) {
-  std::string s3_upload_id, staging_key;
-  int chunk_count = 0;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = multipart_.find(upload_id);
-    if (it == multipart_.end()) return "session_not_found";
-    s3_upload_id = it->second.s3_upload_id;
-    staging_key = it->second.final_key_hint;
-    chunk_count = it->second.chunk_count;
-  }
-  if (index < 0 || index >= chunk_count) return "invalid_index";
+  const std::string& expected_sha256_hex,
+  std::string& token_out) {
+  if (index < 0 || index >= st.chunk_count) return "invalid_index";
   if (!expected_sha256_hex.empty()) {
     if (sigv4::sha256_hex(bytes) != expected_sha256_hex) return "hash_mismatch";
   }
@@ -201,72 +192,45 @@ std::string S3Backend::put_part(
   // S3 part numbers are 1-based.
   int part_number = index + 1;
   std::string query = "partNumber=" + std::to_string(part_number) +
-                      "&uploadId=" + sigv4::uri_encode(s3_upload_id, false);
-  auto r = signed_request("PUT", uri_for_key(staging_key), query, bytes);
+                      "&uploadId=" + sigv4::uri_encode(st.handle, false);
+  auto r = signed_request("PUT", uri_for_key(staging_key_for(upload_id)), query, bytes);
   if (r.status != 200) {
     LOG_WARN_N("s3", nullptr, "UploadPart -> HTTP " + std::to_string(r.status));
     return "io_error";
   }
-  // ETag comes back in the response header; httplib lowercases header lookups.
-  std::string etag = r.headers.count("etag") ? r.headers["etag"] : "";
-  // Fall back: some servers only echo it; if missing, synthesize from index so
-  // complete still has an ordering (but real ETag is required by S3).
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = multipart_.find(upload_id);
-    if (it == multipart_.end()) return "session_gone";
-    it->second.etags[part_number] = etag;
-  }
+  // The ETag is the part token the caller persists and passes to complete.
+  token_out = r.headers.count("etag") ? r.headers["etag"] : "";
   return "";
 }
 
-int S3Backend::multipart_received(const std::string& upload_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = multipart_.find(upload_id);
-  if (it == multipart_.end()) return -1;
-  return static_cast<int>(it->second.etags.size());
-}
+int64_t S3Backend::complete_multipart(
+  const std::string& upload_id, const MultipartState& st, const std::string& final_key) {
+  std::string staging_key = staging_key_for(upload_id);
 
-int64_t S3Backend::complete_multipart(const std::string& upload_id, const std::string& final_key) {
-  std::string s3_upload_id, staging_key;
-  int64_t total_size = 0;
-  std::map<int, std::string> etags;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = multipart_.find(upload_id);
-    if (it == multipart_.end()) return -1;
-    s3_upload_id = it->second.s3_upload_id;
-    staging_key = it->second.final_key_hint;
-    total_size = it->second.total_size;
-    etags = it->second.etags;
-  }
-
-  // Build the CompleteMultipartUpload XML body.
+  // Build the CompleteMultipartUpload XML body from the caller-supplied part
+  // tokens (0-based index -> ETag); S3 part numbers are 1-based and ordered.
   std::ostringstream xml;
   xml << "<CompleteMultipartUpload>";
-  for (const auto& [part, etag] : etags) {
+  for (const auto& [index, etag] : st.part_tokens) {
     std::string e = etag;
-    // ETag may already be quoted; ensure it's wrapped in quotes for the XML.
     if (e.empty() || e.front() != '"') e = "\"" + e + "\"";
-    xml << "<Part><PartNumber>" << part << "</PartNumber><ETag>" << e << "</ETag></Part>";
+    xml << "<Part><PartNumber>" << (index + 1) << "</PartNumber><ETag>" << e
+        << "</ETag></Part>";
   }
   xml << "</CompleteMultipartUpload>";
 
-  std::string query = "uploadId=" + sigv4::uri_encode(s3_upload_id, false);
+  std::string query = "uploadId=" + sigv4::uri_encode(st.handle, false);
   auto r = signed_request("POST", uri_for_key(staging_key), query, xml.str());
-
-  // Clear local state regardless of outcome.
   bool ok = (r.status == 200) && r.body.find("<Error>") == std::string::npos;
   if (!ok) {
     LOG_WARN_N(
       "s3", nullptr, "CompleteMultipartUpload -> HTTP " + std::to_string(r.status) + ": " + r.body);
-    abort_multipart(upload_id);
+    abort_multipart(upload_id, st);
     return -1;
   }
 
   // The staged object now lives at `staging_key`; copy it to the final key so
   // downloads (which use the final key) find it, then delete the staging object.
-  // Server-side copy via the x-amz-copy-source header.
   std::string copy_source =
     "/" + config_.bucket + "/" + sigv4::uri_encode(staging_key, /*keep_slash=*/true);
   auto cp =
@@ -274,39 +238,16 @@ int64_t S3Backend::complete_multipart(const std::string& upload_id, const std::s
   if (cp.status != 200) {
     LOG_WARN_N(
       "s3", nullptr, "CopyObject (multipart finalize) -> HTTP " + std::to_string(cp.status));
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      multipart_.erase(upload_id);
-    }
     return -1;
   }
-  // Best-effort cleanup of the staging object.
-  signed_request("DELETE", uri_for_key(staging_key), "", "");
-
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    multipart_.erase(upload_id);
-  }
-  return total_size;
+  signed_request("DELETE", uri_for_key(staging_key), "", "");  // best-effort
+  return st.total_size;
 }
 
-void S3Backend::abort_multipart(const std::string& upload_id) {
-  std::string s3_upload_id, staging_key;
-  {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto it = multipart_.find(upload_id);
-    if (it == multipart_.end()) return;
-    s3_upload_id = it->second.s3_upload_id;
-    staging_key = it->second.final_key_hint;
-    multipart_.erase(it);
-  }
-  std::string query = "uploadId=" + sigv4::uri_encode(s3_upload_id, false);
-  signed_request("DELETE", uri_for_key(staging_key), query, "");
-}
-
-void S3Backend::cleanup_stale_multipart(int /*max_age_seconds*/) {
-  // S3 servers can be configured with their own multipart-abort lifecycle rules;
-  // in-process tracking has no age field here. No-op.
+void S3Backend::abort_multipart(const std::string& upload_id, const MultipartState& st) {
+  if (st.handle.empty()) return;
+  std::string query = "uploadId=" + sigv4::uri_encode(st.handle, false);
+  signed_request("DELETE", uri_for_key(staging_key_for(upload_id)), query, "");
 }
 
 }  // namespace storage
