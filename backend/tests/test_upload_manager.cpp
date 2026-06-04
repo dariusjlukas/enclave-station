@@ -12,8 +12,10 @@
 #include <thread>
 #include <vector>
 
+#include <memory>
 #include <nlohmann/json.hpp>
 
+#include "storage/local_fs_backend.h"
 #include "upload_manager.h"
 
 namespace fs = std::filesystem;
@@ -35,8 +37,12 @@ std::string make_temp_dir(const std::string& label) {
 
 class UploadManagerTest : public ::testing::Test {
 protected:
-  void SetUp() override { dir_ = make_temp_dir("base"); }
+  void SetUp() override {
+    dir_ = make_temp_dir("base");
+    storage_ = std::make_unique<storage::LocalFsBackend>(dir_);
+  }
   void TearDown() override {
+    storage_.reset();
     std::error_code ec;
     // Best-effort: restore permissions before removing in case a test chmod'd.
     fs::permissions(
@@ -46,13 +52,15 @@ protected:
       ec);
     fs::remove_all(dir_, ec);
   }
+  storage::StorageBackend& storage() { return *storage_; }
   std::string dir_;
+  std::unique_ptr<storage::LocalFsBackend> storage_;
 };
 
 }  // namespace
 
 TEST_F(UploadManagerTest, ConcurrentStoreChunk) {
-  UploadManager mgr(dir_);
+  UploadManager mgr(storage());
   constexpr int kChunkCount = 64;
   constexpr int64_t kChunkSize = 1024;
   constexpr int64_t kTotal = static_cast<int64_t>(kChunkCount) * kChunkSize;
@@ -82,19 +90,20 @@ TEST_F(UploadManagerTest, ConcurrentStoreChunk) {
   EXPECT_EQ(failures.load(), 0);
   EXPECT_TRUE(mgr.is_complete(upload_id));
 
-  std::string dest = dir_ + "/assembled.bin";
-  int64_t size = mgr.assemble(upload_id, dest);
+  // assemble() now takes the destination blob KEY (not a path); the bytes land
+  // in the storage backend.
+  const std::string key = "assembled0001";
+  int64_t size = mgr.assemble(upload_id, key);
   EXPECT_EQ(size, kTotal);
 
-  // Assembled file should exist with exactly the expected total size.
-  std::error_code ec;
-  auto sz = fs::file_size(dest, ec);
-  ASSERT_FALSE(ec);
-  EXPECT_EQ(static_cast<int64_t>(sz), kTotal);
+  // The assembled blob should be readable from storage at exactly kTotal bytes.
+  auto blob = storage().get(key);
+  ASSERT_TRUE(blob.ok);
+  EXPECT_EQ(static_cast<int64_t>(blob.data.size()), kTotal);
 }
 
 TEST_F(UploadManagerTest, OffsetOverflow) {
-  UploadManager mgr(dir_);
+  UploadManager mgr(storage());
   constexpr int64_t kHugeChunk = std::numeric_limits<int64_t>::max() / 2;
   // chunk_count must be > 4 so index=4 is in-range and overflow is exercised.
   constexpr int kChunkCount = 10;
@@ -109,7 +118,7 @@ TEST_F(UploadManagerTest, OffsetOverflow) {
 }
 
 TEST_F(UploadManagerTest, NegativeIndex) {
-  UploadManager mgr(dir_);
+  UploadManager mgr(storage());
   std::string upload_id =
     mgr.create_session("u", /*total_size=*/1024, /*chunk_count=*/4, /*chunk_size=*/256, {});
   ASSERT_FALSE(upload_id.empty());
@@ -119,7 +128,7 @@ TEST_F(UploadManagerTest, NegativeIndex) {
 }
 
 TEST_F(UploadManagerTest, IndexOutOfRange) {
-  UploadManager mgr(dir_);
+  UploadManager mgr(storage());
   std::string upload_id =
     mgr.create_session("u", /*total_size=*/1024, /*chunk_count=*/4, /*chunk_size=*/256, {});
   ASSERT_FALSE(upload_id.empty());
@@ -139,15 +148,14 @@ TEST_F(UploadManagerTest, OpenFailure) {
     GTEST_SKIP() << "Cannot test open() failure when running as root";
   }
 
-  UploadManager mgr(dir_);
+  UploadManager mgr(storage());
   std::string upload_id =
     mgr.create_session("u", /*total_size=*/1024, /*chunk_count=*/4, /*chunk_size=*/256, {});
   ASSERT_FALSE(upload_id.empty());
 
-  // Make the on-disk temp file unreadable/unwritable so open(O_WRONLY) fails.
-  auto session = mgr.get_session(upload_id);
-  ASSERT_TRUE(session.has_value());
-  std::string tmp_path = session->tmp_path;
+  // Make the on-disk temp file unwritable so the backend's open(O_WRONLY) fails.
+  // The LocalFsBackend stages chunks in <dir>/tmp/<upload_id>.dat.
+  std::string tmp_path = dir_ + "/tmp/" + upload_id + ".dat";
   ASSERT_EQ(::chmod(tmp_path.c_str(), 0), 0) << "chmod failed: " << strerror(errno);
 
   std::string err = mgr.store_chunk_err(upload_id, /*index=*/0, std::string(256, 'a'), "");

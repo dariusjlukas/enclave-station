@@ -86,8 +86,48 @@ void WsHandler<SSL>::broadcast_to_topic(const std::string& topic, const std::str
 
 template <bool SSL>
 void WsHandler<SSL>::on_redis_message(const std::string& topic, const std::string& payload) {
+  // The reserved "ctrl" topic carries cross-instance control commands
+  // (subscribe/unsubscribe/disconnect a user's local sockets), not a fan-out
+  // payload. Everything else is a normal topic broadcast.
+  if (topic == "ctrl") {
+    handle_control_message(payload);
+    return;
+  }
   std::lock_guard<std::mutex> lock(mutex_);
   local_fan_out(topic, payload);
+}
+
+template <bool SSL>
+void WsHandler<SSL>::publish_control(const json& cmd) {
+  // Apply locally only via the dedicated local_* helpers (callers already did
+  // that); this just propagates to the other instances. No-op without Redis.
+  if (redis_pubsub_ && redis_pubsub_->is_enabled()) {
+    redis_pubsub_->publish("ctrl", cmd.dump());
+  }
+}
+
+template <bool SSL>
+void WsHandler<SSL>::handle_control_message(const std::string& payload) {
+  json cmd;
+  try {
+    cmd = json::parse(payload);
+  } catch (const std::exception&) {
+    LOG_WARN_N("ws", nullptr, "Dropping malformed ws control message");
+    return;
+  }
+  std::string action = cmd.value("action", "");
+  std::string user_id = cmd.value("user_id", "");
+  if (action == "subscribe") {
+    local_subscribe_user(user_id, cmd.value("topic", ""));
+  } else if (action == "unsubscribe") {
+    local_unsubscribe_user(user_id, cmd.value("topic", ""));
+  } else if (action == "subscribe_admins") {
+    local_subscribe_admins(cmd.value("topic", ""));
+  } else if (action == "disconnect_user") {
+    local_disconnect_user(user_id);
+  } else if (action == "disconnect_non_admins") {
+    local_disconnect_non_admins(cmd.value("message", ""));
+  }
 }
 
 template <bool SSL>
@@ -175,12 +215,15 @@ void WsHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
          metrics::ws_connected_clients().inc();
 
          // Register socket immediately (synchronous, on event loop) and
-         // subscribe it to the presence topic via local_subscribe so the
-         // online broadcast reaches it.
+         // subscribe it to the presence topic plus its own per-user topic.
+         // The "user:<id>" subscription is what makes send_to_user work across
+         // instances: a notification published from any instance fans out here
+         // via Redis -> on_redis_message -> local_fan_out("user:<id>").
          {
            std::lock_guard<std::mutex> lock(mutex_);
            user_sockets_[data->user_id].insert(ws);
            local_subscribe(ws, "presence");
+           local_subscribe(ws, "user:" + data->user_id);
          }
 
          // Offload DB queries to thread pool
@@ -337,7 +380,7 @@ void WsHandler<SSL>::close_all() {
 }
 
 template <bool SSL>
-void WsHandler<SSL>::disconnect_user(const std::string& user_id) {
+void WsHandler<SSL>::local_disconnect_user(const std::string& user_id) {
   std::vector<uWS::WebSocket<SSL, true, WsUserData>*> to_close;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -354,23 +397,28 @@ void WsHandler<SSL>::disconnect_user(const std::string& user_id) {
 }
 
 template <bool SSL>
-void WsHandler<SSL>::send_to_user(const std::string& user_id, const std::string& message) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = user_sockets_.find(user_id);
-  if (it != user_sockets_.end()) {
-    for (auto* ws : it->second) {
-      ws->send(message, uWS::OpCode::TEXT);
-    }
-  }
+void WsHandler<SSL>::disconnect_user(const std::string& user_id) {
+  // Disconnect the user wherever their socket lives (e.g. on ban): close local
+  // sockets and tell the other instances to do the same.
+  local_disconnect_user(user_id);
+  publish_control({{"action", "disconnect_user"}, {"user_id", user_id}});
 }
 
 template <bool SSL>
-void WsHandler<SSL>::subscribe_user_to_channel(
-  const std::string& user_id, const std::string& channel_id) {
+void WsHandler<SSL>::send_to_user(const std::string& user_id, const std::string& message) {
+  // Per-user delivery is modeled as a topic ("user:<id>") that each of the
+  // user's sockets subscribes to on connect. Routing through broadcast_to_topic
+  // reuses the Redis-aware fan-out so the message reaches the user wherever
+  // their socket lives (this instance or another), with self-echo loop
+  // prevention handled by the subscriber.
+  broadcast_to_topic("user:" + user_id, message);
+}
+
+template <bool SSL>
+void WsHandler<SSL>::local_subscribe_user(const std::string& user_id, const std::string& topic) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = user_sockets_.find(user_id);
   if (it != user_sockets_.end()) {
-    std::string topic = "channel:" + channel_id;
     for (auto* ws : it->second) {
       local_subscribe(ws, topic);
     }
@@ -378,16 +426,32 @@ void WsHandler<SSL>::subscribe_user_to_channel(
 }
 
 template <bool SSL>
-void WsHandler<SSL>::unsubscribe_user_from_channel(
-  const std::string& user_id, const std::string& channel_id) {
+void WsHandler<SSL>::local_unsubscribe_user(const std::string& user_id, const std::string& topic) {
   std::lock_guard<std::mutex> lock(mutex_);
   auto it = user_sockets_.find(user_id);
   if (it != user_sockets_.end()) {
-    std::string topic = "channel:" + channel_id;
     for (auto* ws : it->second) {
       local_unsubscribe(ws, topic);
     }
   }
+}
+
+template <bool SSL>
+void WsHandler<SSL>::subscribe_user_to_channel(
+  const std::string& user_id, const std::string& channel_id) {
+  std::string topic = "channel:" + channel_id;
+  local_subscribe_user(user_id, topic);
+  // The user's socket may live on another instance — tell every instance to
+  // subscribe its local copies so they start receiving this channel's broadcasts.
+  publish_control({{"action", "subscribe"}, {"user_id", user_id}, {"topic", topic}});
+}
+
+template <bool SSL>
+void WsHandler<SSL>::unsubscribe_user_from_channel(
+  const std::string& user_id, const std::string& channel_id) {
+  std::string topic = "channel:" + channel_id;
+  local_unsubscribe_user(user_id, topic);
+  publish_control({{"action", "unsubscribe"}, {"user_id", user_id}, {"topic", topic}});
 }
 
 template <bool SSL>
@@ -397,47 +461,44 @@ void WsHandler<SSL>::broadcast_to_channel(
 }
 
 template <bool SSL>
-void WsHandler<SSL>::subscribe_admins_to_channel(
-  Database& database, const std::string& channel_id) {
-  auto users = database.list_users();
+void WsHandler<SSL>::local_subscribe_admins(const std::string& topic) {
+  // Subscribe this instance's admin/owner sockets to `topic`. Roles are carried
+  // on each socket's WsUserData, so no DB lookup is needed.
   std::lock_guard<std::mutex> lock(mutex_);
-  std::string topic = "channel:" + channel_id;
-  for (const auto& u : users) {
-    if (u.role == "admin" || u.role == "owner") {
-      auto it = user_sockets_.find(u.id);
-      if (it != user_sockets_.end()) {
-        for (auto* ws : it->second) {
-          local_subscribe(ws, topic);
-        }
+  for (auto& [uid, sockets] : user_sockets_) {
+    for (auto* ws : sockets) {
+      auto* d = ws->getUserData();
+      if (d->role == "admin" || d->role == "owner") {
+        local_subscribe(ws, topic);
       }
     }
   }
 }
 
 template <bool SSL>
+void WsHandler<SSL>::subscribe_admins_to_channel(
+  Database& database, const std::string& channel_id) {
+  (void)database;  // roles are on the sockets; no DB scan needed
+  std::string topic = "channel:" + channel_id;
+  local_subscribe_admins(topic);
+  // Admins connected to other instances must subscribe their sockets too.
+  publish_control({{"action", "subscribe_admins"}, {"topic", topic}});
+}
+
+template <bool SSL>
 void WsHandler<SSL>::subscribe_user_to_space(
   const std::string& user_id, const std::string& space_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = user_sockets_.find(user_id);
-  if (it != user_sockets_.end()) {
-    std::string topic = "space:" + space_id;
-    for (auto* ws : it->second) {
-      local_subscribe(ws, topic);
-    }
-  }
+  std::string topic = "space:" + space_id;
+  local_subscribe_user(user_id, topic);
+  publish_control({{"action", "subscribe"}, {"user_id", user_id}, {"topic", topic}});
 }
 
 template <bool SSL>
 void WsHandler<SSL>::unsubscribe_user_from_space(
   const std::string& user_id, const std::string& space_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  auto it = user_sockets_.find(user_id);
-  if (it != user_sockets_.end()) {
-    std::string topic = "space:" + space_id;
-    for (auto* ws : it->second) {
-      local_unsubscribe(ws, topic);
-    }
-  }
+  std::string topic = "space:" + space_id;
+  local_unsubscribe_user(user_id, topic);
+  publish_control({{"action", "unsubscribe"}, {"user_id", user_id}, {"topic", topic}});
 }
 
 template <bool SSL>
@@ -452,23 +513,14 @@ void WsHandler<SSL>::broadcast_to_space(const std::string& space_id, const std::
 
 template <bool SSL>
 void WsHandler<SSL>::subscribe_admins_to_space(Database& database, const std::string& space_id) {
-  auto users = database.list_users();
-  std::lock_guard<std::mutex> lock(mutex_);
+  (void)database;
   std::string topic = "space:" + space_id;
-  for (const auto& u : users) {
-    if (u.role == "admin" || u.role == "owner") {
-      auto it = user_sockets_.find(u.id);
-      if (it != user_sockets_.end()) {
-        for (auto* ws : it->second) {
-          local_subscribe(ws, topic);
-        }
-      }
-    }
-  }
+  local_subscribe_admins(topic);
+  publish_control({{"action", "subscribe_admins"}, {"topic", topic}});
 }
 
 template <bool SSL>
-void WsHandler<SSL>::disconnect_non_admins(const std::string& notify_message) {
+void WsHandler<SSL>::local_disconnect_non_admins(const std::string& notify_message) {
   std::vector<uWS::WebSocket<SSL, true, WsUserData>*> to_close;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -487,6 +539,13 @@ void WsHandler<SSL>::disconnect_non_admins(const std::string& notify_message) {
   for (auto* ws : to_close) {
     ws->close();
   }
+}
+
+template <bool SSL>
+void WsHandler<SSL>::disconnect_non_admins(const std::string& notify_message) {
+  // Lockdown: every instance must drop its own non-admin sockets.
+  local_disconnect_non_admins(notify_message);
+  publish_control({{"action", "disconnect_non_admins"}, {"message", notify_message}});
 }
 
 // P1.6 rate-limit constants (token bucket, per-connection).
@@ -973,11 +1032,9 @@ void WsHandler<SSL>::handle_delete_message(
       msg = db.admin_delete_message(message_id);
     }
 
-    // Delete file from disk if message had an attachment
-    if (!msg.file_id.empty()) {
-      std::string path = config.upload_dir + "/" + msg.file_id;
-      std::error_code ec;
-      std::filesystem::remove(path, ec);
+    // Delete the attachment blob if the message had one.
+    if (!msg.file_id.empty() && storage_) {
+      storage_->remove(msg.file_id);
     }
 
     json broadcast = {{"type", "message_deleted"}, {"message", message_to_json(msg)}};

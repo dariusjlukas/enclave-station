@@ -6,26 +6,30 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
-#include <set>
 #include <string>
+#include "storage/storage_backend.h"
 
+// Coordinates chunked uploads: owns the per-upload session metadata (filename,
+// content-type, owning channel/space, declared sizes) and delegates the actual
+// byte staging + assembly to a StorageBackend (local FS or S3). The session
+// metadata map is still in-process here; moving it to a shared store (DB) is
+// what makes chunked uploads span instances and is handled alongside the S3
+// backend.
 struct UploadSession {
   std::string upload_id;
   std::string user_id;
-  int64_t total_size;
-  int chunk_count;
-  int64_t chunk_size;    // bytes per chunk (last chunk may be smaller)
-  std::string tmp_path;  // single temp file written at chunk offsets
-  std::set<int> received_chunks;
+  int64_t total_size = 0;
+  int chunk_count = 0;
+  int64_t chunk_size = 0;  // bytes per chunk (last chunk may be smaller)
   std::chrono::steady_clock::time_point created_at;
   nlohmann::json metadata;
 };
 
 class UploadManager {
 public:
-  explicit UploadManager(const std::string& upload_dir);
+  explicit UploadManager(storage::StorageBackend& storage);
 
-  // Create a new upload session, returns upload_id
+  // Create a new upload session, returns upload_id (empty string on failure).
   std::string create_session(
     const std::string& user_id,
     int64_t total_size,
@@ -33,43 +37,38 @@ public:
     int64_t chunk_size,
     const nlohmann::json& metadata);
 
-  // Get a snapshot copy of a session by ID, or std::nullopt if not found.
-  // Returning a copy (rather than a raw pointer into the internal map) ensures
-  // callers can safely observe session fields without racing against other
-  // threads that may create/remove sessions.
+  // Snapshot copy of a session by ID, or nullopt if not found.
   std::optional<UploadSession> get_session(const std::string& upload_id);
 
-  // Write chunk data directly at its offset in the temp file.
-  // If expected_hash is non-empty, verifies SHA-256 of data matches.
+  // Stage chunk `index`. expected_hash (optional) is verified against the bytes.
   bool store_chunk(
     const std::string& upload_id,
     int index,
     std::string_view data,
     const std::string& expected_hash);
 
-  // Returns "hash_mismatch" if hash failed, empty string on success,
-  // or other error string on failure.
+  // As store_chunk but returns "" on success or a short error token.
   std::string store_chunk_err(
     const std::string& upload_id,
     int index,
     std::string_view data,
     const std::string& expected_hash);
 
-  // Check if all chunks have been received
+  // True once all chunks have been received.
   bool is_complete(const std::string& upload_id) const;
 
-  // Move temp file to dest_path (instant rename), returns total_size or -1
-  int64_t assemble(const std::string& upload_id, const std::string& dest_path);
+  // Assemble the staged parts into the blob `final_key`. Returns total_size or
+  // -1 on failure.
+  int64_t assemble(const std::string& upload_id, const std::string& final_key);
 
-  // Remove session and clean up temp file
+  // Discard the session and its staged bytes.
   void remove_session(const std::string& upload_id);
 
-  // Clean up sessions older than max_age_seconds
+  // Clean up sessions older than max_age_seconds.
   void cleanup_stale(int max_age_seconds = 3600);
 
 private:
-  std::string upload_dir_;
-  std::string tmp_dir_;
+  storage::StorageBackend& storage_;
   mutable std::mutex mutex_;
   std::map<std::string, UploadSession> sessions_;
 };

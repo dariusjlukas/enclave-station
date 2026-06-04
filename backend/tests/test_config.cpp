@@ -9,7 +9,8 @@ protected:
         env_names_ = {"POSTGRES_HOST", "POSTGRES_PORT", "POSTGRES_USER",
                       "POSTGRES_PASSWORD", "POSTGRES_DB", "BACKEND_PORT",
                       "SESSION_EXPIRY_HOURS", "PUBLIC_URL", "UPLOAD_DIR",
-                      "MAX_FILE_SIZE"};
+                      "MAX_FILE_SIZE", "STORAGE_BACKEND", "S3_ENDPOINT",
+                      "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_REGION"};
         for (const auto& name : env_names_) {
             const char* val = std::getenv(name.c_str());
             if (val) saved_[name] = val;
@@ -54,6 +55,9 @@ TEST_F(ConfigTest, DefaultValues) {
     EXPECT_EQ(c.max_request_body_size, 1207959552);  // 1.125 GiB default
     EXPECT_EQ(c.auth_rate_limit_max_attempts, 10);
     EXPECT_EQ(c.auth_rate_limit_window_seconds, 60);
+    EXPECT_EQ(c.storage_backend, "local");
+    EXPECT_EQ(c.s3_region, "us-east-1");
+    EXPECT_EQ(c.s3_endpoint, "");
 }
 
 TEST_F(ConfigTest, EnvironmentOverrides) {

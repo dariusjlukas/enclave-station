@@ -507,15 +507,12 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           // Delete old icon file if exists
           auto old_id = db.get_setting("server_icon_file_id");
           if (old_id && !old_id->empty()) {
-            std::string old_path = config.upload_dir + "/" + *old_id;
-            std::filesystem::remove(old_path);
+            storage.remove(*old_id);
           }
 
           // Save new icon
           std::string file_id = format_utils::random_hex(32);
-          std::string path = config.upload_dir + "/" + file_id;
-          std::ofstream out(path, std::ios::binary);
-          if (!out) {
+          if (!storage.put(file_id, *body)) {
             loop_->defer([res, aborted, scope]() {
               if (*aborted) return;
               res->writeStatus("500")
@@ -525,8 +522,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          out.write(body->data(), body->size());
-          out.close();
 
           db.set_setting("server_icon_file_id", file_id);
 
@@ -562,8 +557,7 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       try {
         auto old_id = db.get_setting("server_icon_file_id");
         if (old_id && !old_id->empty()) {
-          std::string old_path = config.upload_dir + "/" + *old_id;
-          std::filesystem::remove(old_path);
+          storage.remove(*old_id);
         }
         db.set_setting("server_icon_file_id", "");
         loop_->defer([res, aborted, scope]() {
@@ -615,15 +609,12 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           // Delete old dark icon file if exists
           auto old_id = db.get_setting("server_icon_dark_file_id");
           if (old_id && !old_id->empty()) {
-            std::string old_path = config.upload_dir + "/" + *old_id;
-            std::filesystem::remove(old_path);
+            storage.remove(*old_id);
           }
 
           // Save new dark icon
           std::string file_id = format_utils::random_hex(32);
-          std::string path = config.upload_dir + "/" + file_id;
-          std::ofstream out(path, std::ios::binary);
-          if (!out) {
+          if (!storage.put(file_id, *body)) {
             loop_->defer([res, aborted, scope]() {
               if (*aborted) return;
               res->writeStatus("500")
@@ -633,8 +624,6 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          out.write(body->data(), body->size());
-          out.close();
 
           db.set_setting("server_icon_dark_file_id", file_id);
 
@@ -671,8 +660,7 @@ void AdminHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       try {
         auto old_id = db.get_setting("server_icon_dark_file_id");
         if (old_id && !old_id->empty()) {
-          std::string old_path = config.upload_dir + "/" + *old_id;
-          std::filesystem::remove(old_path);
+          storage.remove(*old_id);
         }
         db.set_setting("server_icon_dark_file_id", "");
         loop_->defer([res, aborted, scope]() {

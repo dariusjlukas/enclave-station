@@ -20,6 +20,20 @@ add_executable(test_rate_limit test_rate_limit.cpp)
 target_link_libraries(test_rate_limit PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME RateLimitTests COMMAND test_rate_limit)
 
+add_executable(test_local_fs_backend test_local_fs_backend.cpp)
+target_link_libraries(test_local_fs_backend PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME LocalFsBackendTests COMMAND test_local_fs_backend)
+
+add_executable(test_aws_sigv4 test_aws_sigv4.cpp)
+target_link_libraries(test_aws_sigv4 PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME AwsSigv4Tests COMMAND test_aws_sigv4)
+
+# Live S3 round-trip; self-skips unless S3_TEST_* env is set. Labeled separately
+# so it isn't part of the default unit run.
+add_executable(test_s3_backend_live test_s3_backend_live.cpp)
+target_link_libraries(test_s3_backend_live PRIVATE chat-lib GTest::gtest_main)
+add_test(NAME S3BackendLiveTests COMMAND test_s3_backend_live)
+
 add_executable(test_llm_url test_llm_url.cpp)
 target_link_libraries(test_llm_url PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME LlmUrlTests COMMAND test_llm_url)
@@ -134,8 +148,8 @@ target_link_libraries(test_connection_pool PRIVATE chat-lib GTest::gtest_main)
 add_test(NAME ConnectionPoolTests COMMAND test_connection_pool)
 
 # Labels for selective test running
-set_tests_properties(PkiTests ConfigTests RateLimitTests LlmUrlTests TotpTests PasswordTests
-    WebAuthnTests
+set_tests_properties(PkiTests ConfigTests RateLimitTests LlmUrlTests LocalFsBackendTests
+    AwsSigv4Tests TotpTests PasswordTests WebAuthnTests
     HandlerUtilsTests AuthUtilsTests AuthPayloadUtilsTests AdminSettingsUtilsTests
     FileAccessUtilsTests AdminApprovalUtilsTests SearchHandlerTests FileHandlerTests RecurrenceTests
     ZipBuilderTests UploadManagerTests LoggerTests MetricsTests RedisEnvelopeTests RedisPubSubTests

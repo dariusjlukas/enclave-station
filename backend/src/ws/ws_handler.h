@@ -11,6 +11,7 @@
 #include "config.h"
 #include "db/database.h"
 #include "db/db_thread_pool.h"
+#include "storage/storage_backend.h"
 
 using json = nlohmann::json;
 
@@ -72,6 +73,12 @@ public:
     redis_pubsub_ = redis_pubsub;
   }
 
+  // Storage backend for deleting a message's attachment blob when the message
+  // is deleted over WS. Set once after construction in run_server.
+  void set_storage(storage::StorageBackend* storage) {
+    storage_ = storage;
+  }
+
   // B.3: invoked by the RedisPubSub subscriber thread (via loop_->defer)
   // when a non-self envelope arrives. Performs local fan-out only; does NOT
   // re-publish to Redis, otherwise we'd loop forever.
@@ -88,6 +95,7 @@ private:
   std::unordered_map<std::string, std::unordered_set<WebSocket*>> topic_subscribers_;
 
   enclave_redis::RedisPubSub* redis_pubsub_ = nullptr;
+  storage::StorageBackend* storage_ = nullptr;
 
   void handle_message(WebSocket* ws, std::string_view raw);
   void handle_send_message(WebSocket* ws, WsUserData* data, const json& j);
@@ -121,6 +129,24 @@ private:
   // Unified primitive: local fan-out + optional Redis publish. All public
   // broadcast_to_* helpers funnel through this.
   void broadcast_to_topic(const std::string& topic, const std::string& payload);
+
+  // Cross-instance control plane. Subscription changes (a user added to a
+  // channel/space, lockdown disconnects) must take effect on whichever instance
+  // currently holds the user's socket — not just the instance that ran the REST
+  // handler. These publish a control envelope on the reserved "ctrl" topic that
+  // every instance applies to its LOCAL sockets in handle_control_message().
+  // When Redis is disabled they are pure local operations.
+  void publish_control(const json& cmd);
+  void handle_control_message(const std::string& payload);
+  // Apply a subscribe/unsubscribe to a user's local sockets only. Caller must
+  // NOT hold mutex_ (these acquire it).
+  void local_subscribe_user(const std::string& user_id, const std::string& topic);
+  void local_unsubscribe_user(const std::string& user_id, const std::string& topic);
+  // Disconnect operations applied to this instance's sockets only.
+  void local_disconnect_user(const std::string& user_id);
+  void local_disconnect_non_admins(const std::string& notify_message);
+  // Subscribe this instance's admin/owner sockets to a topic.
+  void local_subscribe_admins(const std::string& topic);
 
   static std::vector<std::string> parse_mentions(
     const std::string& content, const std::vector<Database::ChannelMemberUsername>& members);

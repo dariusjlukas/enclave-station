@@ -15,6 +15,7 @@ struct AdminHandler {
   Database& db;
   const Config& config;
   WsHandler<SSL>& ws;
+  storage::StorageBackend& storage;
   uWS::Loop* loop_;
   DbThreadPool& pool_;
 

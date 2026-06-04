@@ -19,6 +19,15 @@ struct Config {
   int session_expiry_hours;
   std::string public_url;
   std::string upload_dir;
+  // File-blob storage backend: "local" (filesystem under upload_dir, default;
+  // single-instance) or "s3" (S3-compatible object store; shared across
+  // horizontally-scaled instances). When "s3", the s3_* fields below are used.
+  std::string storage_backend;
+  std::string s3_endpoint;  // e.g. "http://minio:9000"
+  std::string s3_bucket;
+  std::string s3_access_key;
+  std::string s3_secret_key;
+  std::string s3_region;
   int64_t max_file_size;
   // Hard ceiling on a single raw upload request body held in memory, in bytes.
   // Independent of max_file_size (which is the logical per-file policy enforced
@@ -63,6 +72,12 @@ struct Config {
     c.session_expiry_hours = parse_int_env("SESSION_EXPIRY_HOURS", "168");
     c.public_url = env("PUBLIC_URL", "");
     c.upload_dir = env("UPLOAD_DIR", "/data/uploads");
+    c.storage_backend = env("STORAGE_BACKEND", "local");
+    c.s3_endpoint = env("S3_ENDPOINT", "");
+    c.s3_bucket = env("S3_BUCKET", "");
+    c.s3_access_key = env("S3_ACCESS_KEY", "");
+    c.s3_secret_key = env("S3_SECRET_KEY", "");
+    c.s3_region = env("S3_REGION", "us-east-1");
     // Default 1 GiB per file (matches docs/guides/local-deployment.md). Set 0
     // to disable the per-file limit. A non-zero default ensures uploads are
     // bounded out of the box rather than unlimited.

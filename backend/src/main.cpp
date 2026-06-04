@@ -28,6 +28,7 @@
 #include "logging/logger.h"
 #include "metrics/metrics.h"
 #include "redis/redis_pubsub.h"
+#include "storage/storage_factory.h"
 #include "upload_manager.h"
 #include "ws/ws_handler.h"
 
@@ -80,6 +81,7 @@ void run_server(
   Config& config,
   Database& db,
   UploadManager& upload_manager,
+  storage::StorageBackend& storage,
   DbThreadPool& pool) {
   auto* loop = uWS::Loop::get();
 
@@ -102,19 +104,21 @@ void run_server(
       });
     });
   ws_handler.set_redis_pubsub(&redis_pubsub);
+  ws_handler.set_storage(&storage);
   redis_pubsub.start();
   AuthHandler<SSL> auth_handler{db, config, ws_handler, loop, pool};
   ChannelHandler<SSL> channel_handler{db, ws_handler, loop, pool};
-  SpaceHandler<SSL> space_handler{db, ws_handler, config, loop, pool};
-  UserHandler<SSL> user_handler{db, ws_handler, config, loop, pool};
-  AdminHandler<SSL> admin_handler{db, config, ws_handler, loop, pool};
-  FileHandler<SSL> file_handler{db, config, upload_manager, nullptr, loop, &pool};
+  SpaceHandler<SSL> space_handler{db, ws_handler, config, storage, loop, pool};
+  UserHandler<SSL> user_handler{db, ws_handler, config, storage, loop, pool};
+  AdminHandler<SSL> admin_handler{db, config, ws_handler, storage, loop, pool};
+  FileHandler<SSL> file_handler{
+    db, config, upload_manager, ws_handler, storage, nullptr, loop, &pool};
   SearchHandler<SSL> search_handler{db, loop, pool};
   NotificationHandler<SSL> notification_handler{db, loop, pool};
-  SpaceFileHandler<SSL> space_file_handler{db, config, upload_manager, loop, pool};
+  SpaceFileHandler<SSL> space_file_handler{db, config, upload_manager, storage, loop, pool};
   CalendarHandler<SSL> calendar_handler{db, config, loop, pool};
   TaskBoardHandler<SSL> task_board_handler{db, config, loop, pool};
-  WikiHandler<SSL> wiki_handler{db, config, upload_manager, loop, pool};
+  WikiHandler<SSL> wiki_handler{db, config, upload_manager, storage, loop, pool};
 
   ToolRegistry tool_registry;
   register_all_tools(tool_registry);
@@ -303,7 +307,7 @@ int main() {
       LOG_INFO_N("config", nullptr, "CORS allowlist: " + list);
     }
 
-    // Create upload directory
+    // Create upload directory (local-fs storage backend only).
     std::filesystem::create_directories(config.upload_dir);
     LOG_INFO_N("config", nullptr, "Upload dir: " + config.upload_dir);
 
@@ -332,8 +336,14 @@ int main() {
     metrics::init();
     metrics::db_pool_size().set(static_cast<int64_t>(db.pool_size()));
 
-    // Upload manager for chunked uploads
-    UploadManager upload_manager(config.upload_dir);
+    // Storage backend for file blobs, selected by STORAGE_BACKEND: local
+    // filesystem (default) or an S3-compatible object store (shared across
+    // horizontally-scaled instances). Fails fast if S3 is misconfigured.
+    auto storage_backend_ptr = storage::make_storage_backend(config);
+    storage::StorageBackend& storage_backend = *storage_backend_ptr;
+
+    // Upload manager for chunked uploads (delegates byte staging to storage).
+    UploadManager upload_manager(storage_backend);
 
     // Thread pool for async DB operations
     DbThreadPool pool(config.db_thread_pool_size);
@@ -353,9 +363,10 @@ int main() {
         config,
         db,
         upload_manager,
+        storage_backend,
         pool);
     } else {
-      run_server(uWS::App(), config, db, upload_manager, pool);
+      run_server(uWS::App(), config, db, upload_manager, storage_backend, pool);
     }
 
     return 0;

@@ -99,6 +99,10 @@ set(LIB_SOURCES
     src/logging/logger.cpp
     src/metrics/metrics.cpp
     src/recurrence.cpp
+    src/storage/aws_sigv4.cpp
+    src/storage/local_fs_backend.cpp
+    src/storage/s3_backend.cpp
+    src/storage/storage_factory.cpp
     src/upload_manager.cpp
     src/ws/ws_handler.cpp
     src/ai/llm_client.cpp

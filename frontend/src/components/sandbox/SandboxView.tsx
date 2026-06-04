@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Button } from '@heroui/react';
+import { Button, Progress } from '@heroui/react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faTerminal,
@@ -11,7 +11,7 @@ import {
   faCode,
 } from '@fortawesome/free-solid-svg-icons';
 import { useSandboxStore } from '../../stores/sandboxStore';
-import { v86Manager } from '../../services/v86Manager';
+import { v86Manager, type SandboxProgress } from '../../services/v86Manager';
 import { SandboxIDE } from './SandboxIDE';
 import { SandboxTerminal } from './SandboxTerminal';
 import { SandboxImportModal } from './SandboxImportModal';
@@ -26,6 +26,7 @@ export function SandboxView() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
+  const [progress, setProgress] = useState<SandboxProgress | null>(null);
 
   useEffect(() => {
     v86Manager.setStateChangeCallback((state) => {
@@ -33,8 +34,16 @@ export function SandboxView() {
       if (state === 'none' || state === 'booting') {
         clearIdeState();
       }
+      // Drop the startup progress once booting finishes (or is cancelled).
+      if (state !== 'booting') {
+        setProgress(null);
+      }
     });
+    v86Manager.setProgressCallback(setProgress);
     setVmState(v86Manager.getState());
+    return () => {
+      v86Manager.setProgressCallback(null);
+    };
   }, [setVmState, clearIdeState]);
 
   const handleStart = useCallback(async () => {
@@ -157,8 +166,25 @@ export function SandboxView() {
         {vmState === 'running' && <SandboxIDE />}
 
         {vmState === 'booting' && (
-          <div className='h-full bg-[#1a1a2e]'>
-            <SandboxTerminal />
+          <div className='h-full flex flex-col bg-[#1a1a2e]'>
+            <div className='flex-shrink-0 px-4 pt-3 pb-2'>
+              <Progress
+                size='sm'
+                aria-label='Sandbox startup progress'
+                color='primary'
+                isIndeterminate={!progress?.determinate}
+                value={progress?.determinate ? progress.percent : undefined}
+                label={progress?.label ?? 'Starting sandbox…'}
+                showValueLabel={progress?.determinate ?? false}
+                classNames={{
+                  label: 'text-xs text-default-400',
+                  value: 'text-xs text-default-400',
+                }}
+              />
+            </div>
+            <div className='flex-1 overflow-hidden'>
+              <SandboxTerminal />
+            </div>
           </div>
         )}
 

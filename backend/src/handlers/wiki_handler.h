@@ -6,6 +6,7 @@
 #include "db/database.h"
 #include "db/db_thread_pool.h"
 #include "handlers/handler_utils.h"
+#include "storage/storage_backend.h"
 #include "upload_manager.h"
 
 using json = nlohmann::json;
@@ -15,6 +16,7 @@ struct WikiHandler {
   Database& db;
   const Config& config;
   UploadManager& uploads;
+  storage::StorageBackend& storage;
   uWS::Loop* loop_;
   DbThreadPool& pool_;
 

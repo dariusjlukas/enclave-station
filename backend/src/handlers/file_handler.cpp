@@ -145,13 +145,9 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             return;
           }
 
-          // Generate file ID
+          // Generate file ID and store the blob.
           std::string file_id = format_utils::random_hex(32);
-
-          // Save to disk
-          std::string path = config.upload_dir + "/" + file_id;
-          std::ofstream out(path, std::ios::binary);
-          if (!out) {
+          if (!storage.put(file_id, *body)) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
               res->writeStatus("500")
@@ -161,31 +157,17 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          out.write(body->data(), body->size());
-          out.close();
-          if (!out) {
-            std::filesystem::remove(path);
-            loop_->defer([res, aborted, scope, origin]() {
-              if (*aborted) return;
-              res->writeStatus("500")
-                ->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Failed to write file"})");
-              scope->observe(500);
-            });
-            return;
-          }
 
           auto file_size = static_cast<int64_t>(body->size());
 
-          // Create message with file attachment. If this throws, the file is
-          // already on disk — remove it so a failed upload doesn't orphan a blob.
+          // Create message with file attachment. If this throws, the blob is
+          // already stored — remove it so a failed upload doesn't orphan it.
           Message msg;
           try {
             msg = db.create_file_message(
               channel_id, user_id, message_text, file_id, filename, file_size, content_type);
           } catch (...) {
-            std::error_code ec;
-            std::filesystem::remove(path, ec);
+            storage.remove(file_id);
             throw;
           }
 
@@ -218,7 +200,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                         resp_str = std::move(resp_str),
                         origin]() {
             if (*aborted) return;
-            app_->publish("channel:" + channel_id, broadcast_str, uWS::OpCode::TEXT);
+            ws.broadcast_to_channel(channel_id, broadcast_str);
             cors::apply(res, origin);
             res->writeHeader("Content-Type", "application/json")->end(resp_str);
             scope->observe(200);
@@ -602,9 +584,8 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           std::string message_text = session->metadata.value("message", "");
 
           std::string file_id = format_utils::random_hex(32);
-          std::string dest_path = config.upload_dir + "/" + file_id;
 
-          int64_t assembled_size = uploads.assemble(upload_id, dest_path);
+          int64_t assembled_size = uploads.assemble(upload_id, file_id);
           if (assembled_size < 0) {
             uploads.remove_session(upload_id);
             loop_->defer([res, aborted, scope, origin]() {
@@ -619,7 +600,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           }
 
           if (assembled_size != session->total_size) {
-            std::filesystem::remove(dest_path);
+            storage.remove(file_id);
             uploads.remove_session(upload_id);
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
@@ -664,7 +645,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                         resp_str = std::move(resp_str),
                         origin]() {
             if (*aborted) return;
-            app_->publish("channel:" + channel_id, broadcast_str, uWS::OpCode::TEXT);
+            ws.broadcast_to_channel(channel_id, broadcast_str);
             cors::apply(res, origin);
             res->writeHeader("Content-Type", "application/json")->end(resp_str);
             scope->observe(200);
@@ -771,9 +752,8 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         return;
       }
 
-      std::string path = config.upload_dir + "/" + file_id;
-      std::ifstream in(path, std::ios::binary | std::ios::ate);
-      if (!in) {
+      auto blob = storage.get(file_id);
+      if (!blob.ok) {
         loop_->defer([res, aborted, scope, origin]() {
           if (*aborted) return;
           res->writeStatus("404")
@@ -784,10 +764,7 @@ void FileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         return;
       }
 
-      auto size = in.tellg();
-      in.seekg(0);
-      auto content = std::make_shared<std::string>(size, '\0');
-      in.read(content->data(), size);
+      auto content = std::make_shared<std::string>(std::move(blob.data));
 
       std::string disposition = file_access_utils::inline_disposition(info->file_name);
       std::string file_type = info->file_type;

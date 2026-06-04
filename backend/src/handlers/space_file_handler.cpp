@@ -434,30 +434,13 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           }
 
           std::string disk_file_id = format_utils::random_hex(32);
-          std::string path = config.upload_dir + "/" + disk_file_id;
-          std::ofstream out(path, std::ios::binary);
-          if (!out) {
+          if (!storage.put(disk_file_id, *body)) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
               cors::apply(res, origin);
               res->writeStatus("500")
                 ->writeHeader("Content-Type", "application/json")
                 ->end(R"({"error":"Failed to save file"})");
-              scope->observe(500);
-            });
-            return;
-          }
-          out.write(body->data(), body->size());
-          out.close();
-          if (!out) {
-            std::error_code wec;
-            std::filesystem::remove(path, wec);
-            loop_->defer([res, aborted, scope, origin]() {
-              if (*aborted) return;
-              cors::apply(res, origin);
-              res->writeStatus("500")
-                ->writeHeader("Content-Type", "application/json")
-                ->end(R"({"error":"Failed to write file"})");
               scope->observe(500);
             });
             return;
@@ -472,8 +455,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             file = db.create_space_file(
               space_id, parent_id, filename, disk_file_id, file_size, content_type, user_id);
           } catch (...) {
-            std::error_code ec;
-            std::filesystem::remove(path, ec);
+            storage.remove(disk_file_id);
             throw;
           }
           auto creator = db.find_user_by_id(user_id);
@@ -891,9 +873,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
               session->metadata.value("content_type", "application/octet-stream");
 
             std::string disk_file_id = format_utils::random_hex(32);
-            std::string dest_path = config.upload_dir + "/" + disk_file_id;
 
-            int64_t assembled_size = uploads.assemble(upload_id, dest_path);
+            int64_t assembled_size = uploads.assemble(upload_id, disk_file_id);
             if (assembled_size < 0) {
               uploads.remove_session(upload_id);
               loop_->defer([res, aborted, scope, origin]() {
@@ -908,7 +889,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             }
 
             if (assembled_size != session->total_size) {
-              std::filesystem::remove(dest_path);
+              storage.remove(disk_file_id);
               uploads.remove_session(upload_id);
               loop_->defer([res, aborted, scope, origin]() {
                 if (*aborted) return;
@@ -1339,9 +1320,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
           try {
             std::string disk_file_id = format_utils::random_hex(32);
-            std::string dest_path = config.upload_dir + "/" + disk_file_id;
 
-            int64_t assembled_size = uploads.assemble(upload_id, dest_path);
+            int64_t assembled_size = uploads.assemble(upload_id, disk_file_id);
             if (assembled_size < 0) {
               uploads.remove_session(upload_id);
               loop_->defer([res, aborted, scope, origin]() {
@@ -1356,7 +1336,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             }
 
             if (assembled_size != session->total_size) {
-              std::filesystem::remove(dest_path);
+              storage.remove(disk_file_id);
               uploads.remove_session(upload_id);
               loop_->defer([res, aborted, scope, origin]() {
                 if (*aborted) return;
@@ -1528,9 +1508,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         return;
       }
 
-      std::string path = config.upload_dir + "/" + file->disk_file_id;
-      std::ifstream in(path, std::ios::binary);
-      if (!in) {
+      auto blob = storage.get(file->disk_file_id);
+      if (!blob.ok) {
         loop_->defer([res, aborted, scope, origin]() {
           if (*aborted) return;
           cors::apply(res, origin);
@@ -1542,8 +1521,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         return;
       }
 
-      auto data = std::make_shared<std::string>(
-        (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      auto data = std::make_shared<std::string>(std::move(blob.data));
 
       std::string content_type =
         file->mime_type.empty() ? "application/octet-stream" : file->mime_type;
@@ -1836,8 +1814,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
 
       // Remove files from disk
       for (const auto& did : disk_ids) {
-        std::string path = config.upload_dir + "/" + did;
-        std::filesystem::remove(path);
+        storage.remove(did);
       }
 
       loop_->defer([res, aborted, scope, origin]() {
@@ -2432,9 +2409,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           }
 
           std::string disk_file_id = format_utils::random_hex(32);
-          std::string path = config.upload_dir + "/" + disk_file_id;
-          std::ofstream out(path, std::ios::binary);
-          if (!out) {
+          if (!storage.put(disk_file_id, *body)) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
               cors::apply(res, origin);
@@ -2445,8 +2420,6 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          out.write(body->data(), body->size());
-          out.close();
 
           auto file_size = static_cast<int64_t>(body->size());
           std::string mime_type = file->mime_type;
@@ -2547,9 +2520,8 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           return;
         }
 
-        std::string path = config.upload_dir + "/" + version->disk_file_id;
-        std::ifstream in(path, std::ios::binary);
-        if (!in) {
+        auto blob = storage.get(version->disk_file_id);
+        if (!blob.ok) {
           loop_->defer([res, aborted, scope, origin]() {
             if (*aborted) return;
             cors::apply(res, origin);
@@ -2561,8 +2533,7 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           return;
         }
 
-        auto data = std::make_shared<std::string>(
-          (std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        auto data = std::make_shared<std::string>(std::move(blob.data));
 
         std::string content_type =
           version->mime_type.empty() ? "application/octet-stream" : version->mime_type;
@@ -2813,11 +2784,9 @@ void SpaceFileHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       for (const auto& entry : entries) {
         if (entry.disk_file_id.empty()) continue;
         if (!file_access_utils::is_valid_hex_id(entry.disk_file_id)) continue;
-        std::string path = config.upload_dir + "/" + entry.disk_file_id;
-        std::ifstream in(path, std::ios::binary);
-        if (!in) continue;
-        std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        zip.add_file(entry.relative_path, data);
+        auto blob = storage.get(entry.disk_file_id);
+        if (!blob.ok) continue;
+        zip.add_file(entry.relative_path, blob.data);
       }
 
       auto archive = std::make_shared<std::string>(zip.build());

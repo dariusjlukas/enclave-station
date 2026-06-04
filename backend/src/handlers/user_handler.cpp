@@ -290,15 +290,12 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           // Delete old avatar file if exists
           auto current = db.find_user_by_id(*user_id);
           if (current && !current->avatar_file_id.empty()) {
-            std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
-            std::filesystem::remove(old_path);
+            storage.remove(current->avatar_file_id);
           }
 
           // Generate file ID and save
           std::string file_id = format_utils::random_hex(32);
-          std::string path = config.upload_dir + "/" + file_id;
-          std::ofstream out(path, std::ios::binary);
-          if (!out) {
+          if (!storage.put(file_id, *body)) {
             loop_->defer([res, aborted, scope]() {
               if (*aborted) return;
               res->writeStatus("500")
@@ -308,8 +305,6 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          out.write(body->data(), body->size());
-          out.close();
 
           db.set_user_avatar(*user_id, file_id);
           auto updated = db.find_user_by_id(*user_id);
@@ -377,8 +372,7 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       try {
         auto current = db.find_user_by_id(*user_id);
         if (current && !current->avatar_file_id.empty()) {
-          std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
-          std::filesystem::remove(old_path);
+          storage.remove(current->avatar_file_id);
         }
 
         db.clear_user_avatar(*user_id);
@@ -443,9 +437,8 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
     auto aborted = std::make_shared<bool>(false);
     res->onAborted([aborted]() { *aborted = true; });
     pool_.submit([this, res, aborted, scope, file_id = std::move(file_id)]() {
-      std::string path = config.upload_dir + "/" + file_id;
-      std::ifstream in(path, std::ios::binary | std::ios::ate);
-      if (!in) {
+      auto blob = storage.get(file_id);
+      if (!blob.ok) {
         loop_->defer([res, aborted, scope]() {
           if (*aborted) return;
           res->writeStatus("404")
@@ -456,10 +449,7 @@ void UserHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         return;
       }
 
-      auto size = in.tellg();
-      in.seekg(0);
-      std::string content(size, '\0');
-      in.read(content.data(), size);
+      std::string content = std::move(blob.data);
 
       loop_->defer([res, aborted, scope, content = std::move(content)]() {
         if (*aborted) return;

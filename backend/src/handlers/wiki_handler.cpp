@@ -1719,9 +1719,8 @@ void WikiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             session->metadata.value("content_type", "application/octet-stream");
 
           std::string disk_file_id = format_utils::random_hex(32);
-          std::string dest_path = config.upload_dir + "/" + disk_file_id;
 
-          int64_t assembled_size = uploads.assemble(upload_id, dest_path);
+          int64_t assembled_size = uploads.assemble(upload_id, disk_file_id);
           if (assembled_size < 0) {
             uploads.remove_session(upload_id);
             loop_->defer([res, aborted, scope, origin]() {
@@ -1736,7 +1735,7 @@ void WikiHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           }
 
           if (assembled_size != session->total_size) {
-            std::filesystem::remove(dest_path);
+            storage.remove(disk_file_id);
             uploads.remove_session(upload_id);
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;

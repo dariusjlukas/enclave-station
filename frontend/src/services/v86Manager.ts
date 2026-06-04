@@ -10,8 +10,32 @@ interface SandboxInstance {
 
 type StateChangeCallback = (state: VmState | 'none') => void;
 
+export interface SandboxProgress {
+  // Best-effort startup progress, 0-100.
+  percent: number;
+  // When false, the UI should show an indeterminate (animated) bar because
+  // we don't have a reliable fraction yet (script load / kernel boot).
+  determinate: boolean;
+  // Short human-readable description of the current step.
+  label: string;
+}
+
+type ProgressCallback = (progress: SandboxProgress) => void;
+
 const SERIAL_BUFFER_MAX = 50000;
 const SERIAL_BUFFER_TRIM = 40000;
+
+// Turn a v86 asset URL/name into a friendly label for the loading bar.
+function describeAsset(fileName: string | undefined): string {
+  const f = (fileName ?? '').toLowerCase();
+  if (f.includes('vmlinuz') || f.includes('bzimage')) return 'Linux kernel';
+  if (f.includes('initramfs') || f.includes('initrd')) return 'system image';
+  if (f.includes('.wasm')) return 'emulator core';
+  if (f.includes('vgabios')) return 'video BIOS';
+  if (f.includes('seabios') || f.includes('bios')) return 'BIOS';
+  if (f.includes('basefs') || f.includes('rootfs')) return 'root filesystem';
+  return 'system files';
+}
 
 let v86ScriptLoaded = false;
 let v86ScriptLoading: Promise<void> | null = null;
@@ -37,9 +61,14 @@ function loadV86Script(): Promise<void> {
 class V86Manager {
   private instance: SandboxInstance | null = null;
   private onStateChange: StateChangeCallback | null = null;
+  private onProgress: ProgressCallback | null = null;
 
   setStateChangeCallback(cb: StateChangeCallback) {
     this.onStateChange = cb;
+  }
+
+  setProgressCallback(cb: ProgressCallback | null) {
+    this.onProgress = cb;
   }
 
   async start(): Promise<void> {
@@ -53,6 +82,11 @@ class V86Manager {
     };
     this.instance = instance;
     this.onStateChange?.('booting');
+    this.onProgress?.({
+      percent: 0,
+      determinate: false,
+      label: 'Loading emulator…',
+    });
 
     await loadV86Script();
 
@@ -92,6 +126,51 @@ class V86Manager {
 
     instance.emulator = emulator;
 
+    // Report asset download progress so the UI can show a determinate bar.
+    // v86 emits one event per chunk with the current file index/count and,
+    // when available, the byte counts for the in-flight file.
+    emulator.add_listener(
+      'download-progress',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (e: any) => {
+        if (this.instance !== instance) return;
+        const fileCount = e?.file_count ?? 0;
+        if (!fileCount) {
+          this.onProgress?.({
+            percent: 0,
+            determinate: false,
+            label: 'Downloading system image…',
+          });
+          return;
+        }
+        let fraction = (e.file_index ?? 0) / fileCount;
+        if (e.lengthComputable && e.total > 0) {
+          fraction += e.loaded / e.total / fileCount;
+        }
+        // Cap below 100 — the final stretch is the kernel boot, signalled
+        // separately by 'emulator-ready'.
+        const percent = Math.min(99, Math.max(0, Math.round(fraction * 100)));
+        this.onProgress?.({
+          percent,
+          determinate: true,
+          label: `Downloading ${describeAsset(e.file_name)}…`,
+        });
+      },
+    );
+
+    emulator.add_listener(
+      'download-error',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (e: any) => {
+        if (this.instance !== instance) return;
+        this.onProgress?.({
+          percent: 0,
+          determinate: false,
+          label: `Failed to download ${describeAsset(e?.file_name)}`,
+        });
+      },
+    );
+
     emulator.add_listener('serial0-output-byte', (byte: number) => {
       if (
         byte < 0x07 ||
@@ -111,7 +190,9 @@ class V86Manager {
     });
 
     emulator.add_listener('emulator-ready', () => {
+      if (this.instance !== instance) return;
       instance.state = 'running';
+      this.onProgress?.({ percent: 100, determinate: true, label: 'Ready' });
       this.onStateChange?.('running');
     });
   }

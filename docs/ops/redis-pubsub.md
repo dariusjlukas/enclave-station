@@ -19,7 +19,15 @@ fans out to its locally-connected sockets.
 
 - Single Redis channel: `enclave:broadcast`.
 - Envelope JSON: `{instance_id, topic, payload}`.
-- Topics: `channel:<id>`, `space:<id>`, `presence`, `wiki:<id>`.
+- Topics: `channel:<id>`, `space:<id>`, `presence`, `wiki:<id>`, `user:<id>`,
+  and the reserved `ctrl` control topic.
+- `user:<id>` carries per-user delivery (notifications, mentions, AI streaming,
+  membership alerts). Each connection subscribes to its own `user:<id>` on
+  connect, so `send_to_user(X, ...)` reaches X wherever their socket lives.
+- `ctrl` carries cross-instance control commands (subscribe/unsubscribe a user
+  to a channel/space topic, disconnect a user, lockdown). Every instance applies
+  these to its local sockets; the originating instance applies the effect
+  directly and is filtered out by self-echo.
 
 ## Degraded mode
 

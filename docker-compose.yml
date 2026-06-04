@@ -39,6 +39,45 @@ services:
       timeout: 3s
       retries: 5
 
+  # Optional S3-compatible object store for shared file storage across
+  # horizontally-scaled backends. Enable with `--profile minio` and set
+  # STORAGE_BACKEND=s3 (+ S3_* vars) in .env. Any S3-compatible store works
+  # (Garage, Ceph RGW, OpenStack Swift s3api, AWS S3, R2, B2); MinIO is the
+  # reference self-hosted option. See docs/ops/object-storage.md.
+  minio:
+    image: minio/minio:latest
+    profiles: ["minio"]
+    command: ["server", "/data", "--console-address", ":9090"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY must be set when using minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY must be set when using minio}
+    volumes:
+      - miniodata:/data
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # One-shot: create the bucket on startup (idempotent). Only runs with the
+  # minio profile.
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["minio"]
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$$S3_ACCESS_KEY\" \"$$S3_SECRET_KEY\"; do sleep 1; done;
+      mc mb -p local/\"$$S3_BUCKET\" || true;
+      "
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_BUCKET: ${S3_BUCKET:-enclave}
+
   backend:
     build:
       context: ./backend
@@ -58,6 +97,19 @@ services:
       UPLOAD_DIR: /data/uploads
       MAX_FILE_SIZE: ${MAX_FILE_SIZE:-1073741824}
       DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+      # File-blob storage backend.
+      #   STORAGE_BACKEND=local (default): local disk at UPLOAD_DIR. Single
+      #     instance only (a local volume is not shared across replicas).
+      #   STORAGE_BACKEND=s3: S3-compatible object store, shared across all
+      #     backend replicas. Required for horizontal scaling. Run with
+      #     `--profile minio` for the bundled MinIO, or point S3_ENDPOINT at any
+      #     S3-compatible store. See docs/ops/object-storage.md.
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      S3_REGION: ${S3_REGION:-us-east-1}
       # P2.1: optional Redis pub/sub for horizontal WS scaling.
       #   REDIS_URL=""              -> single-instance mode (default; no Redis).
       #   REDIS_URL=redis://redis:6379 -> cross-instance broadcast via Redis.
@@ -111,3 +163,4 @@ networks:
 volumes:
   pgdata:
   uploads:
+  miniodata:

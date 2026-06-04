@@ -2400,15 +2400,12 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           // Delete old avatar file if exists
           auto current = db.find_space_by_id(space_id);
           if (current && !current->avatar_file_id.empty()) {
-            std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
-            std::filesystem::remove(old_path);
+            storage.remove(current->avatar_file_id);
           }
 
           // Generate file ID and save
           std::string file_id = format_utils::random_hex(32);
-          std::string path = config.upload_dir + "/" + file_id;
-          std::ofstream out(path, std::ios::binary);
-          if (!out) {
+          if (!storage.put(file_id, *body_copy)) {
             loop_->defer([res, aborted, scope, origin]() {
               if (*aborted) return;
               res->writeStatus("500")
@@ -2418,8 +2415,6 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
             });
             return;
           }
-          out.write(body_copy->data(), body_copy->size());
-          out.close();
 
           db.set_space_avatar(space_id, file_id);
           auto updated = db.find_space_by_id(space_id);
@@ -2514,8 +2509,7 @@ void SpaceHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
       try {
         auto current = db.find_space_by_id(space_id);
         if (current && !current->avatar_file_id.empty()) {
-          std::string old_path = config.upload_dir + "/" + current->avatar_file_id;
-          std::filesystem::remove(old_path);
+          storage.remove(current->avatar_file_id);
         }
 
         db.clear_space_avatar(space_id);

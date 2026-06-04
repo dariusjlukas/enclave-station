@@ -20,6 +20,7 @@ struct SpaceHandler {
   Database& db;
   WsHandler<SSL>& ws;
   const Config& config;
+  storage::StorageBackend& storage;
   uWS::Loop* loop_;
   DbThreadPool& pool_;
 
