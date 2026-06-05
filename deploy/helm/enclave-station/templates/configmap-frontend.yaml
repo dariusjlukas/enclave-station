@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "enclave.frontend.fullname" . }}
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+data:
+  # Static SPA server. /api and /ws are routed to the backend by the Ingress
+  # (not here), so this only serves built assets with SPA history fallback. The
+  # security headers mirror nginx/nginx.conf so behaviour matches compose.
+  default.conf: |
+    server {
+        listen {{ .Values.frontend.port }};
+        server_name _;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Security headers (always, so they appear on error responses too).
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy-Report-Only "default-src 'self'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self';" always;
+
+        # Liveness/readiness target for this pod.
+        location = /healthz {
+            access_log off;
+            return 200 "ok\n";
+        }
+
+        # SPA fallback.
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }

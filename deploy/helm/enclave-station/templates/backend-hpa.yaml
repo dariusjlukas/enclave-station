@@ -1,0 +1,39 @@
+{{- if .Values.backend.autoscaling.enabled -}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "enclave.backend.fullname" . }}
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "enclave.backend.fullname" . }}
+  minReplicas: {{ .Values.backend.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.backend.autoscaling.maxReplicas }}
+  metrics:
+    {{- with .Values.backend.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+    {{- with .Values.backend.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ . }}
+    {{- end }}
+  {{- if .Values.backend.autoscaling.scaleDownStabilizationWindowSeconds }}
+  behavior:
+    scaleDown:
+      # Long stabilization so transient dips don't churn pods and drop WS conns.
+      stabilizationWindowSeconds: {{ .Values.backend.autoscaling.scaleDownStabilizationWindowSeconds }}
+  {{- end }}
+{{- end }}

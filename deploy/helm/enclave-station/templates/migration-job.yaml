@@ -1,0 +1,86 @@
+{{- if .Values.migrations.enabled -}}
+{{/*
+Schema migration via sqitch, run as a Helm pre-install/pre-upgrade hook so the
+database is migrated BEFORE backend pods roll. Idempotent — an up-to-date
+database is a no-op ("Nothing to deploy"). Authenticates via libpq env vars
+(PGPASSWORD from the Secret); the sqitch target URI carries no password so
+special characters never need URL-escaping.
+
+When in-cluster datastores are enabled (postgresql.deploy=true), the Postgres
+StatefulSet is itself a lower-weight pre-install hook (see postgresql.yaml), so
+it is Ready before this Job runs. The initContainer wait is a belt-and-braces
+guard for slow-starting or external databases.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "enclave.fullname" . }}-migrate
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  {{- if .Values.migrations.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.migrations.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "enclave.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      # No serviceAccountName: this runs as a pre-install hook, before the
+      # chart's ServiceAccount (a normal resource) exists. The migration needs no
+      # API access, so the namespace default SA is correct.
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        # Block until Postgres accepts connections so sqitch doesn't fail fast
+        # on a database that is still starting.
+        - name: wait-for-postgres
+          image: {{ .Values.postgresql.image }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for postgres at $PGHOST:$PGPORT ..."
+              for i in $(seq 1 60); do
+                if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" >/dev/null 2>&1; then
+                  echo "Postgres is ready."; exit 0
+                fi
+                echo "  not ready yet ($i/60); sleeping 3s"; sleep 3
+              done
+              echo "Timed out waiting for postgres"; exit 1
+          env:
+            - name: PGHOST
+              value: {{ include "enclave.postgresql.host" . | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: PGUSER
+              value: {{ .Values.postgresql.username | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.postgresql.database | quote }}
+      containers:
+        - name: sqitch
+          image: {{ include "enclave.migrations.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["deploy", "--verify"]
+          env:
+            # Target without password; DBD::Pg picks up PGPASSWORD below.
+            - name: SQITCH_TARGET
+              value: "db:pg://{{ .Values.postgresql.username }}@{{ include "enclave.postgresql.host" . }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}"
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "enclave.secretName" . }}
+                  key: postgres-password
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+{{- end }}

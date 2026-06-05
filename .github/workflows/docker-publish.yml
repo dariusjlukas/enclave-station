@@ -17,6 +17,8 @@ jobs:
             context: ./backend
           - name: frontend
             context: ./frontend
+          - name: migrations
+            context: ./sqitch
         platform:
           - runner: ubuntu-latest
             arch: linux/amd64
@@ -84,7 +86,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        image: [backend, frontend]
+        image: [backend, frontend, migrations]
 
     steps:
       - name: Download digests

@@ -1,0 +1,15 @@
+{{- if .Values.backend.pdb.enabled -}}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "enclave.backend.fullname" . }}
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: {{ .Values.backend.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "enclave.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+{{- end }}

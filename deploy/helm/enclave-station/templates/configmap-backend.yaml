@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "enclave.backend.fullname" . }}
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+data:
+  # --- Postgres (password comes from the Secret) ---
+  POSTGRES_HOST: {{ include "enclave.postgresql.host" . | quote }}
+  POSTGRES_PORT: {{ .Values.postgresql.port | quote }}
+  POSTGRES_USER: {{ .Values.postgresql.username | quote }}
+  POSTGRES_DB: {{ .Values.postgresql.database | quote }}
+
+  # --- Server ---
+  BACKEND_PORT: {{ .Values.backend.port | quote }}
+  PUBLIC_URL: {{ .Values.publicUrl | quote }}
+  # Schema is owned by the sqitch migration Job; the backend must NOT self-migrate.
+  ENABLE_SQITCH_ONLY: "1"
+  SESSION_EXPIRY_HOURS: {{ .Values.backend.config.sessionExpiryHours | quote }}
+  DB_POOL_SIZE: {{ .Values.backend.config.dbPoolSize | quote }}
+  DB_THREAD_POOL_SIZE: {{ .Values.backend.config.dbThreadPoolSize | quote }}
+  MAX_FILE_SIZE: {{ .Values.backend.config.maxFileSize | quote }}
+  MAX_REQUEST_BODY_SIZE: {{ .Values.backend.config.maxRequestBodySize | quote }}
+  AUTH_RATE_LIMIT_MAX_ATTEMPTS: {{ .Values.backend.config.authRateLimitMaxAttempts | quote }}
+  AUTH_RATE_LIMIT_WINDOW_SECONDS: {{ .Values.backend.config.authRateLimitWindowSeconds | quote }}
+
+  # --- Storage (secret keys come from the Secret) ---
+  STORAGE_BACKEND: {{ .Values.storage.backend | quote }}
+  {{- if eq .Values.storage.backend "s3" }}
+  S3_ENDPOINT: {{ required "storage.s3.endpoint is required when storage.backend=s3" .Values.storage.s3.endpoint | quote }}
+  S3_BUCKET: {{ required "storage.s3.bucket is required when storage.backend=s3" .Values.storage.s3.bucket | quote }}
+  S3_REGION: {{ .Values.storage.s3.region | quote }}
+  UPLOAD_DIR: "/data/uploads"
+  {{- else }}
+  UPLOAD_DIR: {{ .Values.storage.local.uploadDir | quote }}
+  {{- end }}

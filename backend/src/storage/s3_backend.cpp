@@ -213,9 +213,11 @@ int64_t S3Backend::complete_multipart(
   xml << "<CompleteMultipartUpload>";
   for (const auto& [index, etag] : st.part_tokens) {
     std::string e = etag;
-    if (e.empty() || e.front() != '"') e = "\"" + e + "\"";
-    xml << "<Part><PartNumber>" << (index + 1) << "</PartNumber><ETag>" << e
-        << "</ETag></Part>";
+    if (e.empty() || e.front() != '"') {
+      e.insert(e.begin(), '"');
+      e.push_back('"');
+    }
+    xml << "<Part><PartNumber>" << (index + 1) << "</PartNumber><ETag>" << e << "</ETag></Part>";
   }
   xml << "</CompleteMultipartUpload>";
 

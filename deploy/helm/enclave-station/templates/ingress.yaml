@@ -1,0 +1,58 @@
+{{- if .Values.ingress.enabled -}}
+{{- $backendSvc := include "enclave.backend.fullname" . -}}
+{{- $frontendSvc := include "enclave.frontend.fullname" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "enclave.fullname" . }}
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+  annotations:
+    # --- WebSocket-aware proxying ---
+    # ingress-nginx upgrades connections automatically when it sees the Upgrade
+    # header; these long timeouts keep persistent /ws connections and slow large
+    # uploads alive. No session affinity is configured: P1 externalized all
+    # per-connection state (WS fan-out via Redis, chunked uploads via the DB), so
+    # any backend pod can serve any request.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .Values.ingress.proxyReadTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ .Values.ingress.proxySendTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-body-size: {{ .Values.ingress.proxyBodySize | quote }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # More specific paths first; ingress-nginx orders by length so /api and
+          # /ws win over /.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $backendSvc }}
+                port:
+                  number: {{ .Values.backend.port }}
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $backendSvc }}
+                port:
+                  number: {{ .Values.backend.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $frontendSvc }}
+                port:
+                  number: {{ .Values.frontend.port }}
+{{- end }}

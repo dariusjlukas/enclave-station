@@ -1,5 +1,6 @@
 #include "upload_manager.h"
 #include "handlers/format_utils.h"
+#include "logging/logger.h"
 
 namespace {
 using MultipartState = storage::StorageBackend::MultipartState;
@@ -152,8 +153,11 @@ void UploadManager::cleanup_stale(int max_age_seconds) {
     try {
       auto st = state_from_json(nlohmann::json::parse(state_json));
       storage_.abort_multipart(upload_id, st);
-    } catch (const std::exception&) {
-      // best-effort cleanup
+    } catch (const std::exception& e) {
+      // Best-effort cleanup: the DB row is already deleted, so a backend abort
+      // failure just leaves orphaned staging bytes for the storage's own GC.
+      LOG_WARN_N(
+        "upload", nullptr, "stale upload " + upload_id + " backend cleanup failed: " + e.what());
     }
   }
 }

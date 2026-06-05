@@ -1,0 +1,103 @@
+{{- if .Values.postgresql.deploy -}}
+{{/*
+EVAL-ONLY in-cluster PostgreSQL. Single replica, no HA, no managed backups —
+intended for kicking the tyres on a single node (k3s/kind/minikube). For
+anything real, run a managed/operated Postgres and set postgresql.deploy=false
+with postgresql.host pointed at it.
+
+Deployed as pre-install/pre-upgrade hooks at a LOWER weight than the migration
+Job (-10 < 0) so Helm waits for Postgres to be Ready before migrations run on a
+fresh install. The data PVC comes from volumeClaimTemplates, so it survives the
+hook delete/recreate that happens on upgrade.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "enclave.postgresql.fullname" . }}
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+spec:
+  clusterIP: None
+  selector:
+    {{- include "enclave.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+  ports:
+    - name: postgres
+      port: {{ .Values.postgresql.port }}
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "enclave.postgresql.fullname" . }}
+  labels:
+    {{- include "enclave.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  serviceName: {{ include "enclave.postgresql.fullname" . }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "enclave.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgresql
+  template:
+    metadata:
+      labels:
+        {{- include "enclave.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgresql
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgresql.image }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.username | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.database | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "enclave.secretName" . }}
+                  key: postgres-password
+            # Keep PGDATA in a subdir so the volume root (with lost+found) isn't
+            # used directly.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }}"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size }}
+        {{- if .Values.postgresql.persistence.storageClass }}
+        storageClassName: {{ .Values.postgresql.persistence.storageClass | quote }}
+        {{- end }}
+{{- end }}

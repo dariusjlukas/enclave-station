@@ -1,0 +1,46 @@
+# Production-shaped example: external Postgres, external Redis, external S3.
+# Horizontally scalable (HPA + Redis fan-out + shared S3 storage).
+# Copy and adjust; supply real secrets via auth.existingSecret in practice.
+publicUrl: "https://chat.example.com"
+
+image:
+  registry: ghcr.io
+  repository: dariusjlukas/enclave-station
+  tag: "0.1.0"
+
+backend:
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+
+storage:
+  backend: s3
+  s3:
+    endpoint: "https://s3.us-east-1.amazonaws.com"
+    bucket: "enclave-prod"
+    region: "us-east-1"
+    accessKey: "AKIAEXAMPLE"
+    secretKey: "examplesecret"
+
+postgresql:
+  deploy: false
+  host: "postgres.db.svc.cluster.local"
+  database: enclave
+  username: enclave
+  password: "set-me-or-use-existingSecret"
+
+redis:
+  deploy: false
+  url: "rediss://:redispass@redis.cache.svc.cluster.local:6380/0"
+
+ingress:
+  enabled: true
+  className: nginx
+  host: chat.example.com
+  tls:
+    enabled: true
+    secretName: enclave-station-tls
+
+serviceMonitor:
+  enabled: true

@@ -1,0 +1,284 @@
+# Default values for enclave-station.
+# Override with `-f my-values.yaml` or `--set key=value`.
+
+# -- Container image registry/repository prefix. The three app images are
+# expected at <registry>/<repository>/{backend,frontend,migrations}, matching
+# the docker-publish.yml workflow.
+image:
+  registry: ghcr.io
+  repository: dariusjlukas/enclave-station
+  # Tag applied to all three images. Empty string -> Chart.appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+# -- Names of imagePullSecrets to attach to every pod (for private registries).
+imagePullSecrets: []
+
+# Override the generated resource name stem.
+nameOverride: ""
+fullnameOverride: ""
+
+# =====================================================================
+# Public URL — the externally-reachable origin (scheme + host[:port]).
+# Drives PUBLIC_URL, which the backend uses to derive the WebAuthn RP ID and
+# origin. MUST match the host clients use (i.e. the ingress host). If you change
+# the host after users register passkeys, those passkeys stop validating.
+# =====================================================================
+publicUrl: "https://chat.example.com"
+
+# =====================================================================
+# Backend (C++ uWebSockets API + WebSocket server)
+# =====================================================================
+backend:
+  replicaCount: 2
+  # Container listen port (BACKEND_PORT). Also the Service/probe target.
+  port: 9001
+
+  # Override the full image ref (registry/repo/tag) if you need to.
+  image:
+    repository: "" # "" -> <image.registry>/<image.repository>/backend
+    tag: "" # "" -> image.tag -> Chart.appVersion
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+  # Horizontal Pod Autoscaler. REQUIRES shared storage across pods:
+  #   storage.backend=s3  (recommended), OR
+  #   storage.backend=local with a ReadWriteMany uploads PVC.
+  # With storage.backend=local on a ReadWriteOnce volume, keep replicas at 1 and
+  # autoscaling.enabled=false (the uploads volume can't be shared).
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+    # Scale-down stabilization (seconds) so brief load dips don't churn pods and
+    # disconnect WebSocket clients. Set to "" to use the cluster default.
+    scaleDownStabilizationWindowSeconds: 300
+
+  # PodDisruptionBudget — keeps at least this many backend pods up during
+  # voluntary disruptions (node drains, rolling updates) so WS clients can keep
+  # a connection. Set as an integer or percentage string.
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+  # Health probes hit /api/health on the container port.
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Grace period for in-flight WebSockets to drain on pod shutdown. Clients
+  # reconnect to another pod; cross-instance Redis fan-out keeps delivery intact.
+  terminationGracePeriodSeconds: 30
+
+  # Tuning knobs surfaced as env (see config.h). Empty -> backend default.
+  config:
+    sessionExpiryHours: "168"
+    dbPoolSize: "10"
+    dbThreadPoolSize: "32"
+    maxFileSize: "1073741824" # 1 GiB
+    maxRequestBodySize: "1207959552" # 1.125 GiB
+    authRateLimitMaxAttempts: "10"
+    authRateLimitWindowSeconds: "60"
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Spread backend pods across nodes so a single node loss drops fewer WS conns.
+  topologySpreadConstraints: []
+
+# =====================================================================
+# Frontend (nginx serving the built SPA). /api and /ws are routed to the
+# backend by the Ingress, so this only serves static assets + SPA fallback.
+# =====================================================================
+frontend:
+  replicaCount: 2
+  port: 80
+  image:
+    repository: "" # "" -> <image.registry>/<image.repository>/frontend
+    tag: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# =====================================================================
+# Ingress — WebSocket-aware. Routes:
+#   /api -> backend, /ws -> backend, / -> frontend
+# No session affinity is required: P1 externalized all per-connection state
+# (WS fan-out via Redis, chunked uploads via the DB), so any pod can serve any
+# request. /metrics is intentionally NOT exposed here (scrape the backend
+# Service in-cluster instead).
+# =====================================================================
+ingress:
+  enabled: true
+  className: nginx
+  host: chat.example.com # should match the host in publicUrl
+  # Extra annotations merged in. The defaults below target the ingress-nginx
+  # controller and are essential for long-lived WebSockets and large uploads.
+  annotations: {}
+  # Long timeouts for persistent WebSockets and large/slow uploads (seconds).
+  proxyReadTimeout: "3600"
+  proxySendTimeout: "3600"
+  # Max client body — must be >= backend.config.maxFileSize for direct uploads.
+  proxyBodySize: "1024m"
+  tls:
+    enabled: true
+    # Secret holding the TLS cert/key for `host`. With cert-manager, set
+    # ingress.annotations."cert-manager.io/cluster-issuer" and this secret is
+    # created for you.
+    secretName: enclave-station-tls
+
+# =====================================================================
+# Blob storage for file uploads/attachments.
+#   local -> a PersistentVolume mounted at UPLOAD_DIR. Single-node unless the
+#            PVC is ReadWriteMany. NOT compatible with HPA on RWO volumes.
+#   s3    -> an S3-compatible object store shared by all pods (recommended for
+#            horizontal scaling). Works with MinIO, Ceph RGW, Garage, AWS S3,
+#            Cloudflare R2, etc. See docs/ops/object-storage.md.
+# =====================================================================
+storage:
+  backend: s3 # "local" | "s3"
+
+  # Used when storage.backend=local.
+  local:
+    uploadDir: /data/uploads
+    persistence:
+      enabled: true
+      # ReadWriteMany is required if backend.replicaCount > 1 or autoscaling is
+      # on. Many clusters only offer ReadWriteOnce — use storage.backend=s3 to
+      # scale instead.
+      accessMode: ReadWriteOnce
+      size: 20Gi
+      storageClass: "" # "" -> cluster default
+      existingClaim: "" # use a pre-created PVC instead of creating one
+
+  # Used when storage.backend=s3.
+  s3:
+    endpoint: "" # e.g. https://s3.us-east-1.amazonaws.com or http://minio:9000
+    bucket: ""
+    region: us-east-1
+    accessKey: "" # moved into the Secret; prefer existingSecret below
+    secretKey: ""
+
+# =====================================================================
+# PostgreSQL connection. Default: connect to an EXTERNAL database (set
+# postgresql.host/credentials). For a self-contained eval deployment, set
+# postgresql.deploy=true to run a single in-cluster Postgres (NOT production
+# grade — no HA, no managed backups).
+# =====================================================================
+postgresql:
+  deploy: false # true -> run an in-cluster Postgres StatefulSet (eval only)
+  host: "" # external host; ignored when deploy=true (set to the generated svc)
+  port: 5432
+  database: enclave
+  username: enclave
+  password: "" # set here (-> Secret) or supply via auth.existingSecret
+  # In-cluster Postgres settings (only when deploy=true).
+  image: postgres:16-alpine
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# =====================================================================
+# Redis — powers cross-instance WebSocket fan-out and the shared auth
+# rate-limiter. REQUIRED when backend.replicaCount > 1 (or autoscaling on);
+# without it, instances can't see each other's broadcasts.
+#   - Set redis.url to an external Redis (supports redis:// and rediss:// with
+#     user:pass@ for AUTH/TLS — see docs/ops/redis-pubsub.md), OR
+#   - set redis.deploy=true for an in-cluster Redis (eval only).
+# Leave both empty/false ONLY for a single-replica deployment.
+# =====================================================================
+redis:
+  deploy: false # true -> run an in-cluster Redis Deployment (eval only)
+  url: "" # e.g. redis://redis:6379 or rediss://:pass@host:6380/0
+  # In-cluster Redis settings (only when deploy=true).
+  image: redis:7-alpine
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+
+# =====================================================================
+# Secrets. By default the chart creates a Secret from the password/key values
+# above. To manage secrets yourself (sealed-secrets, external-secrets, vault),
+# set auth.existingSecret to a Secret containing these keys:
+#   postgres-password, s3-access-key, s3-secret-key, redis-url
+# Any key may be absent if that feature is unused.
+# =====================================================================
+auth:
+  existingSecret: ""
+
+# =====================================================================
+# Database migration Job (sqitch deploy --verify), run as a Helm
+# pre-install/pre-upgrade hook BEFORE backend pods roll. Idempotent: re-running
+# an up-to-date database is a no-op.
+# =====================================================================
+migrations:
+  enabled: true
+  image:
+    repository: "" # "" -> <image.registry>/<image.repository>/migrations
+    tag: ""
+  # Hook config. backoffLimit retries on transient DB-unready errors.
+  backoffLimit: 3
+  # Keep finished hook Jobs this long (seconds) for debugging; "" keeps default.
+  ttlSecondsAfterFinished: "600"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ServiceAccount used by all workloads.
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Pod-level securityContext defaults (run as non-root where the images allow).
+podSecurityContext: {}
+securityContext: {}
+
+# Prometheus ServiceMonitor for the backend /metrics endpoint. Requires the
+# Prometheus Operator CRDs. The backend Service exposes /metrics on the
+# container port; this scrapes it in-cluster (never via the public ingress).
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}

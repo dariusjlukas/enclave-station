@@ -1,0 +1,24 @@
+apiVersion: v2
+name: enclave-station
+description: >-
+  Self-hosted team collaboration platform (real-time chat, calendars, tasks,
+  wiki, file sharing). Horizontally scalable: WebSocket fan-out via Redis,
+  shared blob storage via S3, schema managed by sqitch.
+type: application
+
+# Chart version — bump on chart changes. appVersion tracks the application
+# image tag and defaults the image tags in values.yaml when those are left "".
+version: 0.1.0
+appVersion: "0.1.0"
+
+home: https://github.com/dariusjlukas/enclave-station
+sources:
+  - https://github.com/dariusjlukas/enclave-station
+keywords:
+  - chat
+  - collaboration
+  - self-hosted
+  - websocket
+maintainers:
+  - name: Darius J. Lukas
+    email: dariusjlukas@gmail.com

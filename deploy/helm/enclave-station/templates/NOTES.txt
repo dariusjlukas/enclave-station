@@ -1,0 +1,44 @@
+{{ include "enclave.fullname" . }} ({{ .Chart.Name }}-{{ .Chart.Version }}) installed.
+
+Backend replicas : {{ if .Values.backend.autoscaling.enabled }}autoscale {{ .Values.backend.autoscaling.minReplicas }}–{{ .Values.backend.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.backend.replicaCount }} (fixed){{ end }}
+Storage backend  : {{ .Values.storage.backend }}
+Postgres         : {{ if .Values.postgresql.deploy }}in-cluster (eval) at {{ include "enclave.postgresql.host" . }}{{ else }}external at {{ .Values.postgresql.host }}{{ end }}
+Redis            : {{ $r := include "enclave.redis.url" . }}{{ if $r }}{{ if .Values.redis.deploy }}in-cluster (eval){{ else }}external{{ end }}{{ else }}DISABLED — single-instance only{{ end }}
+
+{{- if and (gt (int .Values.backend.replicaCount) 1) (not (include "enclave.redis.url" .)) }}
+
+⚠  backend.replicaCount > 1 but no Redis is configured. Cross-instance WebSocket
+   fan-out will NOT work — clients on different pods won't see each other's
+   messages. Set redis.url (or redis.deploy=true), or scale backend to 1.
+{{- end }}
+
+{{- if and .Values.backend.autoscaling.enabled (eq .Values.storage.backend "local") (ne .Values.storage.local.persistence.accessMode "ReadWriteMany") }}
+
+⚠  Autoscaling is on with storage.backend=local on a {{ .Values.storage.local.persistence.accessMode }} volume.
+   Multiple pods cannot share a non-ReadWriteMany uploads volume. Use
+   storage.backend=s3 (recommended) or a ReadWriteMany volume.
+{{- end }}
+
+{{- if eq .Values.storage.backend "s3" }}
+{{- if not .Values.storage.s3.endpoint }}
+
+⚠  storage.backend=s3 but storage.s3.endpoint is empty — set it (and bucket +
+   credentials). The backend fails fast at startup if S3 is unreachable.
+{{- end }}
+{{- end }}
+
+App URL: {{ .Values.publicUrl }}
+{{- if .Values.ingress.enabled }}
+Point DNS for "{{ .Values.ingress.host }}" at your ingress controller's external IP:
+
+  kubectl get ingress {{ include "enclave.fullname" . }} -n {{ .Release.Namespace }}
+{{- else }}
+Ingress is disabled. Reach the app by port-forwarding the frontend Service:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "enclave.frontend.fullname" . }} 8080:{{ .Values.frontend.port }}
+{{- end }}
+
+Schema is managed by the sqitch migration hook (runs before each install/upgrade).
+Inspect the last run:
+
+  kubectl logs -n {{ .Release.Namespace }} job/{{ include "enclave.fullname" . }}-migrate

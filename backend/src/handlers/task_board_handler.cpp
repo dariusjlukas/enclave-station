@@ -1360,8 +1360,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
                   space_id,
                   task && task->board_id == board_id ? std::optional<std::string>(task->board_id)
                                                      : std::nullopt,
-                  origin))
+                  origin)) {
               return;
+            }
           }
 
           try {
@@ -1421,8 +1422,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
         if (!require_resource_in_space(
-              res, aborted, space_id, db.get_checklist_board_id(checklist_id), origin))
+              res, aborted, space_id, db.get_checklist_board_id(checklist_id), origin)) {
           return;
+        }
 
         db.delete_task_checklist(checklist_id);
         loop_->defer([res, aborted, scope, origin]() {
@@ -1474,8 +1476,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
           if (!require_resource_in_space(
-                res, aborted, space_id, db.get_checklist_board_id(checklist_id), origin))
+                res, aborted, space_id, db.get_checklist_board_id(checklist_id), origin)) {
             return;
+          }
 
           try {
             auto j = json::parse(body);
@@ -1544,8 +1547,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
           if (!require_resource_in_space(
-                res, aborted, space_id, db.get_checklist_item_board_id(item_id), origin))
+                res, aborted, space_id, db.get_checklist_item_board_id(item_id), origin)) {
             return;
+          }
 
           try {
             auto j = json::parse(body);
@@ -1601,8 +1605,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
         if (!require_resource_in_space(
-              res, aborted, space_id, db.get_checklist_item_board_id(item_id), origin))
+              res, aborted, space_id, db.get_checklist_item_board_id(item_id), origin)) {
           return;
+        }
 
         db.delete_checklist_item(item_id);
         loop_->defer([res, aborted, scope, origin]() {
@@ -1716,8 +1721,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
           if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
           if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
           if (!require_resource_in_space(
-                res, aborted, space_id, db.get_label_board_id(label_id), origin))
+                res, aborted, space_id, db.get_label_board_id(label_id), origin)) {
             return;
+          }
 
           try {
             auto j = json::parse(body);
@@ -1769,8 +1775,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
         if (!require_resource_in_space(
-              res, aborted, space_id, db.get_label_board_id(label_id), origin))
+              res, aborted, space_id, db.get_label_board_id(label_id), origin)) {
           return;
+        }
 
         db.delete_task_label(label_id);
         loop_->defer([res, aborted, scope, origin]() {
@@ -1894,8 +1901,9 @@ void TaskBoardHandler<SSL>::register_routes(uWS::TemplatedApp<SSL>& app) {
         if (!check_space_access(res, aborted, space_id, user_id, origin)) return;
         if (!require_permission(res, aborted, space_id, user_id, "edit", origin)) return;
         if (!require_resource_in_space(
-              res, aborted, space_id, db.get_dependency_board_id(dep_id), origin))
+              res, aborted, space_id, db.get_dependency_board_id(dep_id), origin)) {
           return;
+        }
 
         db.remove_task_dependency(dep_id);
         loop_->defer([res, aborted, scope, origin]() {

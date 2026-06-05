@@ -80,7 +80,10 @@ std::map<std::string, std::string> sign(const Credentials& creds, const Request&
   std::string signed_headers;
   bool first = true;
   for (const auto& [k, v] : headers) {  // std::map iterates sorted by key
-    canonical_headers += k + ":" + v + "\n";
+    canonical_headers += k;
+    canonical_headers += ":";
+    canonical_headers += v;
+    canonical_headers += "\n";
     if (!first) signed_headers += ";";
     signed_headers += k;
     first = false;

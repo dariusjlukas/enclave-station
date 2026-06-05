@@ -1,0 +1,45 @@
+# Single-node EVAL example: everything in-cluster, one command to a working
+# stack on k3s/kind/minikube. NOT production grade (in-cluster Postgres/Redis,
+# single replica, local-filesystem uploads). For real deployments use
+# ci/production-values.yaml as a starting point.
+publicUrl: "http://localhost"
+
+image:
+  registry: ghcr.io
+  repository: dariusjlukas/enclave-station
+  tag: "0.1.0"
+
+backend:
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+
+frontend:
+  replicaCount: 1
+
+# Single node: local-filesystem uploads on a ReadWriteOnce volume (one replica).
+storage:
+  backend: local
+  local:
+    persistence:
+      enabled: true
+      accessMode: ReadWriteOnce
+      size: 5Gi
+
+# In-cluster datastores (eval only).
+postgresql:
+  deploy: true
+  database: enclave
+  username: enclave
+  password: "evalpassword"
+  persistence:
+    size: 5Gi
+
+redis:
+  deploy: true
+
+# Reach the app via port-forward instead of an ingress controller.
+ingress:
+  enabled: false

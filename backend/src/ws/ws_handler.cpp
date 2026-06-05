@@ -644,12 +644,8 @@ bool WsHandler<SSL>::can_access_wiki_page(const std::string& page_id, const std:
   auto user = db.find_user_by_id(user_id);
   if (user && (user->role == "admin" || user->role == "owner")) return true;
   auto space = db.find_space_by_id(page->space_id);
-  if (
-    space && space->is_personal &&
-    db.has_resource_permission_in_space(page->space_id, user_id, "wiki")) {
-    return true;
-  }
-  return false;
+  return space && space->is_personal &&
+         db.has_resource_permission_in_space(page->space_id, user_id, "wiki");
 }
 
 template <bool SSL>

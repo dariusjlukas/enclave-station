@@ -65,7 +65,7 @@ public:
   // upload_id) — local FS still needs a shared filesystem to span instances.
 
   struct MultipartState {
-    std::string handle;        // backend handle (S3 upload id; "" for local fs)
+    std::string handle;  // backend handle (S3 upload id; "" for local fs)
     int64_t total_size = 0;
     int chunk_count = 0;
     int64_t chunk_size = 0;

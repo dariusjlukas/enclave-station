@@ -146,6 +146,12 @@ export const test = base.extend<
         POSTGRES_PASSWORD: PG_PASS,
         POSTGRES_DB: dbName,
         UPLOAD_DIR: uploadDir,
+        // The WebSocket upgrade handler rejects any browser Origin that isn't
+        // allowlisted (Cross-Site WebSocket Hijacking guard). The browser loads
+        // the Vite origin and Vite forwards that Origin unchanged (no
+        // changeOrigin), so without this every WS handshake 403s and all
+        // real-time specs fail.
+        ALLOWED_ORIGINS: `http://localhost:${frontendPort}`,
       };
 
       let backendProc: ChildProcess = spawn(

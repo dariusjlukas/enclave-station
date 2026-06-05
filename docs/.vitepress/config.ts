@@ -47,6 +47,23 @@ export default defineConfig({
           },
         ],
       },
+      {
+        text: "Operations",
+        items: [
+          {
+            text: "Kubernetes / Helm",
+            link: "/ops/kubernetes",
+          },
+          {
+            text: "Object Storage (S3)",
+            link: "/ops/object-storage",
+          },
+          {
+            text: "Redis Pub/Sub",
+            link: "/ops/redis-pubsub",
+          },
+        ],
+      },
     ],
 
     socialLinks: [

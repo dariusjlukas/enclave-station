@@ -11,6 +11,11 @@ Scenarios:
      user_a still receives it locally; user_b does NOT (Redis is down).
      Unpause redis; cross-instance delivery resumes within ~30s.
   C. Self-echo filter: user_a's own WS receives its own message exactly once.
+  D. Shared auth rate-limiter (P1.2): failed logins fired alternately at
+     backend1 and backend2 from one client IP share a global Redis fixed-window
+     budget. The budget trips at AUTH_RATE_LIMIT_MAX_ATTEMPTS across BOTH
+     instances, even though neither instance's local token-bucket is exhausted
+     on its own — proving the limit is shared, not per-replica.
 
 All assertions are explicit; the script prints a clear PASS/FAIL summary and
 exits 0 on success, non-zero otherwise.
@@ -49,6 +54,13 @@ COMPOSE_PROJECT = os.environ.get("COMPOSE_PROJECT", "enclave-mi-test")
 CROSS_INSTANCE_TIMEOUT_S = 0.5  # generous; expectation is <200ms but tolerate jitter
 LOCAL_ONLY_NEGATIVE_TIMEOUT_S = 1.5
 RECONNECT_TIMEOUT_S = 30.0
+
+# Must match AUTH_RATE_LIMIT_MAX_ATTEMPTS in docker-compose.test.yml (Scenario D).
+AUTH_MAX_ATTEMPTS = int(os.environ.get("MI_AUTH_MAX_ATTEMPTS", "4"))
+# A fixed, non-routable client IP sent as X-Real-IP so both backends key the
+# shared rate-limit counter identically (auth_client_ip honors X-Real-IP first),
+# independent of however Docker happens to NAT the host connection.
+RATE_LIMIT_TEST_IP = "203.0.113.77"  # TEST-NET-3 (RFC 5737)
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +216,78 @@ async def count_new_messages(ws, content: str, window_s: float) -> int:
 async def send_message(ws, channel_id: str, content: str):
     await ws.send(
         json.dumps({"type": "send_message", "channel_id": channel_id, "content": content})
+    )
+
+
+def scenario_d_shared_rate_limit(failures: list[str], log) -> None:
+    """Scenario D: the auth rate-limiter's budget is global across instances.
+
+    Fire failed password logins alternately at backend1 and backend2 from the
+    SAME client IP. Each instance also has a per-instance local token-bucket of
+    AUTH_MAX_ATTEMPTS, so a purely per-replica limiter would allow up to
+    2*AUTH_MAX_ATTEMPTS before any 429. The shared Redis fixed-window counter
+    (P1.2) instead trips at AUTH_MAX_ATTEMPTS total — and the instance that
+    returns the first 429 will have served fewer than AUTH_MAX_ATTEMPTS of its
+    own, proving the budget is shared.
+
+    /api/auth/password/login is rate-checked before the body is parsed, so a
+    bogus payload still consumes budget and never has side effects.
+    """
+    log("Scenario D: shared cross-instance auth rate-limiter")
+    backends = [BACKEND1_URL, BACKEND2_URL]
+    headers = {"X-Real-IP": RATE_LIMIT_TEST_IP}
+    allowed_per_backend = {BACKEND1_URL: 0, BACKEND2_URL: 0}
+    first_429 = None  # (backend_url, allowed_on_that_backend_before_429)
+
+    # Cap attempts so a broken (per-instance-only) limiter can't loop forever:
+    # one more than the 2*MAX a purely-local limiter would permit.
+    max_probe = AUTH_MAX_ATTEMPTS * 2 + 1
+    with httpx.Client(timeout=10.0) as client:
+        for i in range(max_probe):
+            be = backends[i % 2]
+            r = client.post(
+                f"{be}/api/auth/password/login",
+                json={"username": f"nobody-{i}", "password": "wrong"},
+                headers=headers,
+            )
+            if r.status_code == 429:
+                first_429 = (be, allowed_per_backend[be])
+                break
+            allowed_per_backend[be] += 1
+
+    total_allowed = sum(allowed_per_backend.values())
+    if first_429 is None:
+        failures.append(
+            f"Scenario D: never hit 429 after {max_probe} attempts across both "
+            f"instances (shared rate-limiter not enforced?)"
+        )
+        log("  FAIL: shared rate-limiter never tripped")
+        return
+
+    be, allowed_on_that_be = first_429
+    # The global budget must trip at ~MAX, not 2*MAX. (Exactly MAX with strict
+    # alternation; allow a tiny margin for token-bucket refill jitter.)
+    if total_allowed > AUTH_MAX_ATTEMPTS + 1:
+        failures.append(
+            f"Scenario D: {total_allowed} attempts allowed before 429 "
+            f"(expected ~{AUTH_MAX_ATTEMPTS}); budget looks per-instance, not shared"
+        )
+        log(f"  FAIL: {total_allowed} allowed before 429 (expected ~{AUTH_MAX_ATTEMPTS})")
+        return
+    # The instance that 429'd must NOT have exhausted its own local bucket —
+    # otherwise the block could be explained by per-instance limiting alone.
+    if allowed_on_that_be >= AUTH_MAX_ATTEMPTS:
+        failures.append(
+            f"Scenario D: instance {be} returned 429 only after serving "
+            f"{allowed_on_that_be} of its own (>= local max {AUTH_MAX_ATTEMPTS}); "
+            f"cannot distinguish shared from local limiting"
+        )
+        log("  FAIL: 429 attributable to local bucket, not the shared counter")
+        return
+
+    log(
+        f"  PASS: shared budget tripped at {total_allowed} total; the 429 "
+        f"instance had served only {allowed_on_that_be} (< local max {AUTH_MAX_ATTEMPTS})"
     )
 
 
@@ -382,6 +466,11 @@ async def run_all() -> int:
                 f"Scenario B: pub/sub did not recover within {RECONNECT_TIMEOUT_S}s"
             )
             log("  FAIL: pub/sub did not recover after unpause")
+
+        # ---------------- Scenario D ----------------
+        # Redis is back up after B's recovery, so the shared counter is live.
+        # Runs synchronously (plain HTTP, no WS), so call it directly.
+        scenario_d_shared_rate_limit(failures, log)
 
     finally:
         try:

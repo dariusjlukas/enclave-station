@@ -419,8 +419,17 @@ def base_url(worker_port):
 
 @pytest.fixture(scope="session")
 def client(server_process, base_url):
-    """A shared httpx client for the test session."""
-    with httpx.Client(base_url=base_url, timeout=10.0) as c:
+    """A shared httpx client for the test session.
+
+    The timeout is generous because the password endpoints run Argon2id at
+    OWASP cost (t=3, m=64MB, p=4) and a single password-change verifies the
+    current password, checks the new one against the history, and hashes the
+    new one — several Argon2 ops per request. Under pytest-xdist all workers
+    hammer Argon2 at once, so CPU/memory-bandwidth contention can push one
+    request well past a tight timeout (it already takes ~10s in isolation).
+    30s leaves headroom for the flake while still catching a genuine hang.
+    """
+    with httpx.Client(base_url=base_url, timeout=30.0) as c:
         yield c
 
 

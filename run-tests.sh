@@ -231,7 +231,7 @@ print_summary() {
                  "Frontend Build" "Backend Build" "Backend Static Analysis"
                  "Backend Unit Tests" "Backend Integration Tests"
                  "API Tests" "E2E Tests" "Docker Compose Config" "Docker Build"
-                 "Nginx Security Headers" "Sqitch Schema Check"
+                 "Helm Chart Lint" "Nginx Security Headers" "Sqitch Schema Check"
                  "Redis Multi-Instance")
 
     printf "\n${BOLD}========================================${NC}\n"
@@ -288,8 +288,11 @@ Options:
   --sqitch-check     Verify sqitch schema matches run_migrations() output (needs docker)
   --redis-multi-instance
                      Bring up postgres + redis + 2 backends and verify cross-
-                     instance WS broadcast, Redis-down fallback, and self-echo
-                     filtering (needs docker, ~3min on first run)
+                     instance WS broadcast, Redis-down fallback, self-echo
+                     filtering, and the shared auth rate-limiter (needs docker,
+                     ~3min on first run)
+  --helm             Lint the Helm chart and render its eval/production value
+                     profiles (skipped if helm isn't installed)
   --no-build         Skip the backend CMake build step
   --help             Show this help message
 
@@ -319,6 +322,7 @@ RUN_STATIC_ANALYSIS=false
 RUN_NGINX_HEADERS=false
 RUN_SQITCH_CHECK=false
 RUN_REDIS_MI=false
+RUN_HELM=false
 SKIP_BUILD=false
 
 # Auto-size the parallel test-worker pools to the host. Each API worker runs its
@@ -352,6 +356,7 @@ for arg in "$@"; do
         --all)
             RUN_LINT=true; RUN_TYPECHECK=true; RUN_FORMAT=true; RUN_FE_BUILD=true
             RUN_BACKEND_UNIT=true; RUN_BACKEND_INTEG=true; RUN_API_TESTS=true; RUN_E2E=true; RUN_DOCKER=true; RUN_STATIC_ANALYSIS=true
+            RUN_HELM=true
             ANY_FLAG=true ;;
         --frontend)
             RUN_LINT=true; RUN_TYPECHECK=true; RUN_FORMAT=true; RUN_FE_BUILD=true
@@ -387,6 +392,8 @@ for arg in "$@"; do
             RUN_SQITCH_CHECK=true; ANY_FLAG=true ;;
         --redis-multi-instance)
             RUN_REDIS_MI=true; ANY_FLAG=true ;;
+        --helm)
+            RUN_HELM=true; ANY_FLAG=true ;;
         --no-build)
             SKIP_BUILD=true ;;
         --help)
@@ -401,6 +408,7 @@ done
 if [ "$ANY_FLAG" = false ]; then
     RUN_LINT=true; RUN_TYPECHECK=true; RUN_FORMAT=true; RUN_FE_BUILD=true
     RUN_BACKEND_UNIT=true; RUN_BACKEND_INTEG=true; RUN_API_TESTS=true; RUN_E2E=true; RUN_DOCKER=true; RUN_STATIC_ANALYSIS=true
+    RUN_HELM=true
 fi
 
 NEED_BACKEND=$( [ "$RUN_BACKEND_UNIT" = true ] || [ "$RUN_BACKEND_INTEG" = true ] || [ "$RUN_API_TESTS" = true ] || [ "$RUN_E2E" = true ] && echo true || echo false )
@@ -829,6 +837,7 @@ if [ "$RUN_E2E" = true ]; then
             POSTGRES_PASSWORD="$TEST_PG_PASS" \
             POSTGRES_DB="$TEST_PG_DB" \
             UPLOAD_DIR="$E2E_UPLOAD_DIR" \
+            ALLOWED_ORIGINS="http://localhost:$E2E_FRONTEND_PORT" \
             "$BUILD_DIR/chat-server" >/tmp/e2e-backend.log 2>&1 &
             E2E_SERVER_PID=$!
 
@@ -935,6 +944,34 @@ check_nginx_headers() {
     fi
     return 0
 }
+
+# =====================================================================
+# Helm chart lint + render (P2 release engineering). Validates the chart
+# templates and that the eval + production value profiles render to valid
+# manifests. SKIPs gracefully when helm isn't installed.
+# =====================================================================
+
+check_helm() {
+    local chart="$SCRIPT_DIR/deploy/helm/enclave-station"
+    helm lint "$chart" || return 1
+    # The bare defaults intentionally omit required secrets (password, S3
+    # bucket), so render against the shipped value profiles instead, which
+    # supply them. A template bug fails the render.
+    helm template t "$chart" -f "$chart/ci/eval-values.yaml" >/dev/null || return 1
+    helm template t "$chart" -f "$chart/ci/production-values.yaml" >/dev/null || return 1
+    printf "helm lint + eval/production renders OK\n"
+    return 0
+}
+
+if [ "$RUN_HELM" = true ]; then
+    if command -v helm &>/dev/null; then
+        run_check "Helm Chart Lint" check_helm
+    else
+        printf "${YELLOW}helm not found; skipping Helm chart lint.${NC}\n"
+        RESULTS["Helm Chart Lint"]="SKIP"
+        MISSING_DEPS+=("helm (Helm chart lint)")
+    fi
+fi
 
 if [ "$RUN_NGINX_HEADERS" = true ]; then
     run_check "Nginx Security Headers" check_nginx_headers
